@@ -33,19 +33,19 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andreas Sandberg
  */
+
+#include "cpu/kvm/timer.hh"
+
+#include <sys/syscall.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <csignal>
 #include <ctime>
-#include <unistd.h>
-#include <sys/syscall.h>
 
-#include "base/misc.hh"
+#include "base/logging.hh"
 #include "base/trace.hh"
-#include "cpu/kvm/timer.hh"
 #include "debug/KvmTimer.hh"
 
 /* According to timer_create(2), the value SIGEV_THREAD_ID can be used
@@ -58,8 +58,11 @@
 #define sigev_notify_thread_id     _sigev_un._tid
 #endif
 
+namespace gem5
+{
+
 static pid_t
-gettid()
+sysGettid()
 {
     return syscall(__NR_gettid);
 }
@@ -82,7 +85,7 @@ PosixKvmTimer::PosixKvmTimer(int signo, clockid_t clockID,
 
     sev.sigev_notify = SIGEV_THREAD_ID;
     sev.sigev_signo = signo;
-    sev.sigev_notify_thread_id = gettid();
+    sev.sigev_notify_thread_id = sysGettid();
     sev.sigev_value.sival_ptr = NULL;
 
     while (timer_create(clockID, &sev, &timer) == -1) {
@@ -122,10 +125,19 @@ PosixKvmTimer::disarm()
     struct itimerspec ts;
     memset(&ts, 0, sizeof(ts));
 
-    DPRINTF(KvmTimer, "Disarming POSIX timer\n");
-
-    if (timer_settime(timer, 0, &ts, NULL) == -1)
+    if (timer_settime(timer, 0, &ts, &prevTimerSpec) == -1)
         panic("PosixKvmTimer: Failed to disarm timer\n");
+
+    DPRINTF(KvmTimer, "Disarmed POSIX timer: %is%ins left\n",
+            prevTimerSpec.it_value.tv_sec,
+            prevTimerSpec.it_value.tv_nsec);
+}
+
+bool
+PosixKvmTimer::expired()
+{
+    return (prevTimerSpec.it_value.tv_nsec == 0 &&
+            prevTimerSpec.it_value.tv_sec == 0);
 }
 
 Tick
@@ -186,3 +198,5 @@ PerfKvmTimer::calcResolution()
 {
     return ticksFromHostCycles(MIN_HOST_CYCLES);
 }
+
+} // namespace gem5

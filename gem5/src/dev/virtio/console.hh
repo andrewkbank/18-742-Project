@@ -33,15 +33,17 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andreas Sandberg
  */
 
 #ifndef __DEV_VIRTIO_CONSOLE_HH__
 #define __DEV_VIRTIO_CONSOLE_HH__
 
+#include "base/compiler.hh"
+#include "dev/serial/serial.hh"
 #include "dev/virtio/base.hh"
-#include "dev/terminal.hh"
+
+namespace gem5
+{
 
 struct VirtIOConsoleParams;
 
@@ -67,7 +69,7 @@ class VirtIOConsole : public VirtIODeviceBase
 {
   public:
     typedef VirtIOConsoleParams Params;
-    VirtIOConsole(Params *params);
+    VirtIOConsole(const Params &params);
     virtual ~VirtIOConsole();
 
     void readConfig(PacketPtr pkt, Addr cfgOffset);
@@ -79,10 +81,11 @@ class VirtIOConsole : public VirtIODeviceBase
      * @note This needs to be changed if the multiport feature is
      * announced!
      */
-    struct Config {
+    struct GEM5_PACKED Config
+    {
         uint16_t cols;
         uint16_t rows;
-    } M5_ATTR_PACKED;
+    };
 
     /** Currently active configuration (host byte order) */
     Config config;
@@ -108,8 +111,9 @@ class VirtIOConsole : public VirtIODeviceBase
         : public VirtQueue
     {
       public:
-        TermRecvQueue(PortProxy &proxy, uint16_t size, VirtIOConsole &_parent)
-            : VirtQueue(proxy, size), parent(_parent) {}
+        TermRecvQueue(PortProxy &proxy, ByteOrder bo,
+                uint16_t size, VirtIOConsole &_parent)
+            : VirtQueue(proxy, bo, size), parent(_parent) {}
         virtual ~TermRecvQueue() {}
 
         void onNotify() { trySend(); }
@@ -132,8 +136,9 @@ class VirtIOConsole : public VirtIODeviceBase
         : public VirtQueue
     {
       public:
-        TermTransQueue(PortProxy &proxy, uint16_t size, VirtIOConsole &_parent)
-            : VirtQueue(proxy, size), parent(_parent) {}
+        TermTransQueue(PortProxy &proxy, ByteOrder bo,
+                uint16_t size, VirtIOConsole &_parent)
+            : VirtQueue(proxy, bo, size), parent(_parent) {}
         virtual ~TermTransQueue() {}
 
         void onNotifyDescriptor(VirtDescriptor *desc);
@@ -147,9 +152,9 @@ class VirtIOConsole : public VirtIODeviceBase
     TermTransQueue qTrans;
 
   protected:
-    Terminal &term;
-    MakeCallback<VirtIOConsole::TermRecvQueue,
-                 &VirtIOConsole::TermRecvQueue::trySend> callbackDataAvail;
+    SerialDevice &device;
 };
+
+} // namespace gem5
 
 #endif // __DEV_VIRTIO_CONSOLE_HH__

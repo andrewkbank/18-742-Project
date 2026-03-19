@@ -35,21 +35,22 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Nathan Binkert
-#          Andreas Hansson
 
+from m5.objects.ClockedObject import ClockedObject
 from m5.params import *
-from MemObject import MemObject
 
-class AbstractMemory(MemObject):
-    type = 'AbstractMemory'
+
+class AbstractMemory(ClockedObject):
+    type = "AbstractMemory"
     abstract = True
     cxx_header = "mem/abstract_mem.hh"
+    cxx_class = "gem5::memory::AbstractMemory"
 
-    # A default memory size of 128 MB (starting at 0) is used to
+    # A default memory size of 128 MiB (starting at 0) is used to
     # simplify the regressions
-    range = Param.AddrRange('128MB', "Address range (potentially interleaved)")
+    range = Param.AddrRange(
+        "128MiB", "Address range (potentially interleaved)"
+    )
     null = Param.Bool(False, "Do not store data, always return zero")
 
     # All memories are passed to the global physical memory, and
@@ -57,7 +58,30 @@ class AbstractMemory(MemObject):
     # e.g. by the testers that use shadow memories as a reference
     in_addr_map = Param.Bool(True, "Memory part of the global address map")
 
+    # When KVM acceleration is used, memory is mapped into the guest process
+    # address space and accessed directly. Some memories may need to be
+    # excluded from this mapping if they overlap with other memory ranges or
+    # are not accessible by the CPU.
+    kvm_map = Param.Bool(True, "Should KVM map this memory for the guest")
+
     # Should the bootloader include this memory when passing
     # configuration information about the physical memory layout to
     # the kernel, e.g. using ATAG or ACPI
     conf_table_reported = Param.Bool(True, "Report to configuration table")
+
+    # Image file to load into this memory as its initial contents. This is
+    # particularly useful for ROMs.
+    image_file = Param.String(
+        "", "Image to load into memory as its initial contents"
+    )
+
+    writeable = Param.Bool(True, "Allow writes to this memory")
+
+    collect_stats = Param.Bool(
+        True,
+        "Collect statistics per requestor for "
+        "each type of access. Set this to `False` if "
+        "requestors may be unknown or when running "
+        "with multiple `System` objects without a "
+        "`SysBridge`.",
+    )

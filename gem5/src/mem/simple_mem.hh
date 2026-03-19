@@ -36,9 +36,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Ron Dreslinski
- *          Andreas Hansson
  */
 
 /**
@@ -46,14 +43,21 @@
  * SimpleMemory declaration
  */
 
-#ifndef __SIMPLE_MEMORY_HH__
-#define __SIMPLE_MEMORY_HH__
+#ifndef __MEM_SIMPLE_MEMORY_HH__
+#define __MEM_SIMPLE_MEMORY_HH__
 
-#include <deque>
+#include <list>
 
+#include "base/random.hh"
 #include "mem/abstract_mem.hh"
 #include "mem/port.hh"
 #include "params/SimpleMemory.hh"
+
+namespace gem5
+{
+
+namespace memory
+{
 
 /**
  * The simple memory is a basic single-ported memory controller with
@@ -82,29 +86,24 @@ class SimpleMemory : public AbstractMemory
         { }
     };
 
-    class MemoryPort : public SlavePort
+    class MemoryPort : public ResponsePort
     {
-
       private:
-
-        SimpleMemory& memory;
+        SimpleMemory& mem;
 
       public:
-
         MemoryPort(const std::string& _name, SimpleMemory& _memory);
 
       protected:
-
-        Tick recvAtomic(PacketPtr pkt);
-
-        void recvFunctional(PacketPtr pkt);
-
-        bool recvTimingReq(PacketPtr pkt);
-
-        void recvRespRetry();
-
-        AddrRangeList getAddrRanges() const;
-
+        Tick recvAtomic(PacketPtr pkt) override;
+        Tick recvAtomicBackdoor(
+                PacketPtr pkt, MemBackdoorPtr &_backdoor) override;
+        void recvFunctional(PacketPtr pkt) override;
+        void recvMemBackdoorReq(const MemBackdoorReq &req,
+                MemBackdoorPtr &backdoor) override;
+        bool recvTimingReq(PacketPtr pkt) override;
+        void recvRespRetry() override;
+        AddrRangeList getAddrRanges() const override;
     };
 
     MemoryPort port;
@@ -125,7 +124,7 @@ class SimpleMemory : public AbstractMemory
      * actual memory access. Note that this is where the packet spends
      * the memory latency.
      */
-    std::deque<DeferredPacket> packetQueue;
+    std::list<DeferredPacket> packetQueue;
 
     /**
      * Bandwidth in ticks per byte. The regulation affects the
@@ -152,13 +151,15 @@ class SimpleMemory : public AbstractMemory
      */
     bool retryResp;
 
+    mutable Random::RandomPtr rng = Random::genRandom();
+
     /**
      * Release the memory after being busy and send a retry if a
      * request was rejected in the meanwhile.
      */
     void release();
 
-    EventWrapper<SimpleMemory, &SimpleMemory::release> releaseEvent;
+    EventFunctionWrapper releaseEvent;
 
     /**
      * Dequeue a packet from our internal packet queue and move it to
@@ -166,7 +167,7 @@ class SimpleMemory : public AbstractMemory
      */
     void dequeue();
 
-    EventWrapper<SimpleMemory, &SimpleMemory::dequeue> dequeueEvent;
+    EventFunctionWrapper dequeueEvent;
 
     /**
      * Detemine the latency.
@@ -175,32 +176,33 @@ class SimpleMemory : public AbstractMemory
      */
     Tick getLatency() const;
 
-    /** @todo this is a temporary workaround until the 4-phase code is
-     * committed. upstream caches needs this packet until true is returned, so
-     * hold onto it for deletion until a subsequent call
+    /**
+     * Upstream caches need this packet until true is returned, so
+     * hold it for deletion until a subsequent call
      */
-    std::vector<PacketPtr> pendingDelete;
+    std::unique_ptr<Packet> pendingDelete;
 
   public:
 
-    SimpleMemory(const SimpleMemoryParams *p);
+    SimpleMemory(const SimpleMemoryParams &p);
 
-    DrainState drain() M5_ATTR_OVERRIDE;
+    DrainState drain() override;
 
-    BaseSlavePort& getSlavePort(const std::string& if_name,
-                                PortID idx = InvalidPortID);
-    void init();
+    Port &getPort(const std::string &if_name,
+                  PortID idx=InvalidPortID) override;
+    void init() override;
 
   protected:
-
     Tick recvAtomic(PacketPtr pkt);
-
+    Tick recvAtomicBackdoor(PacketPtr pkt, MemBackdoorPtr &_backdoor);
     void recvFunctional(PacketPtr pkt);
-
+    void recvMemBackdoorReq(const MemBackdoorReq &req,
+            MemBackdoorPtr &backdoor);
     bool recvTimingReq(PacketPtr pkt);
-
     void recvRespRetry();
-
 };
 
-#endif //__SIMPLE_MEMORY_HH__
+} // namespace memory
+} // namespace gem5
+
+#endif //__MEM_SIMPLE_MEMORY_HH__

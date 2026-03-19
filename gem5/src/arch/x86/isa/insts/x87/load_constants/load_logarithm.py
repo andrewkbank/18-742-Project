@@ -33,11 +33,8 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Gabe Black
-#          Nilay Vaish
 
-microcode = '''
+microcode = """
 
 def macroop FLDL2E {
     lfpimm ufp1, 1.44269504089
@@ -59,4 +56,4 @@ def macroop FLDLN2 {
     movfp st(-1), ufp1, spm=-1
 };
 
-'''
+"""

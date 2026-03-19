@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010-2012 ARM Limited
+ * Copyright (c) 2010-2012,2017-2019 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -36,148 +36,210 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Ron Dreslinski
- *          Ali Saidi
- *          Andreas Hansson
  */
+
+#include "mem/abstract_mem.hh"
 
 #include <vector>
 
-#include "cpu/base.hh"
+#include "base/loader/memory_image.hh"
+#include "base/loader/object_file.hh"
 #include "cpu/thread_context.hh"
 #include "debug/LLSC.hh"
 #include "debug/MemoryAccess.hh"
-#include "mem/abstract_mem.hh"
 #include "mem/packet_access.hh"
 #include "sim/system.hh"
 
-using namespace std;
-
-AbstractMemory::AbstractMemory(const Params *p) :
-    MemObject(p), range(params()->range), pmemAddr(NULL),
-    confTableReported(p->conf_table_reported), inAddrMap(p->in_addr_map),
-    _system(NULL)
+namespace gem5
 {
+
+namespace memory
+{
+
+AbstractMemory::AbstractMemory(const Params &p) :
+    ClockedObject(p), range(p.range), pmemAddr(NULL),
+    backdoor(params().range, nullptr,
+             (MemBackdoor::Flags)(p.writeable ?
+                 MemBackdoor::Readable | MemBackdoor::Writeable :
+                 MemBackdoor::Readable)),
+    confTableReported(p.conf_table_reported), inAddrMap(p.in_addr_map),
+    kvmMap(p.kvm_map), writeable(p.writeable), collectStats(p.collect_stats),
+    _system(NULL), stats(*this)
+{
+    panic_if(!range.valid() || !range.size(),
+             "Memory range %s must be valid with non-zero size.",
+             range.to_string());
 }
 
 void
-AbstractMemory::init()
+AbstractMemory::initState()
 {
-    assert(system());
+    ClockedObject::initState();
 
-    if (size() % _system->getPageBytes() != 0)
-        panic("Memory Size not divisible by page size\n");
+    const auto &file = params().image_file;
+    if (file == "")
+        return;
+
+    auto *object = loader::createObjectFile(file, true);
+    fatal_if(!object, "%s: Could not load %s.", name(), file);
+
+    loader::debugSymbolTable.insert(*object->symtab().globals());
+    loader::MemoryImage image = object->buildImage();
+
+    AddrRange image_range(image.minAddr(), image.maxAddr());
+    if (!range.contains(image_range.start())) {
+        warn("%s: Moving image from %s to memory address range %s.",
+                name(), image_range.to_string(), range.to_string());
+        image = image.offset(range.start());
+        image_range = AddrRange(image.minAddr(), image.maxAddr());
+    }
+    panic_if(!image_range.isSubset(range), "%s: memory image %s doesn't fit.",
+             name(), file);
+
+    PortProxy proxy([this](PacketPtr pkt) { functionalAccess(pkt); },
+                    system()->cacheLineSize());
+
+    panic_if(!image.write(proxy), "%s: Unable to write image.");
 }
 
 void
 AbstractMemory::setBackingStore(uint8_t* pmem_addr)
 {
+    // If there was an existing backdoor, let everybody know it's going away.
+    if (backdoor.ptr())
+        backdoor.invalidate();
+
+    // The back door can't handle interleaved memory.
+    backdoor.ptr(range.interleaved() ? nullptr : pmem_addr);
+
     pmemAddr = pmem_addr;
 }
 
-void
-AbstractMemory::regStats()
+AbstractMemory::MemStats::MemStats(AbstractMemory &_mem)
+    : statistics::Group(&_mem), mem(_mem),
+    ADD_STAT(bytesRead, statistics::units::Byte::get(),
+             "Number of bytes read from this memory"),
+    ADD_STAT(bytesInstRead, statistics::units::Byte::get(),
+             "Number of instructions bytes read from this memory"),
+    ADD_STAT(bytesWritten, statistics::units::Byte::get(),
+             "Number of bytes written to this memory"),
+    ADD_STAT(numReads, statistics::units::Count::get(),
+             "Number of read requests responded to by this memory"),
+    ADD_STAT(numWrites, statistics::units::Count::get(),
+             "Number of write requests responded to by this memory"),
+    ADD_STAT(numOther, statistics::units::Count::get(),
+             "Number of other requests responded to by this memory"),
+    ADD_STAT(bwRead, statistics::units::Rate<
+                statistics::units::Byte, statistics::units::Second>::get(),
+             "Total read bandwidth from this memory"),
+    ADD_STAT(bwInstRead,
+             statistics::units::Rate<
+                statistics::units::Byte, statistics::units::Second>::get(),
+             "Instruction read bandwidth from this memory"),
+    ADD_STAT(bwWrite, statistics::units::Rate<
+                statistics::units::Byte, statistics::units::Second>::get(),
+             "Write bandwidth from this memory"),
+    ADD_STAT(bwTotal, statistics::units::Rate<
+                statistics::units::Byte, statistics::units::Second>::get(),
+             "Total bandwidth to/from this memory")
 {
-    using namespace Stats;
+}
 
-    assert(system());
+void
+AbstractMemory::MemStats::regStats()
+{
+    using namespace statistics;
+
+    statistics::Group::regStats();
+
+    System *sys = mem.system();
+    assert(sys);
+    const auto max_requestors = sys->maxRequestors();
 
     bytesRead
-        .init(system()->maxMasters())
-        .name(name() + ".bytes_read")
-        .desc("Number of bytes read from this memory")
+        .init(max_requestors)
         .flags(total | nozero | nonan)
         ;
-    for (int i = 0; i < system()->maxMasters(); i++) {
-        bytesRead.subname(i, system()->getMasterName(i));
+    for (int i = 0; i < max_requestors; i++) {
+        bytesRead.subname(i, sys->getRequestorName(i));
     }
+
     bytesInstRead
-        .init(system()->maxMasters())
-        .name(name() + ".bytes_inst_read")
-        .desc("Number of instructions bytes read from this memory")
+        .init(max_requestors)
         .flags(total | nozero | nonan)
         ;
-    for (int i = 0; i < system()->maxMasters(); i++) {
-        bytesInstRead.subname(i, system()->getMasterName(i));
+    for (int i = 0; i < max_requestors; i++) {
+        bytesInstRead.subname(i, sys->getRequestorName(i));
     }
+
     bytesWritten
-        .init(system()->maxMasters())
-        .name(name() + ".bytes_written")
-        .desc("Number of bytes written to this memory")
+        .init(max_requestors)
         .flags(total | nozero | nonan)
         ;
-    for (int i = 0; i < system()->maxMasters(); i++) {
-        bytesWritten.subname(i, system()->getMasterName(i));
+    for (int i = 0; i < max_requestors; i++) {
+        bytesWritten.subname(i, sys->getRequestorName(i));
     }
+
     numReads
-        .init(system()->maxMasters())
-        .name(name() + ".num_reads")
-        .desc("Number of read requests responded to by this memory")
+        .init(max_requestors)
         .flags(total | nozero | nonan)
         ;
-    for (int i = 0; i < system()->maxMasters(); i++) {
-        numReads.subname(i, system()->getMasterName(i));
+    for (int i = 0; i < max_requestors; i++) {
+        numReads.subname(i, sys->getRequestorName(i));
     }
+
     numWrites
-        .init(system()->maxMasters())
-        .name(name() + ".num_writes")
-        .desc("Number of write requests responded to by this memory")
+        .init(max_requestors)
         .flags(total | nozero | nonan)
         ;
-    for (int i = 0; i < system()->maxMasters(); i++) {
-        numWrites.subname(i, system()->getMasterName(i));
+    for (int i = 0; i < max_requestors; i++) {
+        numWrites.subname(i, sys->getRequestorName(i));
     }
+
     numOther
-        .init(system()->maxMasters())
-        .name(name() + ".num_other")
-        .desc("Number of other requests responded to by this memory")
+        .init(max_requestors)
         .flags(total | nozero | nonan)
         ;
-    for (int i = 0; i < system()->maxMasters(); i++) {
-        numOther.subname(i, system()->getMasterName(i));
+    for (int i = 0; i < max_requestors; i++) {
+        numOther.subname(i, sys->getRequestorName(i));
     }
+
     bwRead
-        .name(name() + ".bw_read")
-        .desc("Total read bandwidth from this memory (bytes/s)")
         .precision(0)
         .prereq(bytesRead)
         .flags(total | nozero | nonan)
         ;
-    for (int i = 0; i < system()->maxMasters(); i++) {
-        bwRead.subname(i, system()->getMasterName(i));
+    for (int i = 0; i < max_requestors; i++) {
+        bwRead.subname(i, sys->getRequestorName(i));
     }
 
     bwInstRead
-        .name(name() + ".bw_inst_read")
-        .desc("Instruction read bandwidth from this memory (bytes/s)")
         .precision(0)
         .prereq(bytesInstRead)
         .flags(total | nozero | nonan)
         ;
-    for (int i = 0; i < system()->maxMasters(); i++) {
-        bwInstRead.subname(i, system()->getMasterName(i));
+    for (int i = 0; i < max_requestors; i++) {
+        bwInstRead.subname(i, sys->getRequestorName(i));
     }
+
     bwWrite
-        .name(name() + ".bw_write")
-        .desc("Write bandwidth from this memory (bytes/s)")
         .precision(0)
         .prereq(bytesWritten)
         .flags(total | nozero | nonan)
         ;
-    for (int i = 0; i < system()->maxMasters(); i++) {
-        bwWrite.subname(i, system()->getMasterName(i));
+    for (int i = 0; i < max_requestors; i++) {
+        bwWrite.subname(i, sys->getRequestorName(i));
     }
+
     bwTotal
-        .name(name() + ".bw_total")
-        .desc("Total bandwidth to/from this memory (bytes/s)")
         .precision(0)
         .prereq(bwTotal)
         .flags(total | nozero | nonan)
         ;
-    for (int i = 0; i < system()->maxMasters(); i++) {
-        bwTotal.subname(i, system()->getMasterName(i));
+    for (int i = 0; i < max_requestors; i++) {
+        bwTotal.subname(i, sys->getRequestorName(i));
     }
+
     bwRead = bytesRead / simSeconds;
     bwInstRead = bytesInstRead / simSeconds;
     bwWrite = bytesWritten / simSeconds;
@@ -195,13 +257,13 @@ AbstractMemory::getAddrRange() const
 void
 AbstractMemory::trackLoadLocked(PacketPtr pkt)
 {
-    Request *req = pkt->req;
+    const RequestPtr &req = pkt->req;
     Addr paddr = LockedAddr::mask(req->getPaddr());
 
     // first we check if we already have a locked addr for this
     // xc.  Since each xc only gets one, we just update the
     // existing record with the new address.
-    list<LockedAddr>::iterator i;
+    std::list<LockedAddr>::iterator i;
 
     for (i = lockedAddrList.begin(); i != lockedAddrList.end(); ++i) {
         if (i->matchesContext(req)) {
@@ -216,6 +278,7 @@ AbstractMemory::trackLoadLocked(PacketPtr pkt)
     DPRINTF(LLSC, "Adding lock record: context %d addr %#x\n",
             req->contextId(), paddr);
     lockedAddrList.push_front(LockedAddr(req));
+    backdoor.invalidate();
 }
 
 
@@ -226,7 +289,7 @@ AbstractMemory::trackLoadLocked(PacketPtr pkt)
 bool
 AbstractMemory::checkLockedAddrList(PacketPtr pkt)
 {
-    Request *req = pkt->req;
+    const RequestPtr &req = pkt->req;
     Addr paddr = LockedAddr::mask(req->getPaddr());
     bool isLLSC = pkt->isLLSC();
 
@@ -240,7 +303,7 @@ AbstractMemory::checkLockedAddrList(PacketPtr pkt)
     // Only remove records when we succeed in finding a record for (xc, addr);
     // then, remove all records with this address.  Failed store-conditionals do
     // not blow unrelated reservations.
-    list<LockedAddr>::iterator i = lockedAddrList.begin();
+    std::list<LockedAddr>::iterator i = lockedAddrList.begin();
 
     if (isLLSC) {
         while (i != lockedAddrList.end()) {
@@ -269,12 +332,15 @@ AbstractMemory::checkLockedAddrList(PacketPtr pkt)
             if (i->addr == paddr) {
                 DPRINTF(LLSC, "Erasing lock record: context %d addr %#x\n",
                         i->contextId, paddr);
-                // For ARM, a spinlock would typically include a Wait
-                // For Event (WFE) to conserve energy. The ARMv8
-                // architecture specifies that an event is
-                // automatically generated when clearing the exclusive
-                // monitor to wake up the processor in WFE.
-                system()->getThreadContext(i->contextId)->getCpuPtr()->wakeup();
+                ContextID owner_cid = i->contextId;
+                assert(owner_cid != InvalidContextID);
+                ContextID requestor_cid = req->hasContextId() ?
+                                           req->contextId() :
+                                           InvalidContextID;
+                if (owner_cid != requestor_cid) {
+                    ThreadContext* ctx = system()->threads[owner_cid];
+                    ctx->getIsaPtr()->globalClearExclusive();
+                }
                 i = lockedAddrList.erase(i);
             } else {
                 i++;
@@ -285,171 +351,184 @@ AbstractMemory::checkLockedAddrList(PacketPtr pkt)
     return allowStore;
 }
 
-
 #if TRACING_ON
+static inline void
+tracePacket(System *sys, const char *label, PacketPtr pkt)
+{
+    int size = pkt->getSize();
+    if (size == 1 || size == 2 || size == 4 || size == 8) {
+        ByteOrder byte_order = sys->getGuestByteOrder();
+        DPRINTF(MemoryAccess, "%s from %s of size %i on address %#x data "
+                "%#x %c\n", label, sys->getRequestorName(pkt->req->
+                requestorId()), size, pkt->getAddr(),
+                pkt->getUintX(byte_order),
+                pkt->req->isUncacheable() ? 'U' : 'C');
+        return;
+    }
+    DPRINTF(MemoryAccess, "%s from %s of size %i on address %#x %c\n",
+            label, sys->getRequestorName(pkt->req->requestorId()),
+            size, pkt->getAddr(), pkt->req->isUncacheable() ? 'U' : 'C');
+    DDUMP(MemoryAccess, pkt->getConstPtr<uint8_t>(), pkt->getSize());
+}
 
-#define CASE(A, T)                                                        \
-  case sizeof(T):                                                         \
-    DPRINTF(MemoryAccess,"%s from %s of size %i on address 0x%x data " \
-            "0x%x %c\n", A, system()->getMasterName(pkt->req->masterId()),\
-            pkt->getSize(), pkt->getAddr(), pkt->get<T>(),                \
-            pkt->req->isUncacheable() ? 'U' : 'C');                       \
-  break
-
-
-#define TRACE_PACKET(A)                                                 \
-    do {                                                                \
-        switch (pkt->getSize()) {                                       \
-          CASE(A, uint64_t);                                            \
-          CASE(A, uint32_t);                                            \
-          CASE(A, uint16_t);                                            \
-          CASE(A, uint8_t);                                             \
-          default:                                                      \
-            DPRINTF(MemoryAccess, "%s from %s of size %i on address 0x%x %c\n",\
-                    A, system()->getMasterName(pkt->req->masterId()),          \
-                    pkt->getSize(), pkt->getAddr(),                            \
-                    pkt->req->isUncacheable() ? 'U' : 'C');                    \
-            DDUMP(MemoryAccess, pkt->getConstPtr<uint8_t>(), pkt->getSize());  \
-        }                                                                      \
-    } while (0)
-
+#   define TRACE_PACKET(A) tracePacket(system(), A, pkt)
 #else
-
-#define TRACE_PACKET(A)
-
+#   define TRACE_PACKET(A)
 #endif
 
 void
 AbstractMemory::access(PacketPtr pkt)
 {
-    if (pkt->memInhibitAsserted()) {
-        DPRINTF(MemoryAccess, "mem inhibited on 0x%x: not responding\n",
+    if (pkt->cacheResponding()) {
+        DPRINTF(MemoryAccess, "Cache responding to %#llx: not responding\n",
                 pkt->getAddr());
         return;
     }
 
-    if (pkt->cmd == MemCmd::CleanEvict) {
+    if (pkt->cmd == MemCmd::CleanEvict || pkt->cmd == MemCmd::WritebackClean) {
         DPRINTF(MemoryAccess, "CleanEvict  on 0x%x: not responding\n",
                 pkt->getAddr());
       return;
     }
 
     if (pkt->isRowOp()) {
-        const Request::RowOpPayload* addrs = pkt->getConstPtr<Request::RowOpPayload>();
-        uint64_t *dest = (uint64_t*)(pmemAddr + addrs->dest - range.start());
-        uint64_t *src1 = (uint64_t*)(pmemAddr + addrs->src1 - range.start());
-        uint64_t *src2 = (uint64_t*)(pmemAddr + addrs->src2 - range.start());
-        DPRINTF(MemoryAccess, "Performing rowop %d on %p (%x) and %p (%x)\n",
-            addrs->op, src1, *src1, src2, src2 == NULL? 0 : *src2);
-        switch (addrs->op) {
-            case Request::ROWAND:
-                for (int i = 0; i < ROW_SIZE; i += sizeof(uint64_t)) {
-                    *dest++ = *src1++ & *src2++;
-                }
-                break;
-            case Request::ROWOR:
-                for (int i = 0; i < ROW_SIZE; i += sizeof(uint64_t)) {
-                    *dest++ = *src1++ | *src2++;
-                }
-                break;
-            case Request::ROWNOT:
-                for (int i = 0; i < ROW_SIZE; i += sizeof(uint64_t)) {
-                    *dest++ = ~*src1++;
-                }
-                break;
-            case Request::ROWXOR:
-                for (int i = 0; i < ROW_SIZE; i += sizeof(uint64_t)) {
-                    *dest++ = *src1++ ^ *src2++;
-                }
-                break;
-			case Request::ROWAP:
-				//TODO implement
-				break;
-			case Request::ROWAAP:
-				//TODO implement
-				break;
-            default:
-                assert(false);
-                break;
+        panic_if(!pmemAddr, "Row operations require backing memory");
+
+        auto *addrs = pkt->getConstPtr<Request::RowOpPayload>();
+        auto *dest = reinterpret_cast<uint64_t *>(toHostAddr(addrs->dest));
+        uint64_t *src1 = nullptr;
+        uint64_t *src2 = nullptr;
+
+        if (addrs->op != Request::ROWAP) {
+            src1 = reinterpret_cast<uint64_t *>(toHostAddr(addrs->src1));
         }
+        if (addrs->op != Request::ROWNOT &&
+            addrs->op != Request::ROWAAP &&
+            addrs->op != Request::ROWAP) {
+            src2 = reinterpret_cast<uint64_t *>(toHostAddr(addrs->src2));
+        }
+
+        switch (addrs->op) {
+          case Request::ROWAND:
+            for (int i = 0; i < Request::RowOpSize; i += sizeof(uint64_t)) {
+                *dest++ = *src1++ & *src2++;
+            }
+            break;
+          case Request::ROWOR:
+            for (int i = 0; i < Request::RowOpSize; i += sizeof(uint64_t)) {
+                *dest++ = *src1++ | *src2++;
+            }
+            break;
+          case Request::ROWNOT:
+            for (int i = 0; i < Request::RowOpSize; i += sizeof(uint64_t)) {
+                *dest++ = ~*src1++;
+            }
+            break;
+          case Request::ROWXOR:
+            for (int i = 0; i < Request::RowOpSize; i += sizeof(uint64_t)) {
+                *dest++ = *src1++ ^ *src2++;
+            }
+            break;
+          case Request::ROWAP:
+          case Request::ROWAAP:
+            break;
+          default:
+            panic("Unsupported row operation");
+        }
+
         if (pkt->needsResponse()) {
             pkt->makeResponse();
         }
         return;
     }
 
-    assert(AddrRange(pkt->getAddr(),
-                     pkt->getAddr() + (pkt->getSize() - 1)).isSubset(range));
+    assert(pkt->getAddrRange().isSubset(range));
 
-    uint8_t *hostAddr = pmemAddr + pkt->getAddr() - range.start();
+    uint8_t *host_addr = toHostAddr(pkt->getAddr());
 
     if (pkt->cmd == MemCmd::SwapReq) {
-        std::vector<uint8_t> overwrite_val(pkt->getSize());
-        uint64_t condition_val64;
-        uint32_t condition_val32;
+        if (pkt->isAtomicOp()) {
+            if (pmemAddr) {
+                pkt->setData(host_addr);
+                (*(pkt->getAtomicOp()))(host_addr);
+            }
+        } else {
+            std::vector<uint8_t> overwrite_val(pkt->getSize());
+            uint64_t condition_val64;
+            uint32_t condition_val32;
 
-        if (!pmemAddr)
-            panic("Swap only works if there is real memory (i.e. null=False)");
+            panic_if(!pmemAddr, "Swap only works if there is real memory " \
+                     "(i.e. null=False)");
 
-        bool overwrite_mem = true;
-        // keep a copy of our possible write value, and copy what is at the
-        // memory address into the packet
-        std::memcpy(&overwrite_val[0], pkt->getConstPtr<uint8_t>(),
-                    pkt->getSize());
-        std::memcpy(pkt->getPtr<uint8_t>(), hostAddr, pkt->getSize());
+            bool overwrite_mem = true;
+            // keep a copy of our possible write value, and copy what is at the
+            // memory address into the packet
+            pkt->writeData(&overwrite_val[0]);
+            pkt->setData(host_addr);
 
-        if (pkt->req->isCondSwap()) {
-            if (pkt->getSize() == sizeof(uint64_t)) {
-                condition_val64 = pkt->req->getExtraData();
-                overwrite_mem = !std::memcmp(&condition_val64, hostAddr,
-                                             sizeof(uint64_t));
-            } else if (pkt->getSize() == sizeof(uint32_t)) {
-                condition_val32 = (uint32_t)pkt->req->getExtraData();
-                overwrite_mem = !std::memcmp(&condition_val32, hostAddr,
-                                             sizeof(uint32_t));
-            } else
-                panic("Invalid size for conditional read/write\n");
+            if (pkt->req->isCondSwap()) {
+                if (pkt->getSize() == sizeof(uint64_t)) {
+                    condition_val64 = pkt->req->getExtraData();
+                    overwrite_mem = !std::memcmp(&condition_val64, host_addr,
+                                                 sizeof(uint64_t));
+                } else if (pkt->getSize() == sizeof(uint32_t)) {
+                    condition_val32 = (uint32_t)pkt->req->getExtraData();
+                    overwrite_mem = !std::memcmp(&condition_val32, host_addr,
+                                                 sizeof(uint32_t));
+                } else
+                    panic("Invalid size for conditional read/write\n");
+            }
+
+            if (overwrite_mem)
+                std::memcpy(host_addr, &overwrite_val[0], pkt->getSize());
+
+            assert(!pkt->req->isInstFetch());
+            TRACE_PACKET("Read/Write");
+            if (collectStats) {
+                stats.numOther[pkt->req->requestorId()]++;
+            }
         }
-
-        if (overwrite_mem)
-            std::memcpy(hostAddr, &overwrite_val[0], pkt->getSize());
-
-        assert(!pkt->req->isInstFetch());
-        TRACE_PACKET("Read/Write");
-        numOther[pkt->req->masterId()]++;
     } else if (pkt->isRead()) {
         assert(!pkt->isWrite());
         if (pkt->isLLSC()) {
+            assert(!pkt->fromCache());
+            // if the packet is not coming from a cache then we have
+            // to do the LL/SC tracking here
             trackLoadLocked(pkt);
         }
-        if (pmemAddr)
-            memcpy(pkt->getPtr<uint8_t>(), hostAddr, pkt->getSize());
+        if (pmemAddr) {
+            pkt->setData(host_addr);
+        }
         TRACE_PACKET(pkt->req->isInstFetch() ? "IFetch" : "Read");
-        numReads[pkt->req->masterId()]++;
-        bytesRead[pkt->req->masterId()] += pkt->getSize();
-        if (pkt->req->isInstFetch())
-            bytesInstRead[pkt->req->masterId()] += pkt->getSize();
-    } else if (pkt->isInvalidate()) {
+        if (collectStats) {
+            stats.numReads[pkt->req->requestorId()]++;
+            stats.bytesRead[pkt->req->requestorId()] += pkt->getSize();
+            if (pkt->req->isInstFetch()) {
+                stats.bytesInstRead[pkt->req->requestorId()] += pkt->getSize();
+            }
+        }
+    } else if (pkt->isInvalidate() || pkt->isClean()) {
+        assert(!pkt->isWrite());
+        // in a fastmem system invalidating and/or cleaning packets
+        // can be seen due to cache maintenance requests
+
         // no need to do anything
-        // this clause is intentionally before the write clause: the only
-        // transaction that is both a write and an invalidate is
-        // WriteInvalidate, and for the sake of consistency, it does not
-        // write to memory.  in a cacheless system, there are no WriteInv's
-        // because the Write -> WriteInvalidate rewrite happens in the cache.
     } else if (pkt->isWrite()) {
         if (writeOK(pkt)) {
             if (pmemAddr) {
-                memcpy(hostAddr, pkt->getConstPtr<uint8_t>(), pkt->getSize());
-                DPRINTF(MemoryAccess, "%s wrote %x bytes to address %x\n",
-                        __func__, pkt->getSize(), pkt->getAddr());
+                pkt->writeData(host_addr);
+                DPRINTF(MemoryAccess, "%s write due to %s\n",
+                        __func__, pkt->print());
             }
             assert(!pkt->req->isInstFetch());
             TRACE_PACKET("Write");
-            numWrites[pkt->req->masterId()]++;
-            bytesWritten[pkt->req->masterId()] += pkt->getSize();
+            if (collectStats) {
+                stats.numWrites[pkt->req->requestorId()]++;
+                stats.bytesWritten[pkt->req->requestorId()] += pkt->getSize();
+            }
         }
     } else {
-        panic("unimplemented");
+        panic("Unexpected packet %s", pkt->print());
     }
 
     if (pkt->needsResponse()) {
@@ -460,19 +539,20 @@ AbstractMemory::access(PacketPtr pkt)
 void
 AbstractMemory::functionalAccess(PacketPtr pkt)
 {
-    assert(AddrRange(pkt->getAddr(),
-                     pkt->getAddr() + pkt->getSize() - 1).isSubset(range));
+    assert(pkt->getAddrRange().isSubset(range));
 
-    uint8_t *hostAddr = pmemAddr + pkt->getAddr() - range.start();
+    uint8_t *host_addr = toHostAddr(pkt->getAddr());
 
     if (pkt->isRead()) {
-        if (pmemAddr)
-            memcpy(pkt->getPtr<uint8_t>(), hostAddr, pkt->getSize());
+        if (pmemAddr) {
+            pkt->setData(host_addr);
+        }
         TRACE_PACKET("Read");
         pkt->makeResponse();
     } else if (pkt->isWrite()) {
-        if (pmemAddr)
-            memcpy(hostAddr, pkt->getConstPtr<uint8_t>(), pkt->getSize());
+        if (pmemAddr) {
+            pkt->writeData(host_addr);
+        }
         TRACE_PACKET("Write");
         pkt->makeResponse();
     } else if (pkt->isPrint()) {
@@ -483,9 +563,12 @@ AbstractMemory::functionalAccess(PacketPtr pkt)
         // through printObj().
         prs->printLabels();
         // Right now we just print the single byte at the specified address.
-        ccprintf(prs->os, "%s%#x\n", prs->curPrefix(), *hostAddr);
+        ccprintf(prs->os, "%s%#x\n", prs->curPrefix(), *host_addr);
     } else {
         panic("AbstractMemory: unimplemented functional command %s",
               pkt->cmdString());
     }
 }
+
+} // namespace memory
+} // namespace gem5

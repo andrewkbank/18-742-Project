@@ -24,8 +24,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nathan Binkert
  */
 
 /**
@@ -40,16 +38,13 @@
 #include <inttypes.h>
 
 #include <cassert>
+#include <limits>
 #include <memory>
 #include <ostream>
 #include <stdexcept>
 
-#include "base/refcnt.hh"
-
-/** uint64_t constant */
-#define ULL(N)          ((uint64_t)N##ULL)
-/** int64_t constant */
-#define LL(N)           ((int64_t)N##LL)
+namespace gem5
+{
 
 /** Statistics counter type.  Not much excuse for not using a 64-bit
  * integer here, but if you're desperate and only run short
@@ -62,7 +57,7 @@ typedef int64_t Counter;
  */
 typedef uint64_t Tick;
 
-const Tick MaxTick = ULL(0xffffffffffffffff);
+const Tick MaxTick = 0xffffffffffffffffULL;
 
 /**
  * Cycles is a wrapper class for representing cycle counts, i.e. a
@@ -73,8 +68,7 @@ const Tick MaxTick = ULL(0xffffffffffffffff);
  * typedef, aiming to avoid unintentional mixing of cycles and ticks
  * in the code base.
  *
- * Operators are defined inside an ifndef block to avoid swig touching
- * them. Note that there is no overloading of the bool operator as the
+ * Note that there is no overloading of the bool operator as the
  * compiler is allowed to turn booleans into integers and this causes
  * a whole range of issues in a handful locations. The solution to
  * this problem would be to use the safe bool idiom, but for now we
@@ -91,56 +85,57 @@ class Cycles
 
   public:
 
-#ifndef SWIG // SWIG gets confused by constexpr
     /** Explicit constructor assigning a value. */
     explicit constexpr Cycles(uint64_t _c) : c(_c) { }
-#else
-    explicit Cycles(uint64_t _c) : c(_c) { }
-#endif
 
     /** Default constructor for parameter classes. */
     Cycles() : c(0) { }
-
-#ifndef SWIG // keep the operators away from SWIG
 
     /** Converting back to the value type. */
     constexpr operator uint64_t() const { return c; }
 
     /** Prefix increment operator. */
-    Cycles& operator++()
-    { ++c; return *this; }
+    Cycles& operator++() { ++c; return *this; }
 
     /** Prefix decrement operator. Is only temporarily used in the O3 CPU. */
-    Cycles& operator--()
-    { assert(c != 0); --c; return *this; }
+    Cycles& operator--() { assert(c != 0); --c; return *this; }
 
     /** In-place addition of cycles. */
-    Cycles& operator+=(const Cycles& cc)
-    { c += cc.c; return *this; }
+    Cycles& operator+=(const Cycles& cc) { c += cc.c; return *this; }
 
     /** Greater than comparison used for > Cycles(0). */
-    constexpr bool operator>(const Cycles& cc) const
-    { return c > cc.c; }
+    constexpr bool
+    operator>(const Cycles& cc) const
+    {
+        return c > cc.c;
+    }
 
-    constexpr Cycles operator +(const Cycles& b) const
-    { return Cycles(c + b.c); }
+    constexpr Cycles
+    operator+(const Cycles& b) const
+    {
+        return Cycles(c + b.c);
+    }
 
-    constexpr Cycles operator -(const Cycles& b) const
+    constexpr Cycles
+    operator-(const Cycles& b) const
     {
         return c >= b.c ? Cycles(c - b.c) :
             throw std::invalid_argument("RHS cycle value larger than LHS");
     }
 
-    constexpr Cycles operator <<(const int32_t shift) const
-    { return Cycles(c << shift); }
+    constexpr Cycles
+    operator <<(const int32_t shift) const
+    {
+        return Cycles(c << shift);
+    }
 
-    constexpr Cycles operator >>(const int32_t shift) const
-    { return Cycles(c >> shift); }
+    constexpr Cycles
+    operator >>(const int32_t shift) const
+    {
+        return Cycles(c >> shift);
+    }
 
     friend std::ostream& operator<<(std::ostream &out, const Cycles & cycles);
-
-#endif // SWIG not touching operators
-
 };
 
 /**
@@ -175,6 +170,65 @@ isRomMicroPC(MicroPC upc)
 
 const Addr MaxAddr = (Addr)-1;
 
+using RegVal = uint64_t;
+
+// Logical register index type.
+using RegIndex = uint16_t;
+
+static inline uint32_t
+floatToBits32(float val)
+{
+    union
+    {
+        float f;
+        uint32_t i;
+    } u;
+    u.f = val;
+    return u.i;
+}
+
+static inline uint64_t
+floatToBits64(double val)
+{
+    union
+    {
+        double f;
+        uint64_t i;
+    } u;
+    u.f = val;
+    return u.i;
+}
+
+static inline uint64_t floatToBits(double val) { return floatToBits64(val); }
+static inline uint32_t floatToBits(float val) { return floatToBits32(val); }
+
+static inline float
+bitsToFloat32(uint32_t val)
+{
+    union
+    {
+        float f;
+        uint32_t i;
+    } u;
+    u.i = val;
+    return u.f;
+}
+
+static inline double
+bitsToFloat64(uint64_t val)
+{
+    union
+    {
+        double f;
+        uint64_t i;
+    } u;
+    u.i = val;
+    return u.f;
+}
+
+static inline double bitsToFloat(uint64_t val) { return bitsToFloat64(val); }
+static inline float bitsToFloat(uint32_t val) { return bitsToFloat32(val); }
+
 /**
  * Thread index/ID type
  */
@@ -194,15 +248,10 @@ const PortID InvalidPortID = (PortID)-1;
 class FaultBase;
 typedef std::shared_ptr<FaultBase> Fault;
 
-#ifndef SWIG // Swig gets really confused by decltype
 // Rather than creating a shared_ptr instance and assigning it nullptr,
 // we just create an alias.
 constexpr decltype(nullptr) NoFault = nullptr;
-#endif
 
-enum ByteOrder {
-    BigEndianByteOrder,
-    LittleEndianByteOrder
-};
+} // namespace gem5
 
 #endif // __BASE_TYPES_HH__

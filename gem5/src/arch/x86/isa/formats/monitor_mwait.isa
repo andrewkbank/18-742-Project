@@ -1,7 +1,5 @@
 // Copyright (c) AMD
 // All rights reserved.
-//
-// Authors: Marc Orr
 
 // Monitor Instruction
 
@@ -17,19 +15,18 @@ output header {{
         { }
 
         std::string generateDisassembly(Addr pc,
-                const SymbolTable *symtab) const;
+                const loader::SymbolTable *symtab) const override;
     };
 }};
 
 output decoder {{
-    std::string MonitorInst::generateDisassembly(Addr PC,
-            const SymbolTable *symtab) const
+    std::string
+    MonitorInst::generateDisassembly(
+            Addr PC, const loader::SymbolTable *symtab) const
     {
         std::stringstream response;
 
         printMnemonic(response, mnemonic);
-        ccprintf(response, " ");
-        printReg(response, _srcRegIdx[0], machInst.opSize);
         return response.str();
     }
 }};
@@ -45,39 +42,39 @@ def format MonitorInst(code, *opt_flags) {{
 
 // Mwait instruction
 
-// Declarations for execute() methods.
-def template MwaitExecDeclare {{
-    Fault execute(%(CPU_exec_context)s *, Trace::InstRecord *) const;
-    Fault initiateAcc(%(CPU_exec_context)s *, Trace::InstRecord *) const;
-    Fault completeAcc(PacketPtr, %(CPU_exec_context)s *,
-                      Trace::InstRecord *) const;
-}};
-
 def template MwaitDeclare {{
     class %(class_name)s : public %(base_class)s
     {
-        public:
+      private:
+        %(reg_idx_arr_decl)s;
+
+      public:
         // Constructor.
         %(class_name)s(ExtMachInst machInst);
-        %(MwaitExecDeclare)s
+        Fault execute(ExecContext *, trace::InstRecord *) const override;
+        Fault initiateAcc(ExecContext *, trace::InstRecord *) const override;
+        Fault completeAcc(PacketPtr, ExecContext *,
+                          trace::InstRecord *) const override;
     };
 }};
 
 def template MwaitInitiateAcc {{
-    Fault %(class_name)s::initiateAcc(CPU_EXEC_CONTEXT * xc,
-            Trace::InstRecord * traceData) const
+    Fault %(class_name)s::initiateAcc(ExecContext * xc,
+            trace::InstRecord * traceData) const
     {
-        uint64_t m = 0;          //mem
         unsigned s = 0x8;        //size
         unsigned f = 0;          //flags
-        readMemTiming(xc, traceData, xc->getAddrMonitor()->vAddr, m, s, f);
+        if (!xc->getAddrMonitor()->armed) {
+            return NoFault;
+        }
+        initiateMemRead(xc, traceData, xc->getAddrMonitor()->vAddr, s, f);
         return NoFault;
     }
 }};
 
 def template MwaitCompleteAcc {{
-    Fault %(class_name)s::completeAcc(PacketPtr pkt, CPU_EXEC_CONTEXT *xc,
-            Trace::InstRecord *traceData) const
+    Fault %(class_name)s::completeAcc(PacketPtr pkt, ExecContext *xc,
+            trace::InstRecord *traceData) const
     {
         MicroHalt hltObj(machInst, mnemonic, 0x0);
         if(xc->mwait(pkt)) {
@@ -97,22 +94,22 @@ output header {{
                 OpClass __opClass) :
             X86ISA::X86StaticInst(_mnemonic, _machInst, __opClass)
         {
-            flags[IsMemRef] = 1;
             flags[IsLoad] = 1;
         }
 
         std::string generateDisassembly(Addr pc,
-                const SymbolTable *symtab) const;
+                const loader::SymbolTable *symtab) const override;
     };
 }};
 
 output decoder {{
-    std::string MwaitInst::generateDisassembly(Addr PC,
-            const SymbolTable *symtab) const
+    std::string
+    MwaitInst::generateDisassembly(
+            Addr PC, const loader::SymbolTable *symtab) const
     {
         std::stringstream response;
 
-        // Although mwait could take hints from eax and ecx, the _srcRegIdx
+        // Although mwait could take hints from eax and ecx, the srcRegIdx
         // is not set, and thus should not be printed here
         printMnemonic(response, mnemonic);
         return response.str();
@@ -128,4 +125,3 @@ def format MwaitInst(code, *opt_flags) {{
     exec_output += MwaitInitiateAcc.subst(iop)
     exec_output += MwaitCompleteAcc.subst(iop)
 }};
-

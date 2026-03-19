@@ -35,11 +35,17 @@
 #include "mem/ruby/common/Address.hh"
 #include "mem/ruby/common/DataBlock.hh"
 
+namespace gem5
+{
+
+namespace ruby
+{
+
 class SubBlock
 {
   public:
     SubBlock() { }
-    SubBlock(Addr addr, int size);
+    SubBlock(Addr addr, int size, int cl_bits);
     ~SubBlock() { }
 
     Addr getAddress() const { return m_address; }
@@ -68,6 +74,7 @@ class SubBlock
     // Data Members (m_ prefix)
     Addr m_address;
     std::vector<uint8_t> m_data;
+    int m_cache_line_bits;
 };
 
 inline std::ostream&
@@ -77,5 +84,8 @@ operator<<(std::ostream& out, const SubBlock& obj)
     out << std::flush;
     return out;
 }
+
+} // namespace ruby
+} // namespace gem5
 
 #endif // __MEM_RUBY_COMMON_SUBBLOCK_HH__

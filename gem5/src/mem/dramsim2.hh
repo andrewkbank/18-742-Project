@@ -33,8 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andreas Hansson
  */
 
 /**
@@ -45,12 +43,18 @@
 #define __MEM_DRAMSIM2_HH__
 
 #include <queue>
+#include <unordered_map>
 
-#include "base/hashmap.hh"
 #include "mem/abstract_mem.hh"
 #include "mem/dramsim2_wrapper.hh"
 #include "mem/qport.hh"
 #include "params/DRAMSim2.hh"
+
+namespace gem5
+{
+
+namespace memory
+{
 
 class DRAMSim2 : public AbstractMemory
 {
@@ -61,12 +65,12 @@ class DRAMSim2 : public AbstractMemory
      * having unbounded storage that is implicitly created in the port
      * itself.
      */
-    class MemoryPort : public SlavePort
+    class MemoryPort : public ResponsePort
     {
 
       private:
 
-        DRAMSim2& memory;
+        DRAMSim2& mem;
 
       public:
 
@@ -114,8 +118,8 @@ class DRAMSim2 : public AbstractMemory
      * done so that we can return the right packet on completion from
      * DRAMSim.
      */
-    m5::hash_map<Addr, std::queue<PacketPtr> > outstandingReads;
-    m5::hash_map<Addr, std::queue<PacketPtr> > outstandingWrites;
+    std::unordered_map<Addr, std::queue<PacketPtr> > outstandingReads;
+    std::unordered_map<Addr, std::queue<PacketPtr> > outstandingWrites;
 
     /**
      * Count the number of outstanding transactions so that we can
@@ -148,7 +152,7 @@ class DRAMSim2 : public AbstractMemory
     /**
      * Event to schedule sending of responses
      */
-    EventWrapper<DRAMSim2, &DRAMSim2::sendResponse> sendResponseEvent;
+    EventFunctionWrapper sendResponseEvent;
 
     /**
      * Progress the controller one clock cycle.
@@ -158,18 +162,18 @@ class DRAMSim2 : public AbstractMemory
     /**
      * Event to schedule clock ticks
      */
-    EventWrapper<DRAMSim2, &DRAMSim2::tick> tickEvent;
+    EventFunctionWrapper tickEvent;
 
-    /** @todo this is a temporary workaround until the 4-phase code is
-     * committed. upstream caches needs this packet until true is returned, so
-     * hold onto it for deletion until a subsequent call
+    /**
+     * Upstream caches need this packet until true is returned, so
+     * hold it for deletion until a subsequent call
      */
-    std::vector<PacketPtr> pendingDelete;
+    std::unique_ptr<Packet> pendingDelete;
 
   public:
 
     typedef DRAMSim2Params Params;
-    DRAMSim2(const Params *p);
+    DRAMSim2(const Params &p);
 
     /**
      * Read completion callback.
@@ -189,13 +193,13 @@ class DRAMSim2 : public AbstractMemory
      */
     void writeComplete(unsigned id, uint64_t addr, uint64_t cycle);
 
-    DrainState drain() M5_ATTR_OVERRIDE;
+    DrainState drain() override;
 
-    virtual BaseSlavePort& getSlavePort(const std::string& if_name,
-                                        PortID idx = InvalidPortID);
+    Port &getPort(const std::string &if_name,
+                  PortID idx=InvalidPortID) override;
 
-    virtual void init();
-    virtual void startup();
+    void init() override;
+    void startup() override;
 
   protected:
 
@@ -205,5 +209,8 @@ class DRAMSim2 : public AbstractMemory
     void recvRespRetry();
 
 };
+
+} // namespace memory
+} // namespace gem5
 
 #endif // __MEM_DRAMSIM2_HH__

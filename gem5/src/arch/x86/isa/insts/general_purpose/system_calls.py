@@ -32,10 +32,8 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Gabe Black
 
-microcode = '''
+microcode = """
 def macroop SYSCALL_64
 {
     # All 1s.
@@ -43,7 +41,7 @@ def macroop SYSCALL_64
 
     # Save the next RIP.
     rdip rcx
-    
+
     # Stick rflags with RF masked into r11.
     rflags t2
     limm t3, "~RFBit", dataSize=8
@@ -96,7 +94,7 @@ def macroop SYSCALL_COMPAT
 
     # Save the next RIP.
     rdip rcx
-    
+
     # Stick rflags with RF masked into r11.
     rflags t2
     limm t3, "~RFBit", dataSize=8
@@ -220,10 +218,10 @@ def macroop SYSRET_NON_64
 {
     panic "The sysret instruction isn't implemented in legacy mode."
 };
-'''
-#let {{
+"""
+# let {{
 #    class SYSENTER(Inst):
 #       "GenFault ${new UnimpInstFault}"
 #    class SYSEXIT(Inst):
 #       "GenFault ${new UnimpInstFault}"
-#}};
+# }};

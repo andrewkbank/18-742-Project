@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2015 ARM Limited
+ * Copyright (c) 2013-2017,2019 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -33,8 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Stephan Diestelhorst
  */
 
 /**
@@ -42,17 +40,23 @@
  * Implementation of a snoop filter.
  */
 
-#include "base/misc.hh"
+#include "mem/snoop_filter.hh"
+
+#include "base/logging.hh"
 #include "base/trace.hh"
 #include "debug/SnoopFilter.hh"
-#include "mem/snoop_filter.hh"
 #include "sim/system.hh"
+
+namespace gem5
+{
+
+const int SnoopFilter::SNOOP_MASK_SIZE;
 
 void
 SnoopFilter::eraseIfNullEntry(SnoopFilterCache::iterator& sf_it)
 {
     SnoopItem& sf_item = sf_it->second;
-    if (!(sf_item.requested | sf_item.holder)) {
+    if ((sf_item.requested | sf_item.holder).none()) {
         cachedLocations.erase(sf_it);
         DPRINTF(SnoopFilter, "%s:   Removed SF entry.\n",
                 __func__);
@@ -60,18 +64,22 @@ SnoopFilter::eraseIfNullEntry(SnoopFilterCache::iterator& sf_it)
 }
 
 std::pair<SnoopFilter::SnoopList, Cycles>
-SnoopFilter::lookupRequest(const Packet* cpkt, const SlavePort& slave_port)
+SnoopFilter::lookupRequest(const Packet* cpkt, const ResponsePort&
+                           cpu_side_port)
 {
-    DPRINTF(SnoopFilter, "%s: packet src %s addr 0x%x cmd %s\n",
-            __func__, slave_port.name(), cpkt->getAddr(), cpkt->cmdString());
+    DPRINTF(SnoopFilter, "%s: src %s packet %s\n", __func__,
+            cpu_side_port.name(), cpkt->print());
 
-    // Ultimately we should check if the packet came from an
-    // allocating source, not just if the port is snooping
-    bool allocate = !cpkt->req->isUncacheable() && slave_port.isSnooping();
+    // check if the packet came from a cache
+    bool allocate = !cpkt->req->isUncacheable() && cpu_side_port.isSnooping()
+        && cpkt->fromCache();
     Addr line_addr = cpkt->getBlockAddr(linesize);
-    SnoopMask req_port = portToMask(slave_port);
-    reqLookupResult = cachedLocations.find(line_addr);
-    bool is_hit = (reqLookupResult != cachedLocations.end());
+    if (cpkt->isSecure()) {
+        line_addr |= LineSecure;
+    }
+    SnoopMask req_port = portToMask(cpu_side_port);
+    reqLookupResult.it = cachedLocations.find(line_addr);
+    bool is_hit = (reqLookupResult.it != cachedLocations.end());
 
     // If the snoop filter has no entry, and we should not allocate,
     // do not create a new snoop filter entry, simply return a NULL
@@ -80,23 +88,24 @@ SnoopFilter::lookupRequest(const Packet* cpkt, const SlavePort& slave_port)
         return snoopDown(lookupLatency);
 
     // If no hit in snoop filter create a new element and update iterator
-    if (!is_hit)
-        reqLookupResult = cachedLocations.emplace(line_addr, SnoopItem()).first;
-    SnoopItem& sf_item = reqLookupResult->second;
+    if (!is_hit) {
+        reqLookupResult.it =
+            cachedLocations.emplace(line_addr, SnoopItem()).first;
+    }
+    SnoopItem& sf_item = reqLookupResult.it->second;
     SnoopMask interested = sf_item.holder | sf_item.requested;
 
     // Store unmodified value of snoop filter item in temp storage in
     // case we need to revert because of a send retry in
     // updateRequest.
-    retryItem = sf_item;
+    reqLookupResult.retryItem = sf_item;
 
-    totRequests++;
+    stats.totRequests++;
     if (is_hit) {
-        // Single bit set -> value is a power of two
-        if (isPow2(interested))
-            hitSingleRequests++;
+        if (interested.count() == 1)
+            stats.hitSingleRequests++;
         else
-            hitMultiRequests++;
+            stats.hitMultiRequests++;
     }
 
     DPRINTF(SnoopFilter, "%s:   SF value %x.%x\n",
@@ -108,10 +117,11 @@ SnoopFilter::lookupRequest(const Packet* cpkt, const SlavePort& slave_port)
                              lookupLatency);
 
     if (cpkt->needsResponse()) {
-        if (!cpkt->memInhibitAsserted()) {
+        if (!cpkt->cacheResponding()) {
             // Max one request per address per port
-            panic_if(sf_item.requested & req_port, "double request :( " \
-                     "SF value %x.%x\n", sf_item.requested, sf_item.holder);
+            panic_if((sf_item.requested & req_port).any(),
+                     "double request :( SF value %x.%x\n",
+                     sf_item.requested, sf_item.holder);
 
             // Mark in-flight requests to distinguish later on
             sf_item.requested |= req_port;
@@ -122,15 +132,16 @@ SnoopFilter::lookupRequest(const Packet* cpkt, const SlavePort& slave_port)
             // to the CPU, already -> the response will not be seen by this
             // filter -> we do not need to keep the in-flight request, but make
             // sure that we know that that cluster has a copy
-            panic_if(!(sf_item.holder & req_port), "Need to hold the value!");
+            panic_if((sf_item.holder & req_port).none(),
+                     "Need to hold the value!");
             DPRINTF(SnoopFilter,
                     "%s: not marking request. SF value %x.%x\n",
                     __func__,  sf_item.requested, sf_item.holder);
         }
     } else { // if (!cpkt->needsResponse())
-        assert(cpkt->evictingBlock());
+        assert(cpkt->isEviction());
         // make sure that the sender actually had the line
-        panic_if(!(sf_item.holder & req_port), "requester %x is not a " \
+        panic_if((sf_item.holder & req_port).none(), "requestor %x is not a " \
                  "holder :( SF value %x.%x\n", req_port,
                  sf_item.requested, sf_item.holder);
         // CleanEvicts and Writebacks -> the sender and all caches above
@@ -146,35 +157,40 @@ SnoopFilter::lookupRequest(const Packet* cpkt, const SlavePort& slave_port)
 }
 
 void
-SnoopFilter::finishRequest(bool will_retry, const Packet* cpkt)
+SnoopFilter::finishRequest(bool will_retry, Addr addr, bool is_secure)
 {
-    if (reqLookupResult != cachedLocations.end()) {
+    if (reqLookupResult.it != cachedLocations.end()) {
         // since we rely on the caller, do a basic check to ensure
         // that finishRequest is being called following lookupRequest
-        assert(reqLookupResult->first == cpkt->getBlockAddr(linesize));
+        assert(reqLookupResult.it->first == \
+                (is_secure ? ((addr & ~(Addr(linesize - 1))) | LineSecure) : \
+                 (addr & ~(Addr(linesize - 1)))));
         if (will_retry) {
+            SnoopItem retry_item = reqLookupResult.retryItem;
             // Undo any changes made in lookupRequest to the snoop filter
             // entry if the request will come again. retryItem holds
             // the previous value of the snoopfilter entry.
-            reqLookupResult->second = retryItem;
+            reqLookupResult.it->second = retry_item;
 
             DPRINTF(SnoopFilter, "%s:   restored SF value %x.%x\n",
-                    __func__,  retryItem.requested, retryItem.holder);
+                    __func__,  retry_item.requested, retry_item.holder);
         }
 
-        eraseIfNullEntry(reqLookupResult);
+        eraseIfNullEntry(reqLookupResult.it);
     }
 }
 
 std::pair<SnoopFilter::SnoopList, Cycles>
 SnoopFilter::lookupSnoop(const Packet* cpkt)
 {
-    DPRINTF(SnoopFilter, "%s: packet addr 0x%x cmd %s\n",
-            __func__, cpkt->getAddr(), cpkt->cmdString());
+    DPRINTF(SnoopFilter, "%s: packet %s\n", __func__, cpkt->print());
 
     assert(cpkt->isRequest());
 
     Addr line_addr = cpkt->getBlockAddr(linesize);
+    if (cpkt->isSecure()) {
+        line_addr |= LineSecure;
+    }
     auto sf_it = cachedLocations.find(line_addr);
     bool is_hit = (sf_it != cachedLocations.end());
 
@@ -190,58 +206,62 @@ SnoopFilter::lookupSnoop(const Packet* cpkt)
 
     SnoopItem& sf_item = sf_it->second;
 
-    DPRINTF(SnoopFilter, "%s:   old SF value %x.%x\n",
-            __func__, sf_item.requested, sf_item.holder);
-
     SnoopMask interested = (sf_item.holder | sf_item.requested);
 
-    totSnoops++;
-    // Single bit set -> value is a power of two
-    if (isPow2(interested))
-        hitSingleSnoops++;
+    stats.totSnoops++;
+
+    if (interested.count() == 1)
+        stats.hitSingleSnoops++;
     else
-        hitMultiSnoops++;
+        stats.hitMultiSnoops++;
 
     // ReadEx and Writes require both invalidation and exlusivity, while reads
     // require neither. Writebacks on the other hand require exclusivity but
     // not the invalidation. Previously Writebacks did not generate upward
-    // snoops so this was never an aissue. Now that Writebacks generate snoops
-    // we need to special case for Writebacks.
-    assert(cpkt->cmd == MemCmd::Writeback || cpkt->req->isUncacheable() ||
-           (cpkt->isInvalidate() == cpkt->needsExclusive()));
-    if (cpkt->isInvalidate() && !sf_item.requested) {
+    // snoops so this was never an issue. Now that Writebacks generate snoops
+    // we need a special case for Writebacks. Additionally cache maintenance
+    // operations can generate snoops as they clean and/or invalidate all
+    // caches down to the specified point of reference.
+    assert(cpkt->isWriteback() || cpkt->req->isUncacheable() ||
+           (cpkt->isInvalidate() == cpkt->needsWritable()) ||
+           cpkt->req->isCacheMaintenance());
+    if (cpkt->isInvalidate() && sf_item.requested.none()) {
         // Early clear of the holder, if no other request is currently going on
         // @todo: This should possibly be updated even though we do not filter
         // upward snoops
+        DPRINTF(SnoopFilter, "%s:   old SF value %x.%x\n",
+                __func__, sf_item.requested, sf_item.holder);
         sf_item.holder = 0;
+        DPRINTF(SnoopFilter, "%s:   new SF value %x.%x\n",
+                __func__, sf_item.requested, sf_item.holder);
+        eraseIfNullEntry(sf_it);
     }
-
-    eraseIfNullEntry(sf_it);
-    DPRINTF(SnoopFilter, "%s:   new SF value %x.%x interest: %x \n",
-            __func__, sf_item.requested, sf_item.holder, interested);
 
     return snoopSelected(maskToPortList(interested), lookupLatency);
 }
 
 void
 SnoopFilter::updateSnoopResponse(const Packet* cpkt,
-                                 const SlavePort& rsp_port,
-                                 const SlavePort& req_port)
+                                 const ResponsePort& rsp_port,
+                                 const ResponsePort& req_port)
 {
-    DPRINTF(SnoopFilter, "%s: packet rsp %s req %s addr 0x%x cmd %s\n",
-            __func__, rsp_port.name(), req_port.name(), cpkt->getAddr(),
-            cpkt->cmdString());
+    DPRINTF(SnoopFilter, "%s: rsp %s req %s packet %s\n",
+            __func__, rsp_port.name(), req_port.name(), cpkt->print());
 
     assert(cpkt->isResponse());
-    assert(cpkt->memInhibitAsserted());
+    assert(cpkt->cacheResponding());
 
-    // Ultimately we should check if the packet came from an
-    // allocating source, not just if the port is snooping
-    bool allocate = !cpkt->req->isUncacheable() && req_port.isSnooping();
-    if (!allocate)
+    // if this snoop response is due to an uncacheable request, or is
+    // being turned into a normal response, there is nothing more to
+    // do
+    if (cpkt->req->isUncacheable() || !req_port.isSnooping()) {
         return;
+    }
 
     Addr line_addr = cpkt->getBlockAddr(linesize);
+    if (cpkt->isSecure()) {
+        line_addr |= LineSecure;
+    }
     SnoopMask rsp_mask = portToMask(rsp_port);
     SnoopMask req_mask = portToMask(req_port);
     SnoopItem& sf_item = cachedLocations[line_addr];
@@ -250,46 +270,47 @@ SnoopFilter::updateSnoopResponse(const Packet* cpkt,
             __func__,  sf_item.requested, sf_item.holder);
 
     // The source should have the line
-    panic_if(!(sf_item.holder & rsp_mask), "SF value %x.%x does not have "\
-             "the line\n", sf_item.requested, sf_item.holder);
+    panic_if((sf_item.holder & rsp_mask).none(),
+             "SF value %x.%x does not have the line\n",
+             sf_item.requested, sf_item.holder);
 
     // The destination should have had a request in
-    panic_if(!(sf_item.requested & req_mask), "SF value %x.%x missing "\
+    panic_if((sf_item.requested & req_mask).none(), "SF value %x.%x missing "\
              "the original request\n",  sf_item.requested, sf_item.holder);
 
-    // Update the residency of the cache line.
-    if (cpkt->needsExclusive() || !cpkt->sharedAsserted()) {
-        DPRINTF(SnoopFilter, "%s:  dropping %x because needs: %i shared: %i "\
-                "SF val: %x.%x\n", __func__,  rsp_mask,
-                cpkt->needsExclusive(), cpkt->sharedAsserted(),
+    // If the snoop response has no sharers the line is passed in
+    // Modified state, and we know that there are no other copies, or
+    // they will all be invalidated imminently
+    if (!cpkt->hasSharers()) {
+        DPRINTF(SnoopFilter,
+                "%s: dropping %x because non-shared snoop "
+                "response SF val: %x.%x\n", __func__,  rsp_mask,
                 sf_item.requested, sf_item.holder);
-
-        sf_item.holder &= ~rsp_mask;
-        // The snoop filter does not see any ACKs from non-responding sharers
-        // that have been invalidated :(  So below assert would be nice, but..
-        //assert(sf_item.holder == 0);
         sf_item.holder = 0;
     }
-    assert(cpkt->cmd != MemCmd::Writeback);
+    assert(!cpkt->isWriteback());
+    // @todo Deal with invalidating responses
     sf_item.holder |=  req_mask;
     sf_item.requested &= ~req_mask;
-    assert(sf_item.requested | sf_item.holder);
+    assert((sf_item.requested | sf_item.holder).any());
     DPRINTF(SnoopFilter, "%s:   new SF value %x.%x\n",
             __func__, sf_item.requested, sf_item.holder);
 }
 
 void
 SnoopFilter::updateSnoopForward(const Packet* cpkt,
-        const SlavePort& rsp_port, const MasterPort& req_port)
+        const ResponsePort& rsp_port, const RequestPort& req_port)
 {
-    DPRINTF(SnoopFilter, "%s: packet rsp %s req %s addr 0x%x cmd %s\n",
-            __func__, rsp_port.name(), req_port.name(), cpkt->getAddr(),
-            cpkt->cmdString());
+    DPRINTF(SnoopFilter, "%s: rsp %s req %s packet %s\n",
+            __func__, rsp_port.name(), req_port.name(), cpkt->print());
 
     assert(cpkt->isResponse());
-    assert(cpkt->memInhibitAsserted());
+    assert(cpkt->cacheResponding());
 
     Addr line_addr = cpkt->getBlockAddr(linesize);
+    if (cpkt->isSecure()) {
+        line_addr |= LineSecure;
+    }
     auto sf_it = cachedLocations.find(line_addr);
     bool is_hit = sf_it != cachedLocations.end();
 
@@ -297,97 +318,100 @@ SnoopFilter::updateSnoopForward(const Packet* cpkt,
     if (!is_hit)
         return;
 
+    // If the snoop response has no sharers the line is passed in
+    // Modified state, and we know that there are no other copies, or
+    // they will all be invalidated imminently
+    if (!cpkt->hasSharers()) {
+        SnoopItem& sf_item = sf_it->second;
+
+        DPRINTF(SnoopFilter, "%s:   old SF value %x.%x\n",
+                __func__, sf_item.requested, sf_item.holder);
+        sf_item.holder = 0;
+        DPRINTF(SnoopFilter, "%s:   new SF value %x.%x\n",
+                __func__, sf_item.requested, sf_item.holder);
+
+        eraseIfNullEntry(sf_it);
+    }
+}
+
+void
+SnoopFilter::updateResponse(const Packet* cpkt, const ResponsePort&
+                            cpu_side_port)
+{
+    DPRINTF(SnoopFilter, "%s: src %s packet %s\n",
+            __func__, cpu_side_port.name(), cpkt->print());
+
+    assert(cpkt->isResponse());
+
+    // we only allocate if the packet actually came from a cache, but
+    // start by checking if the port is snooping
+    if (cpkt->req->isUncacheable() || !cpu_side_port.isSnooping())
+        return;
+
+    // next check if we actually allocated an entry
+    Addr line_addr = cpkt->getBlockAddr(linesize);
+    if (cpkt->isSecure()) {
+        line_addr |= LineSecure;
+    }
+    auto sf_it = cachedLocations.find(line_addr);
+    if (sf_it == cachedLocations.end())
+        return;
+
+    SnoopMask response_mask = portToMask(cpu_side_port);
     SnoopItem& sf_item = sf_it->second;
 
     DPRINTF(SnoopFilter, "%s:   old SF value %x.%x\n",
             __func__,  sf_item.requested, sf_item.holder);
 
-    // Remote (to this snoop filter) snoops update the filter
-    // already when they arrive from below, because we may not see
-    // any response.
-    if (cpkt->needsExclusive()) {
-        // If the request to this snoop response hit an in-flight
-        // transaction,
-        // the holder was not reset -> no assertion & do that here, now!
-        //assert(sf_item.holder == 0);
-        sf_item.holder = 0;
+    // Make sure we have seen the actual request, too
+    panic_if((sf_item.requested & response_mask).none(),
+             "SF value %x.%x missing request bit\n",
+             sf_item.requested, sf_item.holder);
+
+    sf_item.requested &= ~response_mask;
+    // Update the residency of the cache line.
+
+    if (cpkt->req->isCacheMaintenance()) {
+        // A cache clean response does not carry any data so it
+        // shouldn't change the holders, unless it is invalidating.
+        if (cpkt->isInvalidate()) {
+            sf_item.holder &= ~response_mask;
+        }
+        eraseIfNullEntry(sf_it);
+    } else {
+        // Any other response implies that a cache above will have the
+        // block.
+        sf_item.holder |= response_mask;
+        assert((sf_item.holder | sf_item.requested).any());
     }
     DPRINTF(SnoopFilter, "%s:   new SF value %x.%x\n",
             __func__, sf_item.requested, sf_item.holder);
-    eraseIfNullEntry(sf_it);
-
 }
 
-void
-SnoopFilter::updateResponse(const Packet* cpkt, const SlavePort& slave_port)
-{
-    DPRINTF(SnoopFilter, "%s: packet src %s addr 0x%x cmd %s\n",
-            __func__, slave_port.name(), cpkt->getAddr(), cpkt->cmdString());
-
-    assert(cpkt->isResponse());
-
-    // Ultimately we should check if the packet came from an
-    // allocating source, not just if the port is snooping
-    bool allocate = !cpkt->req->isUncacheable() && slave_port.isSnooping();
-    if (!allocate)
-        return;
-
-    Addr line_addr = cpkt->getBlockAddr(linesize);
-    SnoopMask slave_mask = portToMask(slave_port);
-    SnoopItem& sf_item = cachedLocations[line_addr];
-
-    DPRINTF(SnoopFilter, "%s:   old SF value %x.%x\n",
-            __func__,  sf_item.requested, sf_item.holder);
-
-    // Make sure we have seen the actual request, too
-    panic_if(!(sf_item.requested & slave_mask), "SF value %x.%x missing "\
-             "request bit\n", sf_item.requested, sf_item.holder);
-
-    // Update the residency of the cache line. Here we assume that the
-    // line has been zapped in all caches that are not the responder.
-     if (cpkt->needsExclusive() || !cpkt->sharedAsserted())
-        sf_item.holder = 0;
-    sf_item.holder |=  slave_mask;
-    sf_item.requested &= ~slave_mask;
-    assert(sf_item.holder | sf_item.requested);
-    DPRINTF(SnoopFilter, "%s:   new SF value %x.%x\n",
-            __func__, sf_item.requested, sf_item.holder);
-}
+SnoopFilter::SnoopFilterStats::SnoopFilterStats(statistics::Group *parent)
+    : statistics::Group(parent),
+      ADD_STAT(totRequests, statistics::units::Count::get(),
+               "Total number of requests made to the snoop filter."),
+      ADD_STAT(hitSingleRequests, statistics::units::Count::get(),
+               "Number of requests hitting in the snoop filter with a single "
+               "holder of the requested data."),
+      ADD_STAT(hitMultiRequests, statistics::units::Count::get(),
+               "Number of requests hitting in the snoop filter with multiple "
+               "(>1) holders of the requested data."),
+      ADD_STAT(totSnoops, statistics::units::Count::get(),
+               "Total number of snoops made to the snoop filter."),
+      ADD_STAT(hitSingleSnoops, statistics::units::Count::get(),
+               "Number of snoops hitting in the snoop filter with a single "
+               "holder of the requested data."),
+      ADD_STAT(hitMultiSnoops, statistics::units::Count::get(),
+               "Number of snoops hitting in the snoop filter with multiple "
+               "(>1) holders of the requested data.")
+{}
 
 void
 SnoopFilter::regStats()
 {
-    totRequests
-        .name(name() + ".tot_requests")
-        .desc("Total number of requests made to the snoop filter.");
-
-    hitSingleRequests
-        .name(name() + ".hit_single_requests")
-        .desc("Number of requests hitting in the snoop filter with a single "\
-              "holder of the requested data.");
-
-    hitMultiRequests
-        .name(name() + ".hit_multi_requests")
-        .desc("Number of requests hitting in the snoop filter with multiple "\
-              "(>1) holders of the requested data.");
-
-    totSnoops
-        .name(name() + ".tot_snoops")
-        .desc("Total number of snoops made to the snoop filter.");
-
-    hitSingleSnoops
-        .name(name() + ".hit_single_snoops")
-        .desc("Number of snoops hitting in the snoop filter with a single "\
-              "holder of the requested data.");
-
-    hitMultiSnoops
-        .name(name() + ".hit_multi_snoops")
-        .desc("Number of snoops hitting in the snoop filter with multiple "\
-              "(>1) holders of the requested data.");
+    SimObject::regStats();
 }
 
-SnoopFilter *
-SnoopFilterParams::create()
-{
-    return new SnoopFilter(this);
-}
+} // namespace gem5

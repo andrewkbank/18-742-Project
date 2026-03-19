@@ -1,4 +1,4 @@
-# Copyright (c) 2015 ARM Limited
+# Copyright (c) 2015, 2021 Arm Limited
 # All rights reserved.
 #
 # The license below extends only to copyright in the software and shall
@@ -35,22 +35,26 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Nathan Binkert
-#          Andreas Hansson
 
-from MemObject import MemObject
+from m5.objects.ClockedObject import ClockedObject
 from m5.params import *
 from m5.proxy import *
 
-class MemTest(MemObject):
-    type = 'MemTest'
+
+class MemTest(ClockedObject):
+    type = "MemTest"
     cxx_header = "cpu/testers/memtest/memtest.hh"
+    cxx_class = "gem5::MemTest"
 
     # Interval of packet injection, the size of the memory range
     # touched, and an optional stop condition
     interval = Param.Cycles(1, "Interval between request packets")
     size = Param.Unsigned(65536, "Size of memory region to use (bytes)")
+    base_addr_1 = Param.Addr(0x100000, "Start of the first testing region")
+    base_addr_2 = Param.Addr(0x400000, "Start of the second testing region")
+    uncacheable_base_addr = Param.Addr(
+        0x800000, "Start of the uncacheable testing region"
+    )
     max_loads = Param.Counter(0, "Number of loads to execute before exiting")
 
     # Control the mix of packets and if functional accesses are part of
@@ -58,18 +62,22 @@ class MemTest(MemObject):
     percent_reads = Param.Percent(65, "Percentage reads")
     percent_functional = Param.Percent(50, "Percentage functional accesses")
     percent_uncacheable = Param.Percent(10, "Percentage uncacheable")
+    percent_atomic = Param.Percent(0, "Percentage atomics")
 
     # Determine how often to print progress messages and what timeout
     # to use for checking progress of both requests and responses
-    progress_interval = Param.Counter(1000000,
-        "Progress report interval (in accesses)")
-    progress_check = Param.Cycles(5000000, "Cycles before exiting " \
-                                      "due to lack of progress")
+    progress_interval = Param.Counter(
+        1000000, "Progress report interval (in accesses)"
+    )
+    progress_check = Param.Cycles(
+        5000000, "Cycles before exiting due to lack of progress"
+    )
 
-    port = MasterPort("Port to the memory system")
+    port = RequestPort("Port to the memory system")
     system = Param.System(Parent.any, "System this tester is part of")
 
     # Add the ability to supress error responses on functional
     # accesses as Ruby needs this
-    suppress_func_warnings = Param.Bool(False, "Suppress warnings when "\
-                                            "functional accesses fail.")
+    suppress_func_errors = Param.Bool(
+        False, "Suppress panic when functional accesses fail."
+    )

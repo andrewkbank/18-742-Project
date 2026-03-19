@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010 ARM Limited
+ * Copyright (c) 2010,2019 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -33,18 +33,21 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Ali Saidi
  */
+
+#include "dev/arm/a9scu.hh"
 
 #include "base/intmath.hh"
 #include "base/trace.hh"
-#include "dev/arm/a9scu.hh"
 #include "mem/packet.hh"
 #include "mem/packet_access.hh"
+#include "params/A9SCU.hh"
 #include "sim/system.hh"
 
-A9SCU::A9SCU(Params *p)
+namespace gem5
+{
+
+A9SCU::A9SCU(const Params &p)
     : BasicPioDevice(p, 0x60)
 {
 }
@@ -58,23 +61,26 @@ A9SCU::read(PacketPtr pkt)
 
     switch(daddr) {
       case Control:
-        pkt->set(1); // SCU already enabled
+        pkt->setLE(1); // SCU already enabled
         break;
       case Config:
-        /* Without making a completely new SCU, we can use the core count field
-         * as 4 bits and inform the OS of up to 16 CPUs.  Although the core
-         * count is technically bits [1:0] only, bits [3:2] are SBZ for future
-         * expansion like this.
-         */
-        if (sys->numContexts() > 4) {
-            warn_once("A9SCU with >4 CPUs is unsupported\n");
-            if (sys->numContexts() > 15)
-                fatal("Too many CPUs (%d) for A9SCU!\n", sys->numContexts());
+        {
+            /* Without making a completely new SCU, we can use the core count
+             * field as 4 bits and inform the OS of up to 16 CPUs.  Although
+             * the core count is technically bits [1:0] only, bits [3:2] are
+             * SBZ for future expansion like this.
+             */
+            int threads = sys->threads.size();
+            if (threads > 4) {
+                warn_once("A9SCU with >4 CPUs is unsupported");
+                fatal_if(threads > 15,
+                        "Too many CPUs (%d) for A9SCU!", threads);
+            }
+            int smp_bits, core_cnt;
+            smp_bits = (1 << threads) - 1;
+            core_cnt = threads - 1;
+            pkt->setLE(smp_bits << 4 | core_cnt);
         }
-        int smp_bits, core_cnt;
-        smp_bits = power(2,sys->numContexts()) - 1;
-        core_cnt = sys->numContexts() - 1;
-        pkt->set(smp_bits << 4 | core_cnt);
         break;
       default:
         // Only configuration register is implemented
@@ -95,15 +101,11 @@ A9SCU::write(PacketPtr pkt)
     switch (daddr) {
       default:
         // Nothing implemented at this point
-        panic("Tried to write SCU at offset %#x\n", daddr);
+        warn("Tried to write SCU at offset %#x\n", daddr);
         break;
     }
     pkt->makeAtomicResponse();
     return pioDelay;
 }
 
-A9SCU *
-A9SCUParams::create()
-{
-    return new A9SCU(this);
-}
+} // namespace gem5

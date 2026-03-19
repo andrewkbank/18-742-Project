@@ -33,9 +33,9 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Ali Saidi
  */
+
+#include "dev/arm/rtc_pl031.hh"
 
 #include "base/intmath.hh"
 #include "base/time.hh"
@@ -43,15 +43,21 @@
 #include "debug/Checkpoint.hh"
 #include "debug/Timer.hh"
 #include "dev/arm/amba_device.hh"
-#include "dev/arm/rtc_pl031.hh"
 #include "mem/packet.hh"
 #include "mem/packet_access.hh"
+#include "params/PL031.hh"
 
-PL031::PL031(Params *p)
-    : AmbaIntDevice(p, 0xfff), timeVal(mkutctime(&p->time)),
-      lastWrittenTick(0), loadVal(0), matchVal(0),
-      rawInt(false), maskInt(false), pendingInt(false), matchEvent(this)
+namespace gem5
 {
+
+PL031::PL031(const Params &p)
+    : AmbaIntDevice(p, 0x1000), lastWrittenTick(0), loadVal(0), matchVal(0),
+      rawInt(false), maskInt(false), pendingInt(false),
+      matchEvent([this]{ counterMatch(); }, name())
+{
+    // Make a temporary copy so mkutctime can modify it.
+    struct tm local_time = p.time;
+    timeVal = mkutctime(&local_time);
 }
 
 
@@ -59,7 +65,7 @@ Tick
 PL031::read(PacketPtr pkt)
 {
     assert(pkt->getAddr() >= pioAddr && pkt->getAddr() < pioAddr + pioSize);
-    assert(pkt->getSize() == 4);
+    assert(pkt->getSize() <= 4);
     Addr daddr = pkt->getAddr() - pioAddr;
     uint32_t data;
 
@@ -67,7 +73,8 @@ PL031::read(PacketPtr pkt)
 
     switch (daddr) {
       case DataReg:
-        data = timeVal + ((curTick() - lastWrittenTick) / SimClock::Int::s);
+        data = timeVal +
+            ((curTick() - lastWrittenTick) / sim_clock::as_int::s);
         break;
       case MatchReg:
         data = matchVal;
@@ -90,29 +97,14 @@ PL031::read(PacketPtr pkt)
       default:
         if (readId(pkt, ambaId, pioAddr)) {
             // Hack for variable sized access
-            data = pkt->get<uint32_t>();
+            data = pkt->getUintX(ByteOrder::little);
             break;
         }
         panic("Tried to read PL031 at offset %#x that doesn't exist\n", daddr);
         break;
     }
 
-    switch(pkt->getSize()) {
-      case 1:
-        pkt->set<uint8_t>(data);
-        break;
-      case 2:
-        pkt->set<uint16_t>(data);
-        break;
-      case 4:
-        pkt->set<uint32_t>(data);
-        break;
-      default:
-        panic("Uart read size too big?\n");
-        break;
-    }
-
-
+    pkt->setUintX(data, ByteOrder::little);
     pkt->makeAtomicResponse();
     return pioDelay;
 }
@@ -121,7 +113,7 @@ Tick
 PL031::write(PacketPtr pkt)
 {
     assert(pkt->getAddr() >= pioAddr && pkt->getAddr() < pioAddr + pioSize);
-    assert(pkt->getSize() == 4);
+    assert(pkt->getSize() <= 4);
     Addr daddr = pkt->getAddr() - pioAddr;
     DPRINTF(Timer, "Writing to RTC at offset: %#x\n", daddr);
 
@@ -129,22 +121,22 @@ PL031::write(PacketPtr pkt)
       case DataReg:
         break;
       case MatchReg:
-        matchVal = pkt->get<uint32_t>();
+        matchVal = pkt->getLE<uint32_t>();
         resyncMatch();
         break;
       case LoadReg:
         lastWrittenTick = curTick();
-        timeVal = pkt->get<uint32_t>();
+        timeVal = pkt->getLE<uint32_t>();
         loadVal = timeVal;
         resyncMatch();
         break;
       case ControlReg:
         break; // Can't stop when started
       case IntMask:
-        maskInt = pkt->get<uint32_t>();
+        maskInt = pkt->getLE<uint32_t>();
         break;
       case IntClear:
-        if (pkt->get<uint32_t>()) {
+        if (pkt->getLE<uint32_t>()) {
             rawInt = false;
             pendingInt = false;
         }
@@ -167,7 +159,7 @@ PL031::resyncMatch()
             timeVal);
 
     uint32_t seconds_until = matchVal - timeVal;
-    Tick ticks_until = SimClock::Int::s * seconds_until;
+    Tick ticks_until = sim_clock::as_int::s * seconds_until;
 
     if (matchEvent.scheduled()) {
         DPRINTF(Timer, "-- Event was already schedule, de-scheduling\n");
@@ -187,7 +179,7 @@ PL031::counterMatch()
     pendingInt = maskInt & rawInt;
     if (pendingInt && !old_pending) {
         DPRINTF(Timer, "-- Causing interrupt\n");
-        gic->sendInt(intNum);
+        interrupt->raise();
     }
 }
 
@@ -236,10 +228,4 @@ PL031::unserialize(CheckpointIn &cp)
     }
 }
 
-
-
-PL031 *
-PL031Params::create()
-{
-    return new PL031(this);
-}
+} // namespace gem5

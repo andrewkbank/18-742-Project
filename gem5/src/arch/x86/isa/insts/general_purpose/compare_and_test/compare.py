@@ -32,10 +32,8 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Gabe Black
 
-microcode = '''
+microcode = """
 def macroop CMP_R_M
 {
     ld t1, seg, sib, disp
@@ -87,4 +85,4 @@ def macroop CMP_R_I
     limm t1, imm
     sub t0, reg, t1, flags=(OF, SF, ZF, AF, PF, CF)
 };
-'''
+"""

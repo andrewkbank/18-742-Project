@@ -27,11 +27,23 @@
  */
 
 
-#ifndef TYPEDEFINES_H
-#define TYPEDEFINES_H
+#ifndef __MEM_RUBY_COMMON_TYPEDEFINES_HH__
+#define __MEM_RUBY_COMMON_TYPEDEFINES_HH__
+
+#include <string>
+
+namespace gem5
+{
+
+namespace ruby
+{
 
 typedef unsigned int LinkID;
 typedef unsigned int NodeID;
 typedef unsigned int SwitchID;
+typedef std::string PortDirection;
 
-#endif
+} // namespace ruby
+} // namespace gem5
+
+#endif //__MEM_RUBY_COMMON_TYPEDEFINES_HH__

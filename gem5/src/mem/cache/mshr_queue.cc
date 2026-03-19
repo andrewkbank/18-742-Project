@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2013, 2015 ARM Limited
+ * Copyright (c) 2012-2013, 2015-2016, 2018 ARM Limited
  * All rights reserved.
  *
  * The license below extends only to copyright in the software and shall
@@ -36,124 +36,42 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Erik Hallnor
- *          Andreas Sandberg
  */
 
 /** @file
  * Definition of MSHRQueue class functions.
  */
 
-#include "base/trace.hh"
 #include "mem/cache/mshr_queue.hh"
-#include "debug/Drain.hh"
 
-using namespace std;
+#include <cassert>
+
+#include "debug/MSHR.hh"
+#include "mem/cache/mshr.hh"
+
+namespace gem5
+{
 
 MSHRQueue::MSHRQueue(const std::string &_label,
-                     int num_entries, int reserve, int demand_reserve,
-                     int _index)
-    : label(_label), numEntries(num_entries + reserve - 1),
-      numReserve(reserve), demandReserve(demand_reserve),
-      registers(numEntries), allocated(0),
-      inServiceEntries(0), index(_index)
-{
-    for (int i = 0; i < numEntries; ++i) {
-        registers[i].queue = this;
-        freeList.push_back(&registers[i]);
-    }
-}
-
-MSHR *
-MSHRQueue::findMatch(Addr blk_addr, bool is_secure) const
-{
-    for (const auto& mshr : allocatedList) {
-        // we ignore any MSHRs allocated for uncacheable accesses and
-        // simply ignore them when matching, in the cache we never
-        // check for matches when adding new uncacheable entries, and
-        // we do not want normal cacheable accesses being added to an
-        // MSHR serving an uncacheable access
-        if (!mshr->isUncacheable() && mshr->blkAddr == blk_addr &&
-            mshr->isSecure == is_secure) {
-            return mshr;
-        }
-    }
-    return NULL;
-}
-
-bool
-MSHRQueue::findMatches(Addr blk_addr, bool is_secure,
-                       vector<MSHR*>& matches) const
-{
-    // Need an empty vector
-    assert(matches.empty());
-    bool retval = false;
-    for (const auto& mshr : allocatedList) {
-        if (!mshr->isUncacheable() && mshr->blkAddr == blk_addr &&
-            mshr->isSecure == is_secure) {
-            retval = true;
-            matches.push_back(mshr);
-        }
-    }
-    return retval;
-}
-
-
-bool
-MSHRQueue::checkFunctional(PacketPtr pkt, Addr blk_addr)
-{
-    pkt->pushLabel(label);
-    for (const auto& mshr : allocatedList) {
-        if (mshr->blkAddr == blk_addr && mshr->checkFunctional(pkt)) {
-            pkt->popLabel();
-            return true;
-        }
-    }
-    pkt->popLabel();
-    return false;
-}
-
-
-MSHR *
-MSHRQueue::findPending(Addr blk_addr, bool is_secure) const
-{
-    for (const auto& mshr : readyList) {
-        if (mshr->blkAddr == blk_addr && mshr->isSecure == is_secure) {
-            return mshr;
-        }
-    }
-    return NULL;
-}
-
-
-MSHR::Iterator
-MSHRQueue::addToReadyList(MSHR *mshr)
-{
-    if (readyList.empty() || readyList.back()->readyTime <= mshr->readyTime) {
-        return readyList.insert(readyList.end(), mshr);
-    }
-
-    for (auto i = readyList.begin(); i != readyList.end(); ++i) {
-        if ((*i)->readyTime > mshr->readyTime) {
-            return readyList.insert(i, mshr);
-        }
-    }
-    assert(false);
-    return readyList.end();  // keep stupid compilers happy
-}
-
+                     int num_entries, int reserve,
+                     int demand_reserve, std::string cache_name = "")
+    : Queue<MSHR>(_label, num_entries, reserve, cache_name + ".mshr_queue"),
+      demandReserve(demand_reserve)
+{}
 
 MSHR *
 MSHRQueue::allocate(Addr blk_addr, unsigned blk_size, PacketPtr pkt,
-                    Tick when_ready, Counter order)
+                    Tick when_ready, Counter order, bool alloc_on_fill)
 {
     assert(!freeList.empty());
     MSHR *mshr = freeList.front();
     assert(mshr->getNumTargets() == 0);
     freeList.pop_front();
 
-    mshr->allocate(blk_addr, blk_size, pkt, when_ready, order);
+    DPRINTF(MSHR, "Allocating new MSHR. Number in use will be %lu/%lu\n",
+            allocatedList.size() + 1, numEntries);
+
+    mshr->allocate(blk_addr, blk_size, pkt, when_ready, order, alloc_on_fill);
     mshr->allocIter = allocatedList.insert(allocatedList.end(), mshr);
     mshr->readyIter = addToReadyList(mshr);
 
@@ -161,33 +79,16 @@ MSHRQueue::allocate(Addr blk_addr, unsigned blk_size, PacketPtr pkt,
     return mshr;
 }
 
-
 void
-MSHRQueue::deallocate(MSHR *mshr)
+MSHRQueue::deallocate(MSHR* mshr)
 {
-    deallocateOne(mshr);
+
+    DPRINTF(MSHR, "Deallocating all targets: %s", mshr->print());
+    Queue<MSHR>::deallocate(mshr);
+    DPRINTF(MSHR, "MSHR deallocated. Number in use: %lu/%lu\n",
+            allocatedList.size(), numEntries);
 }
 
-MSHR::Iterator
-MSHRQueue::deallocateOne(MSHR *mshr)
-{
-    MSHR::Iterator retval = allocatedList.erase(mshr->allocIter);
-    freeList.push_front(mshr);
-    allocated--;
-    if (mshr->inService) {
-        inServiceEntries--;
-    } else {
-        readyList.erase(mshr->readyIter);
-    }
-    mshr->deallocate();
-    if (drainState() == DrainState::Draining && allocated == 0) {
-        // Notify the drain manager that we have completed draining if
-        // there are no other outstanding requests in this MSHR queue.
-        DPRINTF(Drain, "MSHRQueue now empty, signalling drained\n");
-        signalDrainDone();
-    }
-    return retval;
-}
 
 void
 MSHRQueue::moveToFront(MSHR *mshr)
@@ -200,14 +101,22 @@ MSHRQueue::moveToFront(MSHR *mshr)
 }
 
 void
-MSHRQueue::markInService(MSHR *mshr, bool pending_dirty_resp)
+MSHRQueue::delay(MSHR *mshr, Tick delay_ticks)
 {
-    if (mshr->markInService(pending_dirty_resp)) {
-        deallocate(mshr);
-    } else {
-        readyList.erase(mshr->readyIter);
-        inServiceEntries += 1;
-    }
+    mshr->delay(delay_ticks);
+    auto it = std::find_if(mshr->readyIter, readyList.end(),
+                            [mshr] (const MSHR* _mshr) {
+                                return mshr->readyTime >= _mshr->readyTime;
+                            });
+    readyList.splice(it, readyList, mshr->readyIter);
+}
+
+void
+MSHRQueue::markInService(MSHR *mshr, bool pending_modified_resp)
+{
+    mshr->markInService(pending_modified_resp);
+    readyList.erase(mshr->readyIter);
+    _numInService += 1;
 }
 
 void
@@ -215,7 +124,7 @@ MSHRQueue::markPending(MSHR *mshr)
 {
     assert(mshr->inService);
     mshr->inService = false;
-    --inServiceEntries;
+    --_numInService;
     /**
      * @ todo might want to add rerequests to front of pending list for
      * performance.
@@ -232,39 +141,11 @@ MSHRQueue::forceDeallocateTarget(MSHR *mshr)
     mshr->popTarget();
     // Delete mshr if no remaining targets
     if (!mshr->hasTargets() && !mshr->promoteDeferredTargets()) {
-        deallocateOne(mshr);
+        deallocate(mshr);
     }
 
     // Notify if MSHR queue no longer full
     return was_full && !isFull();
 }
 
-void
-MSHRQueue::squash(int threadNum)
-{
-    for (auto i = allocatedList.begin(); i != allocatedList.end();) {
-        MSHR *mshr = *i;
-        if (mshr->threadNum == threadNum) {
-            while (mshr->hasTargets()) {
-                mshr->popTarget();
-                assert(0/*target->req->threadId()*/ == threadNum);
-            }
-            assert(!mshr->hasTargets());
-            assert(mshr->getNumTargets()==0);
-            if (!mshr->inService) {
-                i = deallocateOne(mshr);
-            } else {
-                //mshr->pkt->flags &= ~CACHE_LINE_FILL;
-                ++i;
-            }
-        } else {
-            ++i;
-        }
-    }
-}
-
-DrainState
-MSHRQueue::drain()
-{
-    return allocated == 0 ? DrainState::Drained : DrainState::Draining;
-}
+} // namespace gem5

@@ -1,4 +1,16 @@
 /*
+ * Copyright (c) 2021 ARM Limited
+ * All rights reserved.
+ *
+ * The license below extends only to copyright in the software and shall
+ * not be construed as granting a license to any other intellectual
+ * property including but not limited to intellectual property relating
+ * to a hardware implementation of the functionality of the software
+ * licensed hereunder.  You may use the software subject to the license
+ * terms below provided that you ensure that this notice is replicated
+ * unmodified and in its entirety in all distributions of the software,
+ * modified or unmodified, in source code or in binary form.
+ *
  * Copyright (c) 1999-2008 Mark D. Hill and David A. Wood
  * All rights reserved.
  *
@@ -32,14 +44,31 @@
 #include <inttypes.h>
 
 #include <cassert>
+#include <deque>
 #include <iomanip>
 #include <iostream>
+
+#include "mem/packet.hh"
+
+namespace gem5
+{
+
+namespace ruby
+{
+
+class WriteMask;
 
 class DataBlock
 {
   public:
-    DataBlock()
+    // Ideally this should nost be called. We allow default so that protocols
+    // do not need to be changed.
+    DataBlock() = default;
+
+    DataBlock(int blk_size)
     {
+        assert(!m_alloc);
+        m_block_size = blk_size;
         alloc();
     }
 
@@ -49,6 +78,12 @@ class DataBlock
     {
         if (m_alloc)
             delete [] m_data;
+
+        // If data block involved in atomic
+        // operations, free all meta data
+        for (auto log : m_atomicLog) {
+            delete [] log;
+        }
     }
 
     DataBlock& operator=(const DataBlock& obj);
@@ -58,16 +93,33 @@ class DataBlock
     void clear();
     uint8_t getByte(int whichByte) const;
     const uint8_t *getData(int offset, int len) const;
+    uint8_t* popAtomicLogEntryFront();
+    int numAtomicLogEntries() const;
+    void clearAtomicLogEntries();
+    uint8_t *getDataMod(int offset);
     void setByte(int whichByte, uint8_t data);
     void setData(const uint8_t *data, int offset, int len);
-    void copyPartial(const DataBlock & dblk, int offset, int len);
+    void setData(PacketPtr pkt);
+    void copyPartial(const DataBlock &dblk, int offset, int len);
+    void copyPartial(const DataBlock &dblk, const WriteMask &mask);
+    void atomicPartial(const DataBlock & dblk, const WriteMask & mask,
+            bool isAtomicNoReturn=true);
     bool equal(const DataBlock& obj) const;
     void print(std::ostream& out) const;
 
+    int getBlockSize() const { return m_block_size; }
+    void setBlockSize(int block_size) { realloc(block_size); }
+    bool isAlloc() const { return m_alloc; }
+    void realloc(int blk_size);
+
   private:
     void alloc();
-    uint8_t *m_data;
-    bool m_alloc;
+    uint8_t *m_data = nullptr;
+    bool m_alloc = false;
+    int m_block_size = 0;
+
+    // Tracks block changes when atomic ops are applied
+    std::deque<uint8_t*> m_atomicLog;
 };
 
 inline void
@@ -84,18 +136,21 @@ DataBlock::assign(uint8_t *data)
 inline uint8_t
 DataBlock::getByte(int whichByte) const
 {
+    assert(m_alloc);
     return m_data[whichByte];
 }
 
 inline void
 DataBlock::setByte(int whichByte, uint8_t data)
 {
+    assert(m_alloc);
     m_data[whichByte] = data;
 }
 
 inline void
 DataBlock::copyPartial(const DataBlock & dblk, int offset, int len)
 {
+    assert(m_alloc);
     setData(&dblk.m_data[offset], offset, len);
 }
 
@@ -112,5 +167,8 @@ operator==(const DataBlock& obj1,const DataBlock& obj2)
 {
     return obj1.equal(obj2);
 }
+
+} // namespace ruby
+} // namespace gem5
 
 #endif // __MEM_RUBY_COMMON_DATABLOCK_HH__

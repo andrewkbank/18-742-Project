@@ -33,8 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andrew Bardsley
  */
 
 /**
@@ -47,13 +45,20 @@
 #ifndef __CPU_MINOR_FETCH1_HH__
 #define __CPU_MINOR_FETCH1_HH__
 
+#include <vector>
+
+#include "arch/generic/mmu.hh"
+#include "base/named.hh"
+#include "cpu/base.hh"
 #include "cpu/minor/buffers.hh"
 #include "cpu/minor/cpu.hh"
 #include "cpu/minor/pipe_data.hh"
-#include "cpu/base.hh"
 #include "mem/packet.hh"
 
-namespace Minor
+namespace gem5
+{
+
+namespace minor
 {
 
 /** A stage responsible for fetching "lines" from memory and passing
@@ -99,7 +104,7 @@ class Fetch1 : public Named
     /** Structure to hold SenderState info through
      *  translation and memory accesses. */
     class FetchRequest :
-        public BaseTLB::Translation, /* For TLB lookups */
+        public BaseMMU::Translation, /* For TLB lookups */
         public Packet::SenderState /* For packing into a Packet */
     {
       protected:
@@ -130,10 +135,10 @@ class Fetch1 : public Named
         PacketPtr packet;
 
         /** The underlying request that this fetch represents */
-        Request request;
+        RequestPtr request;
 
         /** PC to fixup with line address */
-        TheISA::PCState pc;
+        Addr pc;
 
         /** Fill in a fault if one happens during fetch, check this by
          *  picking apart the response packet */
@@ -154,7 +159,7 @@ class Fetch1 : public Named
         bool isComplete() const { return state == Complete; }
 
       protected:
-        /** BaseTLB::Translation interface */
+        /** BaseMMU::Translation interface */
 
         /** Interface for ITLB responses.  We can handle delay, so don't
          *  do anything */
@@ -163,11 +168,11 @@ class Fetch1 : public Named
         /** Interface for ITLB responses.  Populates self and then passes
          *  the request on to the ports' handleTLBResponse member
          *  function */
-        void finish(const Fault &fault_, RequestPtr request_,
-                    ThreadContext *tc, BaseTLB::Mode mode);
+        void finish(const Fault &fault_, const RequestPtr &request_,
+                    ThreadContext *tc, BaseMMU::Mode mode);
 
       public:
-        FetchRequest(Fetch1 &fetch_, InstId id_, TheISA::PCState pc_) :
+        FetchRequest(Fetch1 &fetch_, InstId id_, Addr pc_) :
             SenderState(),
             fetch(fetch_),
             state(NotIssued),
@@ -176,7 +181,9 @@ class Fetch1 : public Named
             request(),
             pc(pc_),
             fault(NoFault)
-        { }
+        {
+            request = std::make_shared<Request>();
+        }
 
         ~FetchRequest();
     };
@@ -197,7 +204,7 @@ class Fetch1 : public Named
     Latch<BranchData>::Output prediction;
 
     /** Interface to reserve space in the next stage */
-    Reservable &nextStageReserve;
+    std::vector<InputBuffer<ForwardLineData>> &nextStageReserve;
 
     /** IcachePort to pass to the CPU.  Fetch1 is the only module that uses
      *  it. */
@@ -206,13 +213,13 @@ class Fetch1 : public Named
     /** Line snap size in bytes.  All fetches clip to make their ends not
      *  extend beyond this limit.  Setting this to the machine L1 cache line
      *  length will result in fetches never crossing line boundaries. */
-    unsigned int lineSnap;
+    Addr lineSnap;
 
     /** Maximum fetch width in bytes.  Setting this (and lineSnap) to the
      *  machine L1 cache line length will result in fetches of whole cache
      *  lines.  Setting this to sizeof(MachInst) will result it fetches of
      *  single instructions (except near the end of lineSnap lines) */
-    unsigned int maxLineWidth;
+    Addr maxLineWidth;
 
     /** Maximum number of fetches allowed in flight (in queues or memory) */
     unsigned int fetchLimit;
@@ -233,26 +240,49 @@ class Fetch1 : public Named
 
     /** Stage cycle-by-cycle state */
 
-    FetchState state;
+    struct Fetch1ThreadInfo
+    {
+        // All fields have default initializers.
+        Fetch1ThreadInfo() {}
 
-    /** Fetch PC value. This is updated by branches from Execute, branch
-     *  prediction targets from Fetch2 and by incrementing it as we fetch
-     *  lines subsequent to those two sources. */
-    TheISA::PCState pc;
+        Fetch1ThreadInfo(const Fetch1ThreadInfo& other) :
+            state(other.state),
+            pc(other.pc->clone()),
+            streamSeqNum(other.streamSeqNum),
+            predictionSeqNum(other.predictionSeqNum),
+            blocked(other.blocked)
+        { }
 
-    /** Stream sequence number.  This changes on request from Execute and is
-     *  used to tag instructions by the fetch stream to which they belong.
-     *  Execute originates new prediction sequence numbers. */
-    InstSeqNum streamSeqNum;
+        FetchState state = FetchWaitingForPC;
 
-    /** Prediction sequence number.  This changes when requests from Execute
-     *  or Fetch2 ask for a change of fetch address and is used to tag lines
-     *  by the prediction to which they belong.  Fetch2 originates
-     *  prediction sequence numbers. */
-    InstSeqNum predictionSeqNum;
+        /** Fetch PC value. This is updated by branches from Execute, branch
+         *  prediction targets from Fetch2. This is only valid immediately
+         *  following a redirect from one of those two sources. */
+        std::unique_ptr<PCStateBase> pc;
 
-    /** Blocked indication for report */
-    bool blocked;
+        /** The address we're currently fetching lines from. */
+        Addr fetchAddr = 0;
+
+        /** Stream sequence number.  This changes on request from Execute and is
+         *  used to tag instructions by the fetch stream to which they belong.
+         *  Execute originates new prediction sequence numbers. */
+        InstSeqNum streamSeqNum = InstId::firstStreamSeqNum;
+
+        /** Prediction sequence number.  This changes when requests from Execute
+         *  or Fetch2 ask for a change of fetch address and is used to tag lines
+         *  by the prediction to which they belong.  Fetch2 originates
+         *  prediction sequence numbers. */
+        InstSeqNum predictionSeqNum = InstId::firstPredictionSeqNum;
+
+        /** Blocked indication for report */
+        bool blocked = false;
+
+        /** Signal to guard against sleeping first cycle of wakeup */
+        bool wakeupGuard = false;
+    };
+
+    std::vector<Fetch1ThreadInfo> fetchInfo;
+    ThreadID threadPriority;
 
     /** State of memory access for head instruction fetch */
     enum IcacheState
@@ -307,10 +337,15 @@ class Fetch1 : public Named
     friend std::ostream &operator <<(std::ostream &os,
         IcacheState state);
 
+
+    /** Use the current threading policy to determine the next thread to
+     *  fetch from. */
+    ThreadID getScheduledThread();
+
     /** Insert a line fetch into the requests.  This can be a partial
      *  line request where the given address has a non-0 offset into a
      *  line. */
-    void fetchLine();
+    void fetchLine(ThreadID tid);
 
     /** Try and issue a fetch for a translated request at the
      *  head of the requests queue.  Also tries to move the request
@@ -350,11 +385,11 @@ class Fetch1 : public Named
   public:
     Fetch1(const std::string &name_,
         MinorCPU &cpu_,
-        MinorCPUParams &params,
+        const BaseMinorCPUParams &params,
         Latch<BranchData>::Output inp_,
         Latch<ForwardLineData>::Input out_,
         Latch<BranchData>::Output prediction_,
-        Reservable &next_stage_input_buffer);
+        std::vector<InputBuffer<ForwardLineData>> &next_stage_input_buffer);
 
   public:
     /** Returns the IcachePort owned by this Fetch1 */
@@ -363,6 +398,9 @@ class Fetch1 : public Named
     /** Pass on input/buffer data to the output if you can */
     void evaluate();
 
+    /** Initiate fetch1 fetching */
+    void wakeupFetch(ThreadID tid);
+
     void minorTrace() const;
 
     /** Is this stage drained?  For Fetch1, draining is initiated by
@@ -370,6 +408,7 @@ class Fetch1 : public Named
     bool isDrained();
 };
 
-}
+} // namespace minor
+} // namespace gem5
 
 #endif /* __CPU_MINOR_FETCH1_HH__ */

@@ -36,9 +36,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Kevin Lim
- *          Korey Sewell
  */
 
 #ifndef __CPU_O3_ROB_HH__
@@ -48,55 +45,56 @@
 #include <utility>
 #include <vector>
 
-#include "arch/registers.hh"
+#include "base/statistics.hh"
 #include "base/types.hh"
-#include "config/the_isa.hh"
+#include "cpu/inst_seq.hh"
+#include "cpu/o3/dyn_inst_ptr.hh"
+#include "cpu/o3/limits.hh"
+#include "cpu/reg_class.hh"
+#include "enums/SMTQueuePolicy.hh"
+
+namespace gem5
+{
+
+struct BaseO3CPUParams;
+
+namespace o3
+{
+
+class CPU;
 
 struct DerivO3CPUParams;
 
 /**
  * ROB class.  The ROB is largely what drives squashing.
  */
-template <class Impl>
 class ROB
 {
-  protected:
-    typedef TheISA::RegIndex RegIndex;
   public:
-    //Typedefs from the Impl.
-    typedef typename Impl::O3CPU O3CPU;
-    typedef typename Impl::DynInstPtr DynInstPtr;
-
-    typedef std::pair<RegIndex, PhysRegIndex> UnmapInfo;
+    typedef std::pair<RegIndex, RegIndex> UnmapInfo;
     typedef typename std::list<DynInstPtr>::iterator InstIt;
 
     /** Possible ROB statuses. */
-    enum Status {
+    enum Status
+    {
         Running,
         Idle,
         ROBSquashing
     };
 
-    /** SMT ROB Sharing Policy */
-    enum ROBPolicy{
-        Dynamic,
-        Partitioned,
-        Threshold
-    };
-
   private:
     /** Per-thread ROB status. */
-    Status robStatus[Impl::MaxThreads];
+    Status robStatus[MaxThreads];
 
     /** ROB resource sharing policy for SMT mode. */
-    ROBPolicy robPolicy;
+    SMTQueuePolicy robPolicy;
 
   public:
     /** ROB constructor.
      *  @param _cpu   The cpu object pointer.
      *  @param params The cpu params including several ROB-specific parameters.
      */
-    ROB(O3CPU *_cpu, DerivO3CPUParams *params);
+    ROB(CPU *_cpu, const BaseO3CPUParams &params);
 
     std::string name() const;
 
@@ -116,7 +114,7 @@ class ROB
      *  ROB for the new instruction.
      *  @param inst The instruction being inserted into the ROB.
      */
-    void insertInst(DynInstPtr &inst);
+    void insertInst(const DynInstPtr &inst);
 
     /** Returns pointer to the head instruction within the ROB.  There is
      *  no guarantee as to the return value if the ROB is empty.
@@ -128,7 +126,7 @@ class ROB
      *  the ROB.
      *  @return Pointer to the DynInst that is at the head of the ROB.
      */
-    DynInstPtr readHeadInst(ThreadID tid);
+    const DynInstPtr &readHeadInst(ThreadID tid);
 
     /** Returns a pointer to the instruction with the given sequence if it is
      *  in the ROB.
@@ -266,17 +264,14 @@ class ROB
      *  threadEntries to get the instructions in the ROB unless you are
      *  double checking that variable.
      */
-    int countInsts(ThreadID tid);
-
-    /** Registers statistics. */
-    void regStats();
+    size_t countInsts(ThreadID tid);
 
   private:
     /** Reset the ROB state */
     void resetState();
 
     /** Pointer to the CPU. */
-    O3CPU *cpu;
+    CPU *cpu;
 
     /** Active Threads in CPU */
     std::list<ThreadID> *activeThreads;
@@ -285,16 +280,19 @@ class ROB
     unsigned numEntries;
 
     /** Entries Per Thread */
-    unsigned threadEntries[Impl::MaxThreads];
+    unsigned threadEntries[MaxThreads];
 
     /** Max Insts a Thread Can Have in the ROB */
-    unsigned maxEntries[Impl::MaxThreads];
+    unsigned maxEntries[MaxThreads];
 
     /** ROB List of Instructions */
-    std::list<DynInstPtr> instList[Impl::MaxThreads];
+    std::list<DynInstPtr> instList[MaxThreads];
 
-    /** Number of instructions that can be squashed in a single cycle. */
-    unsigned squashWidth;
+    /** Number of instructions that can be squashed in a single cycle.
+     * A negative number means all instructions are squashed instantly
+     * within on cycle
+     */
+    const std::optional<unsigned> squashWidth;
 
   public:
     /** Iterator pointing to the instruction which is the last instruction
@@ -315,7 +313,7 @@ class ROB
      *  and after a squash.
      *  This will always be set to cpu->instList.end() if it is invalid.
      */
-    InstIt squashIt[Impl::MaxThreads];
+    InstIt squashIt[MaxThreads];
 
   public:
     /** Number of instructions in the ROB. */
@@ -326,18 +324,26 @@ class ROB
 
   private:
     /** The sequence number of the squashed instruction. */
-    InstSeqNum squashedSeqNum[Impl::MaxThreads];
+    InstSeqNum squashedSeqNum[MaxThreads];
 
     /** Is the ROB done squashing. */
-    bool doneSquashing[Impl::MaxThreads];
+    bool doneSquashing[MaxThreads];
 
     /** Number of active threads. */
     ThreadID numThreads;
 
-    // The number of rob_reads
-    Stats::Scalar robReads;
-    // The number of rob_writes
-    Stats::Scalar robWrites;
+    struct ROBStats : public statistics::Group
+    {
+        ROBStats(statistics::Group *parent);
+
+        // The number of rob_reads
+        statistics::Scalar reads;
+        // The number of rob_writes
+        statistics::Scalar writes;
+    } stats;
 };
+
+} // namespace o3
+} // namespace gem5
 
 #endif //__CPU_O3_ROB_HH__

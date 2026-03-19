@@ -36,7 +36,10 @@
 #include "params/EmulatedDriver.hh"
 #include "sim/sim_object.hh"
 
-class LiveProcess;
+namespace gem5
+{
+
+class Process;
 class ThreadContext;
 
 /**
@@ -46,8 +49,8 @@ class ThreadContext;
  * hardware inside gem5 can be created by deriving from this class and
  * overriding the abstract virtual methods.
  *
- * Currently only open() and ioctl() calls are supported, but other calls
- * (e.g., read(), write(), mmap()) could be added as needed.
+ * Currently only open(), ioctl(), and mmap() calls are supported, but other
+ * calls (e.g., read(), write()) could be added as needed.
  */
 class EmulatedDriver : public SimObject
 {
@@ -58,8 +61,8 @@ class EmulatedDriver : public SimObject
     const std::string &filename;
 
   public:
-    EmulatedDriver(EmulatedDriverParams *p)
-        : SimObject(p), filename(p->filename)
+    EmulatedDriver(const EmulatedDriverParams &p)
+        : SimObject(p), filename(p.filename)
     {
     }
 
@@ -74,8 +77,7 @@ class EmulatedDriver : public SimObject
      * to openFunc() (q.v.).
      * @return A newly allocated target fd, or -1 on error.
      */
-    virtual int open(LiveProcess *p, ThreadContext *tc,
-                     int mode, int flags) = 0;
+    virtual int open(ThreadContext *tc, int mode, int flags) = 0;
 
     /**
      * Abstract method, invoked when the user program calls ioctl() on
@@ -84,7 +86,20 @@ class EmulatedDriver : public SimObject
      * @return The return code for the ioctl, or the negation of the errno
      * (see the SyscallReturn class).
      */
-    virtual int ioctl(LiveProcess *p, ThreadContext *tc, unsigned req) = 0;
+    virtual int ioctl(ThreadContext *tc, unsigned req, Addr buf) = 0;
+
+    /**
+     * Virtual method, invoked when the user program calls mmap() on
+     * the file descriptor returned by a previous open().  The parameters
+     * are the same as those passed in to mmapFunc() (q.v.).
+     * @return The return ptr for the mmap, or the negation of the errno
+     * (see the SyscallReturn class).
+     */
+    virtual Addr mmap(ThreadContext *tc, Addr start, uint64_t length,
+                      int prot, int tgtFlags, int tgtFd, off_t offset)
+                      { return -EBADF; }
 };
+
+} // namespace gem5
 
 #endif // __SIM_EMUL_DRIVER_HH

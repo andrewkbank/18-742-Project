@@ -33,63 +33,48 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Thomas Grass
- *          Andreas Hansson
- *          Marco Elver
  */
+
+#include "mem/mem_checker_monitor.hh"
 
 #include <memory>
 
+#include "base/logging.hh"
 #include "base/output.hh"
 #include "base/trace.hh"
 #include "debug/MemCheckerMonitor.hh"
-#include "mem/mem_checker_monitor.hh"
 
-using namespace std;
+namespace gem5
+{
 
-MemCheckerMonitor::MemCheckerMonitor(Params* params)
-    : MemObject(params),
-      masterPort(name() + "-master", *this),
-      slavePort(name() + "-slave", *this),
-      warnOnly(params->warn_only),
-      memchecker(params->memchecker)
+MemCheckerMonitor::MemCheckerMonitor(const Params &params)
+    : SimObject(params),
+      memSidePort(name() + "-memSidePort", *this),
+      cpuSidePort(name() + "-cpuSidePort", *this),
+      warnOnly(params.warn_only),
+      memchecker(params.memchecker)
 {}
 
 MemCheckerMonitor::~MemCheckerMonitor()
 {}
 
-MemCheckerMonitor*
-MemCheckerMonitorParams::create()
-{
-    return new MemCheckerMonitor(this);
-}
-
 void
 MemCheckerMonitor::init()
 {
     // make sure both sides of the monitor are connected
-    if (!slavePort.isConnected() || !masterPort.isConnected())
+    if (!cpuSidePort.isConnected() || !memSidePort.isConnected())
         fatal("Communication monitor is not connected on both sides.\n");
 }
 
-BaseMasterPort&
-MemCheckerMonitor::getMasterPort(const std::string& if_name, PortID idx)
+Port &
+MemCheckerMonitor::getPort(const std::string &if_name, PortID idx)
 {
-    if (if_name == "master" || if_name == "mem_side") {
-        return masterPort;
+    if (if_name == "request" || if_name == "mem_side_port") {
+        return memSidePort;
+    } else if (if_name == "response" || if_name == "cpu_side_port") {
+        return cpuSidePort;
     } else {
-        return MemObject::getMasterPort(if_name, idx);
-    }
-}
-
-BaseSlavePort&
-MemCheckerMonitor::getSlavePort(const std::string& if_name, PortID idx)
-{
-    if (if_name == "slave" || if_name == "cpu_side") {
-        return slavePort;
-    } else {
-        return MemObject::getSlavePort(if_name, idx);
+        return SimObject::getPort(if_name, idx);
     }
 }
 
@@ -104,7 +89,7 @@ MemCheckerMonitor::recvFunctional(PacketPtr pkt)
     // reads/writes to these location from other devices we do not see.
     memchecker->reset(addr, size);
 
-    masterPort.sendFunctional(pkt);
+    memSidePort.sendFunctional(pkt);
 
     DPRINTF(MemCheckerMonitor,
             "Forwarded functional access: addr = %#llx, size = %d\n",
@@ -120,7 +105,7 @@ MemCheckerMonitor::recvFunctionalSnoop(PacketPtr pkt)
     // See above.
     memchecker->reset(addr, size);
 
-    slavePort.sendFunctionalSnoop(pkt);
+    cpuSidePort.sendFunctionalSnoop(pkt);
 
     DPRINTF(MemCheckerMonitor,
             "Received functional snoop: addr = %#llx, size = %d\n",
@@ -130,15 +115,13 @@ MemCheckerMonitor::recvFunctionalSnoop(PacketPtr pkt)
 Tick
 MemCheckerMonitor::recvAtomic(PacketPtr pkt)
 {
-    assert(false && "Atomic not supported");
-    return masterPort.sendAtomic(pkt);
+    panic("Atomic not supported");
 }
 
 Tick
 MemCheckerMonitor::recvAtomicSnoop(PacketPtr pkt)
 {
-    assert(false && "Atomic not supported");
-    return slavePort.sendAtomicSnoop(pkt);
+    panic("Atomic not supported");
 }
 
 bool
@@ -156,8 +139,8 @@ MemCheckerMonitor::recvTimingReq(PacketPtr pkt)
     bool is_write = pkt->isWrite();
     unsigned size = pkt->getSize();
     Addr addr = pkt->getAddr();
-    bool expects_response = pkt->needsResponse() && !pkt->memInhibitAsserted();
-    std::unique_ptr<uint8_t> pkt_data;
+    bool expects_response = pkt->needsResponse() && !pkt->cacheResponding();
+    std::unique_ptr<uint8_t[]> pkt_data;
     MemCheckerMonitorSenderState* state = NULL;
 
     if (expects_response && is_write) {
@@ -165,21 +148,20 @@ MemCheckerMonitor::recvTimingReq(PacketPtr pkt)
         // write. For reads, we have no data yet, so it doesn't make sense to
         // allocate.
         pkt_data.reset(new uint8_t[size]);
-        memcpy(pkt_data.get(), pkt->getConstPtr<uint8_t*>(), size);
+        pkt->writeData(pkt_data.get());
     }
 
     // If a cache miss is served by a cache, a monitor near the memory
     // would see a request which needs a response, but this response
-    // would be inhibited and not come back from the memory. Therefore
+    // would not come back from the memory. Therefore
     // we additionally have to check the inhibit flag.
     if (expects_response && (is_read || is_write)) {
         state = new MemCheckerMonitorSenderState(0);
         pkt->pushSenderState(state);
     }
 
-    // Attempt to send the packet (always succeeds for inhibited
-    // packets)
-    bool successful = masterPort.sendTimingReq(pkt);
+    // Attempt to send the packet
+    bool successful = memSidePort.sendTimingReq(pkt);
 
     // If not successful, restore the sender state
     if (!successful && expects_response && (is_read || is_write)) {
@@ -195,9 +177,9 @@ MemCheckerMonitor::recvTimingReq(PacketPtr pkt)
             // At the time where we push the sender-state, we do not yet know
             // the serial the MemChecker class will assign to this request. We
             // cannot call startRead at the time we push the sender-state, as
-            // the masterPort may not be successful in executing sendTimingReq,
-            // and in case of a failure, we must not modify the state of the
-            // MemChecker.
+            // the memSidePort may not be successful in executing
+            // sendTimingReq, and in case of a failure, we must not
+            // modify the state of the MemChecker.
             //
             // Once we know that sendTimingReq was successful, we can set the
             // serial of the newly constructed sender-state. This is legal, as
@@ -227,7 +209,8 @@ MemCheckerMonitor::recvTimingReq(PacketPtr pkt)
         }
     } else if (successful) {
         DPRINTF(MemCheckerMonitor,
-                "Forwarded inhibited request: addr = %#llx\n", addr);
+                "Forwarded request marked for cache response: addr = %#llx\n",
+                addr);
     }
 
     return successful;
@@ -246,7 +229,7 @@ MemCheckerMonitor::recvTimingResp(PacketPtr pkt)
     bool is_failed_LLSC = pkt->isLLSC() && pkt->req->getExtraData() == 0;
     unsigned size = pkt->getSize();
     Addr addr = pkt->getAddr();
-    std::unique_ptr<uint8_t> pkt_data;
+    std::unique_ptr<uint8_t[]> pkt_data;
     MemCheckerMonitorSenderState* received_state = NULL;
 
     if (is_read) {
@@ -254,7 +237,7 @@ MemCheckerMonitor::recvTimingResp(PacketPtr pkt)
         // a read. For writes, we have already given the MemChecker the data on
         // the request, so it doesn't make sense to allocate on write.
         pkt_data.reset(new uint8_t[size]);
-        memcpy(pkt_data.get(), pkt->getConstPtr<uint8_t*>(), size);
+        pkt->writeData(pkt_data.get());
     }
 
     if (is_read || is_write) {
@@ -270,7 +253,7 @@ MemCheckerMonitor::recvTimingResp(PacketPtr pkt)
     }
 
     // Attempt to send the packet
-    bool successful = slavePort.sendTimingResp(pkt);
+    bool successful = cpuSidePort.sendTimingResp(pkt);
 
     // If packet successfully send, complete transaction in MemChecker
     // instance, and delete sender state, otherwise restore state.
@@ -332,43 +315,45 @@ MemCheckerMonitor::recvTimingResp(PacketPtr pkt)
 void
 MemCheckerMonitor::recvTimingSnoopReq(PacketPtr pkt)
 {
-    slavePort.sendTimingSnoopReq(pkt);
+    cpuSidePort.sendTimingSnoopReq(pkt);
 }
 
 bool
 MemCheckerMonitor::recvTimingSnoopResp(PacketPtr pkt)
 {
-    return masterPort.sendTimingSnoopResp(pkt);
+    return memSidePort.sendTimingSnoopResp(pkt);
 }
 
 bool
 MemCheckerMonitor::isSnooping() const
 {
-    // check if the connected master port is snooping
-    return slavePort.isSnooping();
+    // check if the connected memSidePort is snooping
+    return cpuSidePort.isSnooping();
 }
 
 AddrRangeList
 MemCheckerMonitor::getAddrRanges() const
 {
-    // get the address ranges of the connected slave port
-    return masterPort.getAddrRanges();
+    // get the address ranges of the connected cpuSidePort
+    return memSidePort.getAddrRanges();
 }
 
 void
 MemCheckerMonitor::recvReqRetry()
 {
-    slavePort.sendRetryReq();
+    cpuSidePort.sendRetryReq();
 }
 
 void
 MemCheckerMonitor::recvRespRetry()
 {
-    masterPort.sendRetryResp();
+    memSidePort.sendRetryResp();
 }
 
 void
 MemCheckerMonitor::recvRangeChange()
 {
-    slavePort.sendRangeChange();
+    cpuSidePort.sendRangeChange();
 }
+
+} // namespace gem5

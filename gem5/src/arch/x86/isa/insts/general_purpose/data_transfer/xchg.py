@@ -32,10 +32,8 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Gabe Black
 
-microcode = '''
+microcode = """
 
 # All the memory versions need to use LOCK, regardless of if it was set
 
@@ -104,4 +102,4 @@ def macroop XCHG_LOCKED_P_R
     mfence
     mov reg, reg, t1
 };
-'''
+"""

@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <m5op.h>
 
 uint32_t numberOfSetBits(uint32_t i) {
      // Java: use >>> instead of >>

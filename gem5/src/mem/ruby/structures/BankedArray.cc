@@ -29,13 +29,20 @@
  *
  */
 
-#include "base/intmath.hh"
 #include "mem/ruby/structures/BankedArray.hh"
+
+#include "base/intmath.hh"
 #include "mem/ruby/system/RubySystem.hh"
+#include "sim/cur_tick.hh"
+
+namespace gem5
+{
+
+namespace ruby
+{
 
 BankedArray::BankedArray(unsigned int banks, Cycles accessLatency,
-                         unsigned int startIndexBit, RubySystem *rs)
-    : m_ruby_system(rs)
+                         unsigned int startIndexBit)
 {
     this->banks = banks;
     this->accessLatency = accessLatency;
@@ -70,10 +77,12 @@ BankedArray::reserve(int64_t idx)
     if (accessLatency == 0)
         return;
 
+    assert(clockPeriod > 0);
+
     unsigned int bank = mapIndexToBank(idx);
     assert(bank < banks);
 
-    if(busyBanks[bank].endAccess >= curTick()) {
+    if (busyBanks[bank].endAccess >= curTick()) {
         if (busyBanks[bank].startAccess == curTick() &&
              busyBanks[bank].idx == idx) {
             // this is the same reservation (can happen when
@@ -87,7 +96,7 @@ BankedArray::reserve(int64_t idx)
     busyBanks[bank].idx = idx;
     busyBanks[bank].startAccess = curTick();
     busyBanks[bank].endAccess = curTick() +
-        (accessLatency-1) * m_ruby_system->clockPeriod();
+        (accessLatency-1) * clockPeriod;
 }
 
 unsigned int
@@ -98,3 +107,6 @@ BankedArray::mapIndexToBank(int64_t idx)
     }
     return idx % banks;
 }
+
+} // namespace ruby
+} // namespace gem5

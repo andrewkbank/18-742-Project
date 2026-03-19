@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 ARM Limited
+ * Copyright (c) 2014,2016,2018 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -36,9 +36,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andreas Sandberg
- *          Stephen Hines
  */
 
 #ifndef __ARCH_ARM_INSTS_PSEUDO_HH__
@@ -46,19 +43,24 @@
 
 #include "arch/arm/insts/static_inst.hh"
 
-class DecoderFaultInst : public ArmStaticInst
+namespace gem5
+{
+
+class DecoderFaultInst : public ArmISA::ArmStaticInst
 {
   protected:
-    DecoderFault faultId;
+    ArmISA::DecoderFault faultId;
 
     const char *faultName() const;
 
   public:
-    DecoderFaultInst(ExtMachInst _machInst);
+    DecoderFaultInst(ArmISA::ExtMachInst _machInst);
 
-    Fault execute(ExecContext *xc, Trace::InstRecord *traceData) const;
+    Fault execute(ExecContext *xc,
+                  trace::InstRecord *traceData) const override;
 
-    std::string generateDisassembly(Addr pc, const SymbolTable *symtab) const;
+    std::string generateDisassembly(
+            Addr pc, const loader::SymbolTable *symtab) const override;
 };
 
 /**
@@ -68,7 +70,7 @@ class DecoderFaultInst : public ArmStaticInst
  * 'Unknown' class is used for unrecognized/illegal instructions.
  * This is a leaf class.
  */
-class FailUnimplemented : public ArmStaticInst
+class FailUnimplemented : public ArmISA::ArmStaticInst
 {
   private:
     /// Full mnemonic for MRC and MCR instructions including the
@@ -76,14 +78,15 @@ class FailUnimplemented : public ArmStaticInst
     std::string fullMnemonic;
 
   public:
-    FailUnimplemented(const char *_mnemonic, ExtMachInst _machInst);
-    FailUnimplemented(const char *_mnemonic, ExtMachInst _machInst,
+    FailUnimplemented(const char *_mnemonic, ArmISA::ExtMachInst _machInst);
+    FailUnimplemented(const char *_mnemonic, ArmISA::ExtMachInst _machInst,
                       const std::string& _fullMnemonic);
 
-    Fault execute(ExecContext *xc, Trace::InstRecord *traceData) const;
+    Fault execute(ExecContext *xc,
+                  trace::InstRecord *traceData) const override;
 
-    std::string
-    generateDisassembly(Addr pc, const SymbolTable *symtab) const;
+    std::string generateDisassembly(
+            Addr pc, const loader::SymbolTable *symtab) const override;
 };
 
 /**
@@ -95,7 +98,7 @@ class FailUnimplemented : public ArmStaticInst
  * probably make the 'warned' flag a static member of the derived
  * class.
  */
-class WarnUnimplemented : public ArmStaticInst
+class WarnUnimplemented : public ArmISA::ArmStaticInst
 {
   private:
     /// Have we warned on this instruction yet?
@@ -105,27 +108,42 @@ class WarnUnimplemented : public ArmStaticInst
     std::string fullMnemonic;
 
   public:
-    WarnUnimplemented(const char *_mnemonic, ExtMachInst _machInst);
-    WarnUnimplemented(const char *_mnemonic, ExtMachInst _machInst,
+    WarnUnimplemented(const char *_mnemonic, ArmISA::ExtMachInst _machInst);
+    WarnUnimplemented(const char *_mnemonic, ArmISA::ExtMachInst _machInst,
                       const std::string& _fullMnemonic);
 
-    Fault execute(ExecContext *xc, Trace::InstRecord *traceData) const;
+    Fault execute(ExecContext *xc,
+                  trace::InstRecord *traceData) const override;
 
-    std::string
-    generateDisassembly(Addr pc, const SymbolTable *symtab) const;
+    std::string generateDisassembly(
+            Addr pc, const loader::SymbolTable *symtab) const override;
 };
 
-class FlushPipeInst : public ArmStaticInst
+/**
+ * This class is modelling instructions which are not going to be
+ * executed since they are flagged as Illegal Execution Instructions
+ * (PSTATE.IL = 1 or CPSR.IL = 1).
+ * The sole purpose of this instruction is to generate an appropriate
+ * fault when executed.
+ */
+class IllegalExecInst : public ArmISA::ArmStaticInst
 {
   public:
-    FlushPipeInst(const char *_mnemonic, ExtMachInst _machInst);
+    IllegalExecInst(ArmISA::ExtMachInst _machInst);
 
-    Fault execute(ExecContext *xc, Trace::InstRecord *traceData) const;
-
-    std::string
-    generateDisassembly(Addr pc, const SymbolTable *symtab) const;
-
+    Fault execute(ExecContext *xc,
+                  trace::InstRecord *traceData) const override;
 };
 
+class DebugStep : public ArmISA::ArmStaticInst
+{
+  public:
+    DebugStep(ArmISA::ExtMachInst _machInst);
+
+    Fault execute(ExecContext *xc,
+                  trace::InstRecord *traceData) const override;
+};
+
+} // namespace gem5
 
 #endif

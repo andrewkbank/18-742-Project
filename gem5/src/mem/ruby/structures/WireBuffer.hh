@@ -41,6 +41,12 @@
 #include "params/RubyWireBuffer.hh"
 #include "sim/sim_object.hh"
 
+namespace gem5
+{
+
+namespace ruby
+{
+
 //////////////////////////////////////////////////////////////////////////////
 // This object was written to literally mimic a Wire in Ruby, in the sense
 // that there is no way for messages to get reordered en route on the WireBuffer.
@@ -57,7 +63,7 @@ class WireBuffer : public SimObject
 {
   public:
     typedef RubyWireBufferParams Params;
-    WireBuffer(const Params *p);
+    WireBuffer(const Params &p);
     void init();
 
     ~WireBuffer();
@@ -72,7 +78,10 @@ class WireBuffer : public SimObject
     void setDescription(const std::string& name) { m_description = name; };
     std::string getDescription() { return m_description; };
 
-    void enqueue(MsgPtr message, Tick current_time, Tick delta);
+    // ruby_is_random and ruby_warmup are not used, but this method signature
+    // must match that of MessageBuffer.
+    void enqueue(MsgPtr message, Tick current_time, Tick delta,
+                 bool ruby_is_random = false, bool ruby_warmup = false);
     void dequeue(Tick current_time);
     const Message* peek();
     void recycle(Tick current_time, Tick recycle_latency);
@@ -97,5 +106,8 @@ class WireBuffer : public SimObject
 };
 
 std::ostream& operator<<(std::ostream& out, const WireBuffer& obj);
+
+} // namespace ruby
+} // namespace gem5
 
 #endif // __MEM_RUBY_STRUCTURES_WireBuffer_HH__

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 ARM Limited
+ * Copyright (c) 2012, 2019 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -33,9 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Vasileios Spiliopoulos
- *          Akash Bagdia
  */
 
 #ifndef __SIM_VOLTAGE_DOMAIN_HH__
@@ -48,6 +45,9 @@
 #include "sim/clock_domain.hh"
 #include "sim/sim_object.hh"
 
+namespace gem5
+{
+
 /**
  * A VoltageDomain is used to group clock domains that operate under
  * the same voltage. The class provides methods for setting and
@@ -58,7 +58,7 @@ class VoltageDomain : public SimObject
   public:
 
     typedef VoltageDomainParams Params;
-    VoltageDomain(const Params *p);
+    VoltageDomain(const Params &p);
 
     typedef SrcClockDomain::PerfLevel PerfLevel;
 
@@ -77,10 +77,10 @@ class VoltageDomain : public SimObject
      */
     double voltage(PerfLevel perf_level) const
     {
-        chatty_assert(perf_level < numVoltages(), "VoltageDomain %s "\
-                      "request for voltage perf level %u is outside "\
-                      "of numVoltages %u", name(), perf_level,
-                      numVoltages());
+        gem5_assert(perf_level < numVoltages(), "VoltageDomain %s "\
+                    "request for voltage perf level %u is outside "\
+                    "of numVoltages %u", name(), perf_level,
+                    numVoltages());
         return voltageOpPoints[perf_level];
     }
 
@@ -111,7 +111,7 @@ class VoltageDomain : public SimObject
      * Startup has all SrcClockDomains registered with this voltage domain, so
      * try to make sure that all perf level requests from them are met.
      */
-    void startup();
+    void startup() override;
 
     /**
      * Recomputes the highest (fastest, i.e., numerically lowest) requested
@@ -126,10 +126,8 @@ class VoltageDomain : public SimObject
      */
     bool sanitiseVoltages();
 
-    void regStats();
-
-    void serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE;
-    void unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE;
+    void serialize(CheckpointOut &cp) const override;
+    void unserialize(CheckpointIn &cp) override;
 
   private:
     typedef std::vector<double> Voltages;
@@ -143,10 +141,15 @@ class VoltageDomain : public SimObject
     const Voltages voltageOpPoints;
     PerfLevel _perfLevel;
 
-    /**
-     * Stat for reporting voltage of the domain
-     */
-    Stats::Value currentVoltage;
+    struct VoltageDomainStats : public statistics::Group
+    {
+        VoltageDomainStats(VoltageDomain &vd);
+
+        /**
+         * Stat for reporting voltage of the domain
+         */
+        statistics::Value voltage;
+    } stats;
 
     /**
      * List of associated SrcClockDomains that are connected to this voltage
@@ -155,5 +158,7 @@ class VoltageDomain : public SimObject
     typedef std::vector<SrcClockDomain *> SrcClockChildren;
     SrcClockChildren srcClockChildren;
 };
+
+} // namespace gem5
 
 #endif

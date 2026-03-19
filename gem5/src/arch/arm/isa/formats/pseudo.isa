@@ -1,6 +1,6 @@
 // -*- mode:c++ -*-
 
-// Copyright (c) 2014 ARM Limited
+// Copyright (c) 2014, 2018 ARM Limited
 // All rights reserved
 //
 // The license below extends only to copyright in the software and shall
@@ -37,9 +37,6 @@
 // THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// Authors: Andreas Sandberg
-//          Stephen Hines
 
 
 ////////////////////////////////////////////////////////////////////
@@ -51,6 +48,24 @@ def format DecoderFault() {{
     decode_block = '''
         return new DecoderFaultInst(machInst);
     '''
+}};
+
+////////////////////////////////////////////////////////////////////
+//
+// Illegal execution handling
+//
+
+def format IllegalExec() {{
+    decode_block = 'return new IllegalExecInst(machInst);\n'
+}};
+
+////////////////////////////////////////////////////////////////////
+//
+// Debug Step handling
+//
+
+def format DebugStep() {{
+    decode_block = 'return new DebugStep(machInst);\n'
 }};
 
 ////////////////////////////////////////////////////////////////////
@@ -68,11 +83,11 @@ def format Unknown() {{
 //
 
 def format FailUnimpl() {{
-    iop = InstObjParams(name, 'FailUnimplemented')
+    iop = ArmInstObjParams(name, 'FailUnimplemented')
     decode_block = BasicDecodeWithMnemonic.subst(iop)
 }};
 
 def format WarnUnimpl() {{
-    iop = InstObjParams(name, 'WarnUnimplemented')
+    iop = ArmInstObjParams(name, 'WarnUnimplemented')
     decode_block = BasicDecodeWithMnemonic.subst(iop)
 }};

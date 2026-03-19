@@ -37,11 +37,12 @@
 #
 # Authors: Andreas Sandberg
 
-Import('main')
+Import('env')
 
-main.Prepend(CPPPATH=Dir('./include'))
+env.Prepend(CPPPATH=Dir('include').srcnode())
 
-nomali = main.Clone()
+nomali = env.Clone()
+nomali.Append(CCFLAGS=['-Wno-ignored-qualifiers'])
 
 nomali_sources = [
     "lib/gpu.cc",
@@ -52,12 +53,13 @@ nomali_sources = [
     "lib/mali_midgard.cc",
     "lib/mali_t6xx.cc",
     "lib/mali_t7xx.cc",
+    "lib/addrspace.cc",
     "lib/mmu.cc",
     "lib/nomali_api.cc",
 ]
 
 nomali.Library('nomali', [  nomali.SharedObject(f) for f in nomali_sources ])
 
-main.Append(LIBS=['nomali'])
-main.Prepend(LIBPATH=[Dir('.')])
+env.Append(LIBS=['nomali'])
+env.Prepend(LIBPATH=[Dir('.')])
 

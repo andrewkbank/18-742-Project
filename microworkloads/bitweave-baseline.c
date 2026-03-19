@@ -135,7 +135,7 @@ int main(int argc, char **argv) {
     }
     m5_dump_stats(0,0);
 
-    printf("%u\n", result);
+    printf("Result: %u\n", result);
     
     return 0;
 }

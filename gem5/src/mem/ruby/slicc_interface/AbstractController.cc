@@ -1,4 +1,16 @@
 /*
+ * Copyright (c) 2017,2019-2022 ARM Limited
+ * All rights reserved.
+ *
+ * The license below extends only to copyright in the software and shall
+ * not be construed as granting a license to any other intellectual
+ * property including but not limited to intellectual property relating
+ * to a hardware implementation of the functionality of the software
+ * licensed hereunder.  You may use the software subject to the license
+ * terms below provided that you ensure that this notice is replicated
+ * unmodified and in its entirety in all distributions of the software,
+ * modified or unmodified, in source code or in binary form.
+ *
  * Copyright (c) 2011-2014 Mark D. Hill and David A. Wood
  * All rights reserved.
  *
@@ -29,64 +41,108 @@
 #include "mem/ruby/slicc_interface/AbstractController.hh"
 
 #include "debug/RubyQueue.hh"
-#include "mem/protocol/MemoryMsg.hh"
+#include "mem/ruby/network/Network.hh"
+#include "mem/ruby/protocol/MemoryMsg.hh"
 #include "mem/ruby/system/RubySystem.hh"
 #include "mem/ruby/system/Sequencer.hh"
 #include "sim/system.hh"
 
-AbstractController::AbstractController(const Params *p)
-    : MemObject(p), Consumer(this), m_version(p->version),
-      m_clusterID(p->cluster_id),
-      m_masterId(p->system->getMasterId(name())), m_is_blocking(false),
-      m_number_of_TBEs(p->number_of_TBEs),
-      m_transitions_per_cycle(p->transitions_per_cycle),
-      m_buffer_size(p->buffer_size), m_recycle_latency(p->recycle_latency),
-      memoryPort(csprintf("%s.memory", name()), this, "")
+namespace gem5
+{
+
+namespace ruby
+{
+
+AbstractController::AbstractController(const Params &p)
+    : ClockedObject(p), Consumer(this), m_version(p.version),
+      m_clusterID(p.cluster_id),
+      m_id(p.system->getRequestorId(this)), m_is_blocking(false),
+      m_number_of_TBEs(p.number_of_TBEs),
+      m_transitions_per_cycle(p.transitions_per_cycle),
+      m_buffer_size(p.buffer_size), m_recycle_latency(p.recycle_latency),
+      m_mandatory_queue_latency(p.mandatory_queue_latency),
+      m_waiting_mem_retry(false),
+      m_mem_ctrl_waiting_retry(false),
+      memoryPort(csprintf("%s.memory", name()), this),
+      addrRanges(p.addr_ranges.begin(), p.addr_ranges.end()),
+      mRetryRespEvent{*this, false},
+      stats(this)
 {
     if (m_version == 0) {
         // Combine the statistics from all controllers
         // of this particular type.
-        Stats::registerDumpCallback(new StatsCallback(this));
+        statistics::registerDumpCallback([this]() { collateStats(); });
     }
 }
 
 void
 AbstractController::init()
 {
-    params()->ruby_system->registerAbstractController(this);
-    m_delayHistogram.init(10);
+    stats.delayHistogram.init(10);
     uint32_t size = Network::getNumberOfVirtualNetworks();
     for (uint32_t i = 0; i < size; i++) {
-        m_delayVCHistogram.push_back(new Stats::Histogram());
-        m_delayVCHistogram[i]->init(10);
+        stats.delayVCHistogram.push_back(new statistics::Histogram(this));
+        stats.delayVCHistogram[i]->init(10);
+    }
+
+    if (getMemReqQueue()) {
+        getMemReqQueue()->setConsumer(this);
+    }
+
+    downstreamDestinations.setRubySystem(m_ruby_system);
+    upstreamDestinations.setRubySystem(m_ruby_system);
+
+    // Initialize the addr->downstream machine mappings. Multiple machines
+    // in downstream_destinations can have the same address range if they have
+    // different types. If this is the case, mapAddressToDownstreamMachine
+    // needs to specify the machine type
+    downstreamDestinations.resize();
+    for (auto abs_cntrl : params().downstream_destinations) {
+        MachineID mid = abs_cntrl->getMachineID();
+        const AddrRangeList &ranges = abs_cntrl->getAddrRanges();
+        for (const auto &addr_range : ranges) {
+            auto i = downstreamAddrMap.find(mid.getType());
+            if ((i != downstreamAddrMap.end()) &&
+                (i->second.intersects(addr_range) != i->second.end())) {
+                fatal("%s: %s mapped to multiple machines of the same type\n",
+                    name(), addr_range.to_string());
+            }
+            downstreamAddrMap[mid.getType()].insert(addr_range, mid);
+        }
+        downstreamDestinations.add(mid);
+    }
+    // Initialize the addr->upstream machine list.
+    // We do not need to map address -> upstream machine,
+    // so we don't examine the address ranges
+    upstreamDestinations.resize();
+    for (auto abs_cntrl : params().upstream_destinations) {
+        upstreamDestinations.add(abs_cntrl->getMachineID());
     }
 }
 
 void
 AbstractController::resetStats()
 {
-    m_delayHistogram.reset();
+    stats.delayHistogram.reset();
     uint32_t size = Network::getNumberOfVirtualNetworks();
     for (uint32_t i = 0; i < size; i++) {
-        m_delayVCHistogram[i]->reset();
+        stats.delayVCHistogram[i]->reset();
     }
+    ClockedObject::resetStats();
 }
 
 void
 AbstractController::regStats()
 {
-    m_fully_busy_cycles
-        .name(name() + ".fully_busy_cycles")
-        .desc("cycles for which number of transistions == max transitions")
-        .flags(Stats::nozero);
+    ClockedObject::regStats();
 }
 
 void
 AbstractController::profileMsgDelay(uint32_t virtualNetwork, Cycles delay)
 {
-    assert(virtualNetwork < m_delayVCHistogram.size());
-    m_delayHistogram.sample(delay);
-    m_delayVCHistogram[virtualNetwork]->sample(delay);
+    assert(virtualNetwork < stats.delayVCHistogram.size());
+    stats.delayHistogram.sample(delay);
+    stats.delayVCHistogram[virtualNetwork]->sample(delay);
 }
 
 void
@@ -101,6 +157,28 @@ AbstractController::stallBuffer(MessageBuffer* buf, Addr addr)
             addr);
     assert(m_in_ports > m_cur_in_port);
     (*(m_waiting_buffers[addr]))[m_cur_in_port] = buf;
+}
+
+void
+AbstractController::wakeUpBuffer(MessageBuffer* buf, Addr addr)
+{
+    auto iter = m_waiting_buffers.find(addr);
+    if (iter != m_waiting_buffers.end()) {
+        bool has_other_msgs = false;
+        MsgVecType* msgVec = iter->second;
+        for (unsigned int port = 0; port < msgVec->size(); ++port) {
+            if ((*msgVec)[port] == buf) {
+                buf->reanalyzeMessages(addr, clockEdge());
+                (*msgVec)[port] = NULL;
+            } else if ((*msgVec)[port] != NULL) {
+                has_other_msgs = true;
+            }
+        }
+        if (!has_other_msgs) {
+            delete msgVec;
+            m_waiting_buffers.erase(iter);
+        }
+    }
 }
 
 void
@@ -129,8 +207,7 @@ AbstractController::wakeUpAllBuffers(Addr addr)
 {
     if (m_waiting_buffers.count(addr) > 0) {
         //
-        // Wake up all possible lower rank (i.e. lower priority) buffers that could
-        // be waiting on this message.
+        // Wake up all possible buffers that could be waiting on this message.
         //
         for (int in_port_rank = m_in_ports - 1;
              in_port_rank >= 0;
@@ -155,7 +232,7 @@ AbstractController::wakeUpAllBuffers()
     std::vector<MsgVecType*> wokeUpMsgVecs;
     MsgBufType wokeUpMsgBufs;
 
-    if(m_waiting_buffers.size() > 0) {
+    if (m_waiting_buffers.size() > 0) {
         for (WaitingBufType::iterator buf_iter = m_waiting_buffers.begin();
              buf_iter != m_waiting_buffers.end();
              ++buf_iter) {
@@ -184,11 +261,76 @@ AbstractController::wakeUpAllBuffers()
     }
 }
 
+bool
+AbstractController::serviceMemoryQueue()
+{
+    auto mem_queue = getMemReqQueue();
+    assert(mem_queue);
+    if (m_waiting_mem_retry || !mem_queue->isReady(clockEdge())) {
+        return false;
+    }
+
+    const MemoryMsg *mem_msg = (const MemoryMsg*)mem_queue->peek();
+    unsigned int req_size = m_ruby_system->getBlockSizeBytes();
+    if (mem_msg->m_Len > 0) {
+        req_size = mem_msg->m_Len;
+    }
+
+    RequestPtr req
+        = std::make_shared<Request>(mem_msg->m_addr, req_size, 0, m_id);
+    PacketPtr pkt;
+    if (mem_msg->getType() == MemoryRequestType_MEMORY_WB) {
+        pkt = Packet::createWrite(req);
+        pkt->allocate();
+        pkt->setData(mem_msg->m_DataBlk.getData(getOffset(mem_msg->m_addr),
+            req_size));
+    } else if (mem_msg->getType() == MemoryRequestType_MEMORY_READ) {
+        pkt = Packet::createRead(req);
+        uint8_t *newData = new uint8_t[req_size];
+        pkt->dataDynamic(newData);
+    } else {
+        panic("Unknown memory request type (%s) for addr %p",
+              MemoryRequestType_to_string(mem_msg->getType()),
+              mem_msg->m_addr);
+    }
+
+    SenderState *s = new SenderState(mem_msg->m_Sender);
+    pkt->pushSenderState(s);
+
+    if (m_ruby_system->getWarmupEnabled()) {
+        // Use functional rather than timing accesses during warmup
+        mem_queue->dequeue(clockEdge());
+        memoryPort.sendFunctional(pkt);
+        // Since the queue was popped the controller may be able
+        // to make more progress. Make sure it wakes up
+        scheduleEvent(Cycles(1));
+        recvTimingResp(pkt);
+    } else if (memoryPort.sendTimingReq(pkt)) {
+        mem_queue->dequeue(clockEdge());
+        // Since the queue was popped the controller may be able
+        // to make more progress. Make sure it wakes up
+        scheduleEvent(Cycles(1));
+    } else {
+        scheduleEvent(Cycles(1));
+        m_waiting_mem_retry = true;
+        delete pkt;
+        delete s;
+    }
+
+    return true;
+}
+
 void
 AbstractController::blockOnQueue(Addr addr, MessageBuffer* port)
 {
     m_is_blocking = true;
     m_block_map[addr] = port;
+}
+
+bool
+AbstractController::isBlocked(Addr addr) const
+{
+    return m_is_blocking && (m_block_map.find(addr) != m_block_map.end());
 }
 
 void
@@ -200,88 +342,25 @@ AbstractController::unblock(Addr addr)
     }
 }
 
-BaseMasterPort &
-AbstractController::getMasterPort(const std::string &if_name,
-                                  PortID idx)
+bool
+AbstractController::isBlocked(Addr addr)
+{
+    return (m_block_map.count(addr) > 0);
+}
+
+Port &
+AbstractController::getPort(const std::string &if_name, PortID idx)
 {
     return memoryPort;
 }
 
 void
-AbstractController::queueMemoryRead(const MachineID &id, Addr addr,
-                                    Cycles latency)
-{
-    RequestPtr req = new Request(addr, RubySystem::getBlockSizeBytes(), 0,
-                                 m_masterId);
-
-    PacketPtr pkt = Packet::createRead(req);
-    uint8_t *newData = new uint8_t[RubySystem::getBlockSizeBytes()];
-    pkt->dataDynamic(newData);
-
-    SenderState *s = new SenderState(id);
-    pkt->pushSenderState(s);
-
-    // Use functional rather than timing accesses during warmup
-    if (RubySystem::getWarmupEnabled()) {
-        memoryPort.sendFunctional(pkt);
-        recvTimingResp(pkt);
-        return;
-    }
-
-    memoryPort.schedTimingReq(pkt, clockEdge(latency));
-}
-
-void
-AbstractController::queueMemoryWrite(const MachineID &id, Addr addr,
-                                     Cycles latency, const DataBlock &block)
-{
-    RequestPtr req = new Request(addr, RubySystem::getBlockSizeBytes(), 0,
-                                 m_masterId);
-
-    PacketPtr pkt = Packet::createWrite(req);
-    uint8_t *newData = new uint8_t[RubySystem::getBlockSizeBytes()];
-    pkt->dataDynamic(newData);
-    memcpy(newData, block.getData(0, RubySystem::getBlockSizeBytes()),
-           RubySystem::getBlockSizeBytes());
-
-    SenderState *s = new SenderState(id);
-    pkt->pushSenderState(s);
-
-    // Use functional rather than timing accesses during warmup
-    if (RubySystem::getWarmupEnabled()) {
-        memoryPort.sendFunctional(pkt);
-        recvTimingResp(pkt);
-        return;
-    }
-
-    // Create a block and copy data from the block.
-    memoryPort.schedTimingReq(pkt, clockEdge(latency));
-}
-
-void
-AbstractController::queueMemoryWritePartial(const MachineID &id, Addr addr,
-                                            Cycles latency,
-                                            const DataBlock &block, int size)
-{
-    RequestPtr req = new Request(addr, RubySystem::getBlockSizeBytes(), 0,
-                                 m_masterId);
-
-    PacketPtr pkt = Packet::createWrite(req);
-    uint8_t *newData = new uint8_t[size];
-    pkt->dataDynamic(newData);
-    memcpy(newData, block.getData(getOffset(addr), size), size);
-
-    SenderState *s = new SenderState(id);
-    pkt->pushSenderState(s);
-
-    // Create a block and copy data from the block.
-    memoryPort.schedTimingReq(pkt, clockEdge(latency));
-}
-
-void
 AbstractController::functionalMemoryRead(PacketPtr pkt)
 {
-    memoryPort.sendFunctional(pkt);
+    // read from mem. req. queue if write data is pending there
+    MessageBuffer *req_queue = getMemReqQueue();
+    if (!req_queue || !req_queue->functionalRead(pkt))
+        memoryPort.sendFunctional(pkt);
 }
 
 int
@@ -289,23 +368,27 @@ AbstractController::functionalMemoryWrite(PacketPtr pkt)
 {
     int num_functional_writes = 0;
 
-    // Check the buffer from the controller to the memory.
-    if (memoryPort.checkFunctional(pkt)) {
-        num_functional_writes++;
-    }
-
     // Update memory itself.
     memoryPort.sendFunctional(pkt);
     return num_functional_writes + 1;
 }
 
-void
+bool
 AbstractController::recvTimingResp(PacketPtr pkt)
 {
-    assert(getMemoryQueue());
-    assert(pkt->isResponse());
+    auto* memRspQueue = getMemRespQueue();
+    gem5_assert(memRspQueue);
+    gem5_assert(pkt->isResponse());
 
-    std::shared_ptr<MemoryMsg> msg = std::make_shared<MemoryMsg>(clockEdge());
+    if (!memRspQueue->areNSlotsAvailable(1, curTick())) {
+        m_mem_ctrl_waiting_retry = true;
+        return false;
+    }
+
+    int blk_size = m_ruby_system->getBlockSizeBytes();
+
+    std::shared_ptr<MemoryMsg> msg =
+        std::make_shared<MemoryMsg>(clockEdge(), blk_size, m_ruby_system);
     (*msg).m_addr = pkt->getAddr();
     (*msg).m_Sender = m_machineID;
 
@@ -319,7 +402,7 @@ AbstractController::recvTimingResp(PacketPtr pkt)
 
         // Copy data from the packet
         (*msg).m_DataBlk.setData(pkt->getPtr<uint8_t>(), 0,
-                                 RubySystem::getBlockSizeBytes());
+                                 m_ruby_system->getBlockSizeBytes());
     } else if (pkt->isWrite()) {
         (*msg).m_Type = MemoryRequestType_MEMORY_WB;
         (*msg).m_MessageSize = MessageSizeType_Writeback_Control;
@@ -327,23 +410,145 @@ AbstractController::recvTimingResp(PacketPtr pkt)
         panic("Incorrect packet type received from memory controller!");
     }
 
-    getMemoryQueue()->enqueue(msg, clockEdge(), cyclesToTicks(Cycles(1)));
+    memRspQueue->enqueue(msg, clockEdge(), cyclesToTicks(Cycles(1)),
+        m_ruby_system->getRandomization(), m_ruby_system->getWarmupEnabled());
     delete pkt;
+    return true;
+}
+
+Tick
+AbstractController::recvAtomic(PacketPtr pkt)
+{
+   return ticksToCycles(memoryPort.sendAtomic(pkt));
+}
+
+MachineID
+AbstractController::mapAddressToMachine(Addr addr, MachineType mtype) const
+{
+    NodeID node = m_net_ptr->addressToNodeID(addr, mtype);
+    MachineID mach = {mtype, node};
+    return mach;
+}
+
+MachineID
+AbstractController::mapAddressToDownstreamMachine(Addr addr, MachineType mtype)
+const
+{
+    if (mtype == MachineType_NUM) {
+        // map to the first match
+        for (const auto &i : downstreamAddrMap) {
+            const auto mapping = i.second.contains(addr);
+            if (mapping != i.second.end())
+                return mapping->second;
+        }
+    }
+    else {
+        const auto i = downstreamAddrMap.find(mtype);
+        if (i != downstreamAddrMap.end()) {
+            const auto mapping = i->second.contains(addr);
+            if (mapping != i->second.end())
+                return mapping->second;
+        }
+    }
+    fatal("%s: couldn't find mapping for address %x mtype=%s\n",
+        name(), addr, mtype);
+}
+
+
+void
+AbstractController::memRespQueueDequeued() {
+    if (m_mem_ctrl_waiting_retry && !mRetryRespEvent.scheduled()) {
+        schedule(mRetryRespEvent, clockEdge(Cycles{1}));
+    }
+}
+
+void
+AbstractController::dequeueMemRespQueue() {
+    auto* q = getMemRespQueue();
+    gem5_assert(q);
+    q->dequeue(clockEdge());
+    memRespQueueDequeued();
+}
+
+void
+AbstractController::sendRetryRespToMem() {
+    if (m_mem_ctrl_waiting_retry) {
+        m_mem_ctrl_waiting_retry = false;
+        memoryPort.sendRetryResp();
+    }
+}
+
+Addr
+AbstractController::getOffset(Addr addr) const
+{
+    return ruby::getOffset(addr, m_ruby_system->getBlockSizeBits());
+}
+
+Addr
+AbstractController::makeLineAddress(Addr addr) const
+{
+    return ruby::makeLineAddress(addr, m_ruby_system->getBlockSizeBits());
+}
+
+std::string
+AbstractController::printAddress(Addr addr) const
+{
+    return ruby::printAddress(addr, m_ruby_system->getBlockSizeBits());
+}
+
+NetDest
+AbstractController::broadcast(MachineType type)
+{
+    assert(m_ruby_system != nullptr);
+    NodeID type_count = m_ruby_system->MachineType_base_count(type);
+
+    NetDest dest(m_ruby_system);
+    for (NodeID i = 0; i < type_count; i++) {
+        MachineID mach = {type, i};
+        dest.add(mach);
+    }
+    return dest;
+}
+
+int
+AbstractController::machineCount(MachineType machType)
+{
+    assert(m_ruby_system != nullptr);
+    return m_ruby_system->MachineType_base_count(machType);
 }
 
 bool
 AbstractController::MemoryPort::recvTimingResp(PacketPtr pkt)
 {
-    controller->recvTimingResp(pkt);
-    return true;
+    return controller->recvTimingResp(pkt);
+}
+
+void
+AbstractController::MemoryPort::recvReqRetry()
+{
+    controller->m_waiting_mem_retry = false;
+    controller->serviceMemoryQueue();
 }
 
 AbstractController::MemoryPort::MemoryPort(const std::string &_name,
                                            AbstractController *_controller,
-                                           const std::string &_label)
-    : QueuedMasterPort(_name, _controller, reqQueue, snoopRespQueue),
-      reqQueue(*_controller, *this, _label),
-      snoopRespQueue(*_controller, *this, _label),
-      controller(_controller)
+                                           PortID id)
+    : RequestPort(_name, id), controller(_controller)
 {
 }
+
+AbstractController::
+ControllerStats::ControllerStats(statistics::Group *parent)
+    : statistics::Group(parent),
+      ADD_STAT(fullyBusyCycles,
+               "cycles for which number of transistions == max transitions"),
+      ADD_STAT(delayHistogram, "delay_histogram")
+{
+    fullyBusyCycles
+        .flags(statistics::nozero);
+    delayHistogram
+        .flags(statistics::nozero);
+}
+
+} // namespace ruby
+} // namespace gem5

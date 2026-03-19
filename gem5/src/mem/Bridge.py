@@ -35,20 +35,34 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Ali Saidi
-#          Andreas Hansson
 
+from m5.objects.ClockedObject import ClockedObject
 from m5.params import *
-from MemObject import MemObject
 
-class Bridge(MemObject):
-    type = 'Bridge'
+
+class BridgeBase(ClockedObject):
+    type = "BridgeBase"
     cxx_header = "mem/bridge.hh"
-    slave = SlavePort('Slave port')
-    master = MasterPort('Master port')
+    cxx_class = "gem5::BridgeBase"
+    abstract = True
+
+    mem_side_port = RequestPort(
+        "This port sends requests and receives responses"
+    )
+    cpu_side_port = ResponsePort(
+        "This port receives requests and sends responses"
+    )
+
     req_size = Param.Unsigned(16, "The number of requests to buffer")
     resp_size = Param.Unsigned(16, "The number of responses to buffer")
-    delay = Param.Latency('0ns', "The latency of this bridge")
-    ranges = VectorParam.AddrRange([AllMemory],
-                                   "Address ranges to pass through the bridge")
+    delay = Param.Latency("0ns", "The latency of this bridge")
+
+
+class Bridge(BridgeBase):
+    type = "Bridge"
+    cxx_header = "mem/bridge.hh"
+    cxx_class = "gem5::Bridge"
+
+    ranges = VectorParam.AddrRange(
+        [AllMemory], "Address ranges to pass through the bridge"
+    )

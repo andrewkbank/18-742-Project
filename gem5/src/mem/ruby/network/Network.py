@@ -23,27 +23,34 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Steve Reinhardt
-#          Brad Beckmann
 
+from m5.objects.BasicLink import (
+    BasicExtLink,
+    BasicIntLink,
+)
+from m5.objects.BasicRouter import BasicRouter
+from m5.objects.ClockedObject import ClockedObject
 from m5.params import *
-from ClockedObject import ClockedObject
-from BasicLink import BasicLink
+from m5.proxy import *
+
 
 class RubyNetwork(ClockedObject):
-    type = 'RubyNetwork'
-    cxx_class = 'Network'
+    type = "RubyNetwork"
+    cxx_class = "gem5::ruby::Network"
     cxx_header = "mem/ruby/network/Network.hh"
     abstract = True
-    topology = Param.String("Not Specified",
-                            "the name of the imported topology module")
 
-    number_of_virtual_networks = Param.Unsigned("Number of virtual networks "
-           "used by the coherence protocol in use.  The on-chip network "
-           "assumes the protocol numbers vnets starting from 0.  Therefore, "
-           "the number of virtual networks should be one more than the "
-           "highest numbered vnet in use.")
+    topology = Param.String(
+        "Not Specified", "the name of the imported topology module"
+    )
+
+    number_of_virtual_networks = Param.Unsigned(
+        "Number of virtual networks "
+        "used by the coherence protocol in use.  The on-chip network "
+        "assumes the protocol numbers vnets starting from 0.  Therefore, "
+        "the number of virtual networks should be one more than the "
+        "highest numbered vnet in use."
+    )
     control_msg_size = Param.Int(8, "")
     ruby_system = Param.RubySystem("")
 
@@ -52,5 +59,11 @@ class RubyNetwork(ClockedObject):
     ext_links = VectorParam.BasicExtLink("Links to external nodes")
     int_links = VectorParam.BasicIntLink("Links between internal nodes")
 
-    slave = VectorSlavePort("CPU slave port")
-    master = VectorMasterPort("CPU master port")
+    in_port = VectorResponsePort("CPU input port")
+    out_port = VectorRequestPort("CPU output port")
+
+    data_msg_size = Param.Int(
+        Parent.block_size_bytes,
+        "Size of data messages. Defaults to the parent "
+        "RubySystem cache line size.",
+    )

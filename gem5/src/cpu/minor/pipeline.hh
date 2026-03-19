@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2014 ARM Limited
+ * Copyright (c) 2013-2014, 2017 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -33,8 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andrew Bardsley
  */
 
 /**
@@ -53,14 +51,17 @@
 #include "cpu/minor/execute.hh"
 #include "cpu/minor/fetch1.hh"
 #include "cpu/minor/fetch2.hh"
-#include "params/MinorCPU.hh"
+#include "params/BaseMinorCPU.hh"
 #include "sim/ticked_object.hh"
 
-namespace Minor
+namespace gem5
+{
+
+namespace minor
 {
 
 /**
- * @namespace Minor
+ * @namespace minor
  *
  * Minor contains all the definitions within the MinorCPU apart from the CPU
  * class itself
@@ -107,12 +108,12 @@ class Pipeline : public Ticked
     bool needToSignalDrained;
 
   public:
-    Pipeline(MinorCPU &cpu_, MinorCPUParams &params);
+    Pipeline(MinorCPU &cpu_, const BaseMinorCPUParams &params);
 
   public:
     /** Wake up the Fetch unit.  This is needed on thread activation esp.
      *  after quiesce wakeup */
-    void wakeupFetch();
+    void wakeupFetch(ThreadID tid);
 
     /** Try to drain the CPU */
     bool drain();
@@ -124,12 +125,7 @@ class Pipeline : public Ticked
 
     /** A custom evaluate allows report in the right place (between
      *  stages and pipeline advance) */
-    void evaluate();
-
-    void countCycles(Cycles delta) M5_ATTR_OVERRIDE
-    {
-        cpu.ppCycles->notify(delta);
-    }
+    void evaluate() override;
 
     void minorTrace() const;
 
@@ -145,6 +141,7 @@ class Pipeline : public Ticked
     MinorActivityRecorder *getActivityRecorder() { return &activityRecorder; }
 };
 
-}
+} // namespace minor
+} // namespace gem5
 
 #endif /* __CPU_MINOR_PIPELINE_HH__ */

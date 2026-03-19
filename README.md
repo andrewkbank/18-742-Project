@@ -32,16 +32,8 @@ We point out next to the repository structure and some important folders and fil
 ```
 .
 +-- README.md
-+-- gem5/
-|   +-- build_opts/
-|   +-- configs/
-|   +-- configs/
-|   +-- ext/
-|   +-- protoc3/
-|   +-- src/
-|   +-- system/
-|   +-- tests/
-|   +-- util/
++-- gem5/                  # modern gem5 dependency at ../../gem5
++-- MIMDRAM/18-742-Project/gem5/  # legacy reference tree kept for porting
 +-- microworkloads/
 ```
 
@@ -54,24 +46,21 @@ sudo apt install build-essential git m4 scons zlib1g zlib1g-dev \
                  libprotobuf-dev protobuf-compiler libprotoc-dev libgoogle-perftools-dev \
                  python-dev python swig
 ```
-* You may need to include the following line into gem5/SConstruct at line 555:
-```
-main.Append(CCFLAGS=['-DPROTOBUF_INLINE_NOT_IN_HEADERS=0'])
-```
-
 ### Step 1: Installing the Simulator
 To install the simulator:
 ```
-cd gem5
+cd ../../gem5
 scons build/X86/gem5.opt -j8
-cd ..
+cd ../MIMDRAM/18-742-Project
 ```
 
 ### Step 2: Compiling the Workloads
-To compile a workload, you need to link the source code with the **../gem5/util/m5** folder, as follows (we use the bitweave-buddy.c file as an example):
+To compile a workload, you need to link the source code with the modern gem5
+`util/m5` folder, as follows (we use the bitweave-buddy.c file as an example):
 ```
 cd microworkloads/
-gcc -**static -std=c99 -O3 -msse2 -I ../gem5/util/m5 m5op_x86.S rowop.S** bitweave-buddy.c -o bitweave-buddy.exe
+gcc -static -std=c99 -O3 -msse2 -I ../../../gem5/util/m5 m5op_x86.S rowop.S \
+    -I ../../../gem5/include -I . bitweave-buddy.c -o bitweave-buddy.exe
 cd .. 
 ```
 
@@ -85,7 +74,7 @@ cd ..
 ### Step 3: Running a Simulation
 After building gem5 and the workloads, you can execute a simulation as follows:
 ```
-cd gem5/
+cd ../../gem5/
 ./build/X86/gem5.opt configs/example/se.py --cpu-type=detailed --caches --l2cache --mem-type=DDR4_2400_x64 --mem-size=8192MB -c ABSOLUTE_PATH/bitweave-buddy.exe -o "10 1"
 ```
 Note that you *must* specify the *absolute path* (ABSOLUTE_PATH) to the folder containing the compiled workloads.

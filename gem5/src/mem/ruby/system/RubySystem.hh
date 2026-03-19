@@ -32,17 +32,31 @@
  * components of the system
  */
 
-#ifndef __MEM_RUBY_SYSTEM_SYSTEM_HH__
-#define __MEM_RUBY_SYSTEM_SYSTEM_HH__
+#ifndef __MEM_RUBY_SYSTEM_RUBYSYSTEM_HH__
+#define __MEM_RUBY_SYSTEM_RUBYSYSTEM_HH__
+
+#include <unordered_map>
 
 #include "base/callback.hh"
 #include "base/output.hh"
 #include "mem/packet.hh"
 #include "mem/ruby/profiler/Profiler.hh"
 #include "mem/ruby/slicc_interface/AbstractController.hh"
+#include "mem/ruby/slicc_interface/ProtocolInfo.hh"
 #include "mem/ruby/system/CacheRecorder.hh"
 #include "params/RubySystem.hh"
 #include "sim/clocked_object.hh"
+
+namespace gem5
+{
+
+namespace memory
+{
+class SimpleMemory;
+} // namespace memory
+
+namespace ruby
+{
 
 class Network;
 class AbstractController;
@@ -50,36 +64,21 @@ class AbstractController;
 class RubySystem : public ClockedObject
 {
   public:
-    class RubyEvent : public Event
-    {
-      public:
-        RubyEvent(RubySystem* _ruby_system)
-        {
-            m_ruby_system = _ruby_system;
-        }
-      private:
-        void process();
-
-        RubySystem* m_ruby_system;
-    };
-
-    friend class RubyEvent;
-
-    typedef RubySystemParams Params;
-    RubySystem(const Params *p);
+    PARAMS(RubySystem);
+    RubySystem(const Params &p);
     ~RubySystem();
 
     // config accessors
-    static int getRandomization() { return m_randomization; }
-    static uint32_t getBlockSizeBytes() { return m_block_size_bytes; }
-    static uint32_t getBlockSizeBits() { return m_block_size_bits; }
-    static uint32_t getMemorySizeBits() { return m_memory_size_bits; }
-    static bool getWarmupEnabled() { return m_warmup_enabled; }
-    static bool getCooldownEnabled() { return m_cooldown_enabled; }
+    int getRandomization() { return m_randomization; }
+    uint32_t getBlockSizeBytes() { return m_block_size_bytes; }
+    uint32_t getBlockSizeBits() { return m_block_size_bits; }
+    uint32_t getMemorySizeBits() { return m_memory_size_bits; }
+    bool getWarmupEnabled() { return m_warmup_enabled; }
+    bool getCooldownEnabled() { return m_cooldown_enabled; }
 
-    SimpleMemory *getPhysMem() { return m_phys_mem; }
+    memory::SimpleMemory *getPhysMem() { return m_phys_mem; }
     Cycles getStartCycle() { return m_start_cycle; }
-    const bool getAccessBackingStore() { return m_access_backing_store; }
+    bool getAccessBackingStore() { return m_access_backing_store; }
 
     // Public Methods
     Profiler*
@@ -89,28 +88,38 @@ class RubySystem : public ClockedObject
         return m_profiler;
     }
 
-    void regStats() { m_profiler->regStats(name()); }
+    void regStats() override {
+        ClockedObject::regStats();
+    }
     void collateStats() { m_profiler->collateStats(); }
-    void resetStats();
+    void resetStats() override;
 
-    void memWriteback();
-    void serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE;
-    void unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE;
-    void drainResume() M5_ATTR_OVERRIDE;
+    void memWriteback() override;
+    void serialize(CheckpointOut &cp) const override;
+    void unserialize(CheckpointIn &cp) override;
+    void drainResume() override;
     void process();
-    void startup();
+    void init() override;
+    void startup() override;
     bool functionalRead(Packet *ptr);
     bool functionalWrite(Packet *ptr);
 
     void registerNetwork(Network*);
-    void registerAbstractController(AbstractController*);
+    void registerAbstractController(
+        AbstractController*, std::unique_ptr<ProtocolInfo>
+    );
+    void registerMachineID(const MachineID& mach_id, Network* network);
+    void registerRequestorIDs();
 
     bool eventQueueEmpty() { return eventq->empty(); }
     void enqueueRubyEvent(Tick tick)
     {
-        RubyEvent* e = new RubyEvent(this);
+        auto e = new EventFunctionWrapper(
+            [this]{ processRubyEvent(); }, "RubyEvent");
         schedule(e, tick);
     }
+
+    const ProtocolInfo& getProtocolInfo() { return *protocolInfo; }
 
   private:
     // Private copy constructor and assignment operator
@@ -127,38 +136,48 @@ class RubySystem : public ClockedObject
     static void writeCompressedTrace(uint8_t *raw_data, std::string file,
                                      uint64_t uncompressed_trace_size);
 
+    void processRubyEvent();
+
+    // Called from `functionalRead` depending on if the protocol needs
+    // partial functional reads.
+    bool simpleFunctionalRead(PacketPtr pkt);
+    bool partialFunctionalRead(PacketPtr pkt);
+
   private:
     // configuration parameters
-    static bool m_randomization;
-    static uint32_t m_block_size_bytes;
-    static uint32_t m_block_size_bits;
-    static uint32_t m_memory_size_bits;
+    bool m_randomization;
+    uint32_t m_block_size_bytes;
+    uint32_t m_block_size_bits;
+    uint32_t m_memory_size_bits;
 
-    static bool m_warmup_enabled;
-    static unsigned m_systems_to_warmup;
-    static bool m_cooldown_enabled;
-    SimpleMemory *m_phys_mem;
+    bool m_warmup_enabled = false;
+    bool m_cooldown_enabled = false;
+    memory::SimpleMemory *m_phys_mem;
     const bool m_access_backing_store;
 
-    Network* m_network;
+    //std::vector<Network *> m_networks;
+    std::vector<std::unique_ptr<Network>> m_networks;
     std::vector<AbstractController *> m_abs_cntrl_vec;
     Cycles m_start_cycle;
+
+    std::unordered_map<MachineID, unsigned> machineToNetwork;
+    std::unordered_map<RequestorID, unsigned> requestorToNetwork;
+    std::unordered_map<unsigned, std::vector<AbstractController*>> netCntrls;
+
+    std::unique_ptr<ProtocolInfo> protocolInfo;
 
   public:
     Profiler* m_profiler;
     CacheRecorder* m_cache_recorder;
     std::vector<std::map<uint32_t, AbstractController *> > m_abstract_controls;
+    std::map<MachineType, uint32_t> m_num_controllers;
+
+    // These are auto-generated by SLICC based on the built protocol.
+    int MachineType_base_count(const MachineType& obj);
+    int MachineType_base_number(const MachineType& obj);
 };
 
-class RubyStatsCallback : public Callback
-{
-  private:
-    RubySystem *m_ruby_system;
+} // namespace ruby
+} // namespace gem5
 
-  public:
-    virtual ~RubyStatsCallback() {}
-    RubyStatsCallback(RubySystem *system) : m_ruby_system(system) {}
-    void process() { m_ruby_system->collateStats(); }
-};
-
-#endif // __MEM_RUBY_SYSTEM_SYSTEM_HH__
+#endif //__MEM_RUBY_SYSTEM_RUBYSYSTEM_HH__

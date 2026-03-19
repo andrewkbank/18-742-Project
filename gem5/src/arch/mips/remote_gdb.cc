@@ -1,4 +1,5 @@
 /*
+ * Copyright 2015-2020 LabWare
  * Copyright 2014 Google, Inc.
  * Copyright (c) 2010 ARM Limited
  * All rights reserved
@@ -37,10 +38,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nathan Binkert
- *          William Wang
- *          Deyuan Guo
  */
 
 /*
@@ -131,25 +128,31 @@
  * "Stub" to allow remote cpu to debug over a serial line using gdb.
  */
 
+#include "arch/mips/remote_gdb.hh"
+
 #include <sys/signal.h>
 #include <unistd.h>
 
 #include <string>
 
 #include "arch/mips/decoder.hh"
-#include "arch/mips/remote_gdb.hh"
-#include "arch/mips/vtophys.hh"
+#include "arch/mips/gdb-xml/gdb_xml_mips.hh"
+#include "arch/mips/regs/float.hh"
+#include "arch/mips/regs/int.hh"
+#include "arch/mips/regs/misc.hh"
 #include "cpu/thread_state.hh"
 #include "debug/GDBAcc.hh"
 #include "debug/GDBMisc.hh"
 #include "mem/page_table.hh"
 #include "sim/full_system.hh"
 
-using namespace std;
+namespace gem5
+{
+
 using namespace MipsISA;
 
-RemoteGDB::RemoteGDB(System *_system, ThreadContext *tc)
-    : BaseRemoteGDB(_system, tc, GdbNumRegs * sizeof(uint32_t))
+RemoteGDB::RemoteGDB(System *_system, ListenSocketConfig _listen_config)
+    : BaseRemoteGDB(_system, _listen_config), regCache(this)
 {
 }
 
@@ -159,79 +162,71 @@ RemoteGDB::RemoteGDB(System *_system, ThreadContext *tc)
 bool
 RemoteGDB::acc(Addr va, size_t len)
 {
-    TlbEntry entry;
-    //Check to make sure the first byte is mapped into the processes address
-    //space.
-    if (FullSystem)
-        panic("acc not implemented for MIPS FS!");
-    else
-        return context->getProcessPtr()->pTable->lookup(va, entry);
+    // Check to make sure the first byte is mapped into the processes address
+    // space.
+    panic_if(FullSystem, "acc not implemented for MIPS FS!");
+    return context()->getProcessPtr()->pTable->lookup(va) != nullptr;
 }
 
-/*
- * Translate the kernel debugger register format into the GDB register
- * format.
- */
 void
-RemoteGDB::getregs()
+RemoteGDB::MipsGdbRegCache::getRegs(ThreadContext *context)
 {
     DPRINTF(GDBAcc, "getregs in remotegdb \n");
-    memset(gdbregs.regs, 0, gdbregs.bytes());
 
-    // MIPS registers are 32 bits wide, gdb registers are 64 bits wide
-    // two MIPS registers are packed into one gdb register (little endian)
-
-    // INTREG: R0~R31
-    for (int i = 0; i < GdbIntArchRegs; i++)
-        gdbregs.regs32[i] = context->readIntReg(i);
-    // SR, LO, HI, BADVADDR, CAUSE, PC
-    gdbregs.regs32[GdbIntArchRegs + 0] =
-        context->readMiscRegNoEffect(MISCREG_STATUS);
-    gdbregs.regs32[GdbIntArchRegs + 1] = context->readIntReg(INTREG_LO);
-    gdbregs.regs32[GdbIntArchRegs + 2] = context->readIntReg(INTREG_HI);
-    gdbregs.regs32[GdbIntArchRegs + 3] =
-        context->readMiscRegNoEffect(MISCREG_BADVADDR);
-    gdbregs.regs32[GdbIntArchRegs + 4] =
-        context->readMiscRegNoEffect(MISCREG_CAUSE);
-    gdbregs.regs32[GdbIntArchRegs + 5] = context->pcState().pc();
-    // FLOATREG: F0~F31
-    for (int i = 0; i < GdbFloatArchRegs; i++)
-        gdbregs.regs32[GdbIntRegs + i] = context->readFloatRegBits(i);
-    // FCR, FIR
-    gdbregs.regs32[GdbIntRegs + GdbFloatArchRegs + 0] =
-        context->readFloatRegBits(FLOATREG_FCCR);
-    gdbregs.regs32[GdbIntRegs + GdbFloatArchRegs + 1] =
-        context->readFloatRegBits(FLOATREG_FIR);
+    for (int i = 0; i < 32; i++)
+        r.gpr[i] = context->getReg(intRegClass[i]);
+    r.sr = context->readMiscRegNoEffect(misc_reg::Status);
+    r.lo = context->getReg(int_reg::Lo);
+    r.hi = context->getReg(int_reg::Hi);
+    r.badvaddr = context->readMiscRegNoEffect(misc_reg::Badvaddr);
+    r.cause = context->readMiscRegNoEffect(misc_reg::Cause);
+    r.pc = context->pcState().instAddr();
+    for (int i = 0; i < 32; i++)
+        r.fpr[i] = context->getReg(floatRegClass[i]);
+    r.fsr = context->getReg(float_reg::Fccr);
+    r.fir = context->getReg(float_reg::Fir);
 }
 
-/*
- * Translate the GDB register format into the kernel debugger register
- * format.
- */
 void
-RemoteGDB::setregs()
+RemoteGDB::MipsGdbRegCache::setRegs(ThreadContext *context) const
 {
     DPRINTF(GDBAcc, "setregs in remotegdb \n");
 
-    // INTREG: R0~R31
-    for (int i = 1; i < GdbIntArchRegs; i++)
-        context->setIntReg(i, gdbregs.regs32[i]);
-    // SR, LO, HI, BADVADDR, CAUSE, PC
-    context->setMiscRegNoEffect(MISCREG_STATUS,
-        gdbregs.regs32[GdbIntArchRegs + 0]);
-    context->setIntReg(INTREG_LO, gdbregs.regs32[GdbIntArchRegs + 1]);
-    context->setIntReg(INTREG_HI, gdbregs.regs32[GdbIntArchRegs + 2]);
-    context->setMiscRegNoEffect(MISCREG_BADVADDR,
-        gdbregs.regs32[GdbIntArchRegs + 3]);
-    context->setMiscRegNoEffect(MISCREG_CAUSE,
-        gdbregs.regs32[GdbIntArchRegs + 4]);
-    context->pcState(gdbregs.regs32[GdbIntArchRegs + 5]);
-    // FLOATREG: F0~F31
-    for (int i = 0; i < GdbFloatArchRegs; i++)
-        context->setFloatRegBits(i, gdbregs.regs32[GdbIntRegs + i]);
-    // FCR, FIR
-    context->setFloatRegBits(FLOATREG_FCCR,
-        gdbregs.regs32[GdbIntRegs + GdbFloatArchRegs + 0]);
-    context->setFloatRegBits(FLOATREG_FIR,
-        gdbregs.regs32[GdbIntRegs + GdbFloatArchRegs + 1]);
+    for (int i = 1; i < 32; i++)
+        context->setReg(intRegClass[i], r.gpr[i]);
+    context->setMiscRegNoEffect(misc_reg::Status, r.sr);
+    context->setReg(int_reg::Lo, r.lo);
+    context->setReg(int_reg::Hi, r.hi);
+    context->setMiscRegNoEffect(misc_reg::Badvaddr, r.badvaddr);
+    context->setMiscRegNoEffect(misc_reg::Cause, r.cause);
+    context->pcState(r.pc);
+    for (int i = 0; i < 32; i++)
+        context->setReg(floatRegClass[i], r.fpr[i]);
+    context->setReg(float_reg::Fccr, r.fsr);
+    context->setReg(float_reg::Fir, r.fir);
 }
+
+BaseGdbRegCache*
+RemoteGDB::gdbRegs()
+{
+    return &regCache;
+}
+
+bool
+RemoteGDB::getXferFeaturesRead(const std::string &annex, std::string &output)
+{
+#define GDB_XML(x, s) \
+        { x, std::string(reinterpret_cast<const char *>(Blobs::s), \
+        Blobs::s ## _len) }
+    static const std::map<std::string, std::string> annexMap {
+        GDB_XML("target.xml", gdb_xml_mips),
+    };
+#undef GDB_XML
+    auto it = annexMap.find(annex);
+    if (it == annexMap.end())
+        return false;
+    output = it->second;
+    return true;
+}
+
+} // namespace gem5

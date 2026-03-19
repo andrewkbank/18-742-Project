@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 ARM Limited
+ * Copyright (c) 2014-2016 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -33,15 +33,41 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Geoffrey Blake
  */
 
-#include "params/SubSystem.hh"
 #include "sim/sub_system.hh"
 
-SubSystem *
-SubSystemParams::create()
+#include "params/SubSystem.hh"
+#include "sim/power/power_model.hh"
+#include "sim/power/thermal_domain.hh"
+
+namespace gem5
 {
-    return new SubSystem(this);
+
+SubSystem::SubSystem(const Params &p)
+ : SimObject(p)
+{
+    // Link thermalDomain <-> SubSystem
+    if (p.thermal_domain)
+        p.thermal_domain->setSubSystem(this);
 }
+
+double
+SubSystem::getDynamicPower() const
+{
+    double ret = 0.0f;
+    for (auto &obj: powerProducers)
+        ret += obj->getDynamicPower();
+    return ret;
+}
+
+double
+SubSystem::getStaticPower() const
+{
+    double ret = 0.0f;
+    for (auto &obj: powerProducers)
+        ret += obj->getStaticPower();
+    return ret;
+}
+
+} // namespace gem5

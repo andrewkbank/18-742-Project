@@ -24,38 +24,27 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Gabe Black
  */
 
 /** @file
  * Implementation of PC platform.
  */
 
-#include <deque>
-#include <string>
-#include <vector>
+#include "dev/x86/pc.hh"
 
 #include "arch/x86/intmessage.hh"
 #include "arch/x86/x86_traits.hh"
-#include "config/the_isa.hh"
-#include "cpu/intr_control.hh"
 #include "dev/x86/i82094aa.hh"
 #include "dev/x86/i8254.hh"
 #include "dev/x86/i8259.hh"
-#include "dev/x86/pc.hh"
 #include "dev/x86/south_bridge.hh"
-#include "dev/terminal.hh"
 #include "sim/system.hh"
 
-using namespace std;
-using namespace TheISA;
-
-Pc::Pc(const Params *p)
-    : Platform(p), system(p->system)
+namespace gem5
 {
-    southBridge = NULL;
-}
+
+Pc::Pc(const Params &p) : Platform(p), southBridge(p.south_bridge)
+{}
 
 void
 Pc::init()
@@ -65,7 +54,7 @@ Pc::init()
     /*
      * Initialize the timer.
      */
-    I8254 & timer = *southBridge->pit;
+    auto &timer = *southBridge->pit;
     //Timer 0, mode 2, no bcd, 16 bit count
     timer.writeControl(0x34);
     //Timer 0, latch command
@@ -77,17 +66,17 @@ Pc::init()
     /*
      * Initialize the I/O APIC.
      */
-    I82094AA & ioApic = *southBridge->ioApic;
-    I82094AA::RedirTableEntry entry = 0;
-    entry.deliveryMode = DeliveryMode::ExtInt;
+    X86ISA::I82094AA &ioApic = *southBridge->ioApic;
+    X86ISA::I82094AA::RedirTableEntry entry = 0;
+    entry.mask = 1;
+    entry.deliveryMode = X86ISA::delivery_mode::ExtInt;
     entry.vector = 0x20;
     ioApic.writeReg(0x10, entry.bottomDW);
     ioApic.writeReg(0x11, entry.topDW);
-    entry.deliveryMode = DeliveryMode::Fixed;
+    entry.deliveryMode = X86ISA::delivery_mode::Fixed;
     entry.vector = 0x24;
     ioApic.writeReg(0x18, entry.bottomDW);
     ioApic.writeReg(0x19, entry.topDW);
-    entry.mask = 1;
     entry.vector = 0x21;
     ioApic.writeReg(0x12, entry.bottomDW);
     ioApic.writeReg(0x13, entry.topDW);
@@ -118,7 +107,7 @@ Pc::init()
 void
 Pc::postConsoleInt()
 {
-    southBridge->ioApic->signalInterrupt(4);
+    southBridge->ioApic->requestInterrupt(4);
     southBridge->pic1->signalInterrupt(4);
 }
 
@@ -132,7 +121,7 @@ Pc::clearConsoleInt()
 void
 Pc::postPciInt(int line)
 {
-    southBridge->ioApic->signalInterrupt(line);
+    southBridge->ioApic->requestInterrupt(line);
 }
 
 void
@@ -141,35 +130,4 @@ Pc::clearPciInt(int line)
     warn_once("Tried to clear PCI interrupt %d\n", line);
 }
 
-Addr
-Pc::pciToDma(Addr pciAddr) const
-{
-    return pciAddr;
-}
-
-Addr
-Pc::calcPciConfigAddr(int bus, int dev, int func)
-{
-    assert(func < 8);
-    assert(dev < 32);
-    assert(bus == 0);
-    return (PhysAddrPrefixPciConfig | (func << 8) | (dev << 11));
-}
-
-Addr
-Pc::calcPciIOAddr(Addr addr)
-{
-    return PhysAddrPrefixIO + addr;
-}
-
-Addr
-Pc::calcPciMemAddr(Addr addr)
-{
-    return addr;
-}
-
-Pc *
-PcParams::create()
-{
-    return new Pc(this);
-}
+} // namespace gem5

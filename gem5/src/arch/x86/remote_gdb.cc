@@ -1,4 +1,5 @@
 /*
+ * Copyright 2015 LabWare
  * Copyright 2014 Google, Inc.
  * Copyright (c) 2007 The Hewlett-Packard Development Company
  * All rights reserved.
@@ -34,44 +35,51 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Gabe Black
  */
+
+#include "arch/x86/remote_gdb.hh"
 
 #include <sys/signal.h>
 #include <unistd.h>
 
 #include <string>
 
-#include "arch/x86/regs/int.hh"
-#include "arch/x86/regs/misc.hh"
+#include "arch/x86/mmu.hh"
 #include "arch/x86/pagetable_walker.hh"
 #include "arch/x86/process.hh"
-#include "arch/x86/remote_gdb.hh"
-#include "arch/vtophys.hh"
+#include "arch/x86/regs/int.hh"
+#include "arch/x86/regs/misc.hh"
+#include "base/loader/object_file.hh"
+#include "base/logging.hh"
 #include "base/remote_gdb.hh"
 #include "base/socket.hh"
 #include "base/trace.hh"
 #include "cpu/base.hh"
 #include "cpu/thread_context.hh"
+#include "debug/GDBAcc.hh"
 #include "mem/page_table.hh"
 #include "sim/full_system.hh"
+#include "sim/workload.hh"
 
-using namespace std;
+namespace gem5
+{
+
 using namespace X86ISA;
 
-RemoteGDB::RemoteGDB(System *_system, ThreadContext *c) :
-    BaseRemoteGDB(_system, c, GDB_REG_BYTES)
+RemoteGDB::RemoteGDB(System *_system, ListenSocketConfig _listen_config) :
+    BaseRemoteGDB(_system, _listen_config),
+    regCache32(this), regCache64(this)
 {}
 
 bool
 RemoteGDB::acc(Addr va, size_t len)
 {
     if (FullSystem) {
-        Walker *walker = context->getDTBPtr()->getWalker();
+        Walker *walker = dynamic_cast<MMU *>(
+            context()->getMMUPtr())->getDataWalker();
         unsigned logBytes;
-        Fault fault = walker->startFunctional(context, va, logBytes,
-                                              BaseTLB::Read);
+        Fault fault = walker->startFunctional(context(), va, logBytes,
+                                              BaseMMU::Read);
         if (fault != NoFault)
             return false;
 
@@ -79,147 +87,155 @@ RemoteGDB::acc(Addr va, size_t len)
         if ((va & ~mask(logBytes)) == (endVa & ~mask(logBytes)))
             return true;
 
-        fault = walker->startFunctional(context, endVa, logBytes,
-                                        BaseTLB::Read);
+        fault = walker->startFunctional(context(), endVa, logBytes,
+                                        BaseMMU::Read);
         return fault == NoFault;
     } else {
-        TlbEntry entry;
-        return context->getProcessPtr()->pTable->lookup(va, entry);
+        return context()->getProcessPtr()->pTable->lookup(va) != nullptr;
     }
 }
 
-void
-RemoteGDB::getregs()
+BaseGdbRegCache*
+RemoteGDB::gdbRegs()
 {
-    HandyM5Reg m5reg = context->readMiscRegNoEffect(MISCREG_M5_REG);
-    if (m5reg.submode == SixtyFourBitMode) {
-        gdbregs.regs64[GDB64_RAX] = context->readIntReg(INTREG_RAX);
-        gdbregs.regs64[GDB64_RBX] = context->readIntReg(INTREG_RBX);
-        gdbregs.regs64[GDB64_RCX] = context->readIntReg(INTREG_RCX);
-        gdbregs.regs64[GDB64_RDX] = context->readIntReg(INTREG_RDX);
-        gdbregs.regs64[GDB64_RSI] = context->readIntReg(INTREG_RSI);
-        gdbregs.regs64[GDB64_RDI] = context->readIntReg(INTREG_RDI);
-        gdbregs.regs64[GDB64_RBP] = context->readIntReg(INTREG_RBP);
-        gdbregs.regs64[GDB64_RSP] = context->readIntReg(INTREG_RSP);
-        gdbregs.regs64[GDB64_R8] = context->readIntReg(INTREG_R8);
-        gdbregs.regs64[GDB64_R9] = context->readIntReg(INTREG_R9);
-        gdbregs.regs64[GDB64_R10] = context->readIntReg(INTREG_R10);
-        gdbregs.regs64[GDB64_R11] = context->readIntReg(INTREG_R11);
-        gdbregs.regs64[GDB64_R12] = context->readIntReg(INTREG_R12);
-        gdbregs.regs64[GDB64_R13] = context->readIntReg(INTREG_R13);
-        gdbregs.regs64[GDB64_R14] = context->readIntReg(INTREG_R14);
-        gdbregs.regs64[GDB64_R15] = context->readIntReg(INTREG_R15);
-        gdbregs.regs64[GDB64_RIP] = context->pcState().pc();
-        gdbregs.regs32[GDB64_RFLAGS_32] =
-            context->readMiscRegNoEffect(MISCREG_RFLAGS);
-        gdbregs.regs32[GDB64_CS_32] = context->readMiscRegNoEffect(MISCREG_CS);
-        gdbregs.regs32[GDB64_SS_32] = context->readMiscRegNoEffect(MISCREG_SS);
-        gdbregs.regs32[GDB64_DS_32] = context->readMiscRegNoEffect(MISCREG_DS);
-        gdbregs.regs32[GDB64_ES_32] = context->readMiscRegNoEffect(MISCREG_ES);
-        gdbregs.regs32[GDB64_FS_32] = context->readMiscRegNoEffect(MISCREG_FS);
-        gdbregs.regs32[GDB64_GS_32] = context->readMiscRegNoEffect(MISCREG_GS);
-    } else {
-        gdbregs.regs32[GDB32_EAX] = context->readIntReg(INTREG_RAX);
-        gdbregs.regs32[GDB32_ECX] = context->readIntReg(INTREG_RCX);
-        gdbregs.regs32[GDB32_EDX] = context->readIntReg(INTREG_RDX);
-        gdbregs.regs32[GDB32_EBX] = context->readIntReg(INTREG_RBX);
-        gdbregs.regs32[GDB32_ESP] = context->readIntReg(INTREG_RSP);
-        gdbregs.regs32[GDB32_EBP] = context->readIntReg(INTREG_RBP);
-        gdbregs.regs32[GDB32_ESI] = context->readIntReg(INTREG_RSI);
-        gdbregs.regs32[GDB32_EDI] = context->readIntReg(INTREG_RDI);
-        gdbregs.regs32[GDB32_EIP] = context->pcState().pc();
-        gdbregs.regs32[GDB32_EFLAGS] =
-            context->readMiscRegNoEffect(MISCREG_RFLAGS);
-        gdbregs.regs32[GDB32_CS] = context->readMiscRegNoEffect(MISCREG_CS);
-        gdbregs.regs32[GDB32_CS] = context->readMiscRegNoEffect(MISCREG_SS);
-        gdbregs.regs32[GDB32_CS] = context->readMiscRegNoEffect(MISCREG_DS);
-        gdbregs.regs32[GDB32_CS] = context->readMiscRegNoEffect(MISCREG_ES);
-        gdbregs.regs32[GDB32_CS] = context->readMiscRegNoEffect(MISCREG_FS);
-        gdbregs.regs32[GDB32_CS] = context->readMiscRegNoEffect(MISCREG_GS);
+    // First, try to figure out which type of register cache to return based
+    // on the architecture reported by the workload.
+    if (system()->workload) {
+        auto arch = system()->workload->getArch();
+        if (arch == loader::X86_64) {
+            return &regCache64;
+        } else if (arch == loader::I386) {
+            return &regCache32;
+        } else if (arch != loader::UnknownArch) {
+            panic("Unrecognized workload arch %s.",
+                    loader::archToString(arch));
+        }
     }
+
+    // If that didn't work, decide based on the current mode of the context.
+    HandyM5Reg m5reg = context()->readMiscRegNoEffect(misc_reg::M5Reg);
+    if (m5reg.submode == SixtyFourBitMode)
+        return &regCache64;
+    else
+        return &regCache32;
+}
+
+
+
+void
+RemoteGDB::AMD64GdbRegCache::getRegs(ThreadContext *context)
+{
+    DPRINTF(GDBAcc, "getRegs in remotegdb \n");
+    r.rax = context->getReg(int_reg::Rax);
+    r.rbx = context->getReg(int_reg::Rbx);
+    r.rcx = context->getReg(int_reg::Rcx);
+    r.rdx = context->getReg(int_reg::Rdx);
+    r.rsi = context->getReg(int_reg::Rsi);
+    r.rdi = context->getReg(int_reg::Rdi);
+    r.rbp = context->getReg(int_reg::Rbp);
+    r.rsp = context->getReg(int_reg::Rsp);
+    r.r8 = context->getReg(int_reg::R8);
+    r.r9 = context->getReg(int_reg::R9);
+    r.r10 = context->getReg(int_reg::R10);
+    r.r11 = context->getReg(int_reg::R11);
+    r.r12 = context->getReg(int_reg::R12);
+    r.r13 = context->getReg(int_reg::R13);
+    r.r14 = context->getReg(int_reg::R14);
+    r.r15 = context->getReg(int_reg::R15);
+    r.rip = context->pcState().instAddr();
+    r.eflags = context->readMiscRegNoEffect(misc_reg::Rflags);
+    r.cs = context->readMiscRegNoEffect(misc_reg::Cs);
+    r.ss = context->readMiscRegNoEffect(misc_reg::Ss);
+    r.ds = context->readMiscRegNoEffect(misc_reg::Ds);
+    r.es = context->readMiscRegNoEffect(misc_reg::Es);
+    r.fs = context->readMiscRegNoEffect(misc_reg::Fs);
+    r.gs = context->readMiscRegNoEffect(misc_reg::Gs);
 }
 
 void
-RemoteGDB::setregs()
+RemoteGDB::X86GdbRegCache::getRegs(ThreadContext *context)
 {
-    HandyM5Reg m5reg = context->readMiscRegNoEffect(MISCREG_M5_REG);
-    if (m5reg.submode == SixtyFourBitMode) {
-        context->setIntReg(INTREG_RAX, gdbregs.regs64[GDB64_RAX]);
-        context->setIntReg(INTREG_RBX, gdbregs.regs64[GDB64_RBX]);
-        context->setIntReg(INTREG_RCX, gdbregs.regs64[GDB64_RCX]);
-        context->setIntReg(INTREG_RDX, gdbregs.regs64[GDB64_RDX]);
-        context->setIntReg(INTREG_RSI, gdbregs.regs64[GDB64_RSI]);
-        context->setIntReg(INTREG_RDI, gdbregs.regs64[GDB64_RDI]);
-        context->setIntReg(INTREG_RBP, gdbregs.regs64[GDB64_RBP]);
-        context->setIntReg(INTREG_RSP, gdbregs.regs64[GDB64_RSP]);
-        context->setIntReg(INTREG_R8, gdbregs.regs64[GDB64_R8]);
-        context->setIntReg(INTREG_R9, gdbregs.regs64[GDB64_R9]);
-        context->setIntReg(INTREG_R10, gdbregs.regs64[GDB64_R10]);
-        context->setIntReg(INTREG_R11, gdbregs.regs64[GDB64_R11]);
-        context->setIntReg(INTREG_R12, gdbregs.regs64[GDB64_R12]);
-        context->setIntReg(INTREG_R13, gdbregs.regs64[GDB64_R13]);
-        context->setIntReg(INTREG_R14, gdbregs.regs64[GDB64_R14]);
-        context->setIntReg(INTREG_R15, gdbregs.regs64[GDB64_R15]);
-        context->pcState(gdbregs.regs64[GDB64_RIP]);
-        context->setMiscReg(MISCREG_RFLAGS, gdbregs.regs32[GDB64_RFLAGS_32]);
-        if (gdbregs.regs32[GDB64_CS_32] !=
-            context->readMiscRegNoEffect(MISCREG_CS)) {
-            warn("Remote gdb: Ignoring update to CS.\n");
-        }
-        if (gdbregs.regs32[GDB64_SS_32] !=
-            context->readMiscRegNoEffect(MISCREG_SS)) {
-            warn("Remote gdb: Ignoring update to SS.\n");
-        }
-        if (gdbregs.regs32[GDB64_DS_32] !=
-            context->readMiscRegNoEffect(MISCREG_DS)) {
-            warn("Remote gdb: Ignoring update to DS.\n");
-        }
-        if (gdbregs.regs32[GDB64_ES_32] !=
-            context->readMiscRegNoEffect(MISCREG_ES)) {
-            warn("Remote gdb: Ignoring update to ES.\n");
-        }
-        if (gdbregs.regs32[GDB64_FS_32] !=
-            context->readMiscRegNoEffect(MISCREG_FS)) {
-            warn("Remote gdb: Ignoring update to FS.\n");
-        }
-        if (gdbregs.regs32[GDB64_GS_32] !=
-            context->readMiscRegNoEffect(MISCREG_GS)) {
-            warn("Remote gdb: Ignoring update to GS.\n");
-        }
-    } else {
-        context->setIntReg(INTREG_RAX, gdbregs.regs32[GDB32_EAX]);
-        context->setIntReg(INTREG_RCX, gdbregs.regs32[GDB32_ECX]);
-        context->setIntReg(INTREG_RDX, gdbregs.regs32[GDB32_EDX]);
-        context->setIntReg(INTREG_RBX, gdbregs.regs32[GDB32_EBX]);
-        context->setIntReg(INTREG_RSP, gdbregs.regs32[GDB32_ESP]);
-        context->setIntReg(INTREG_RBP, gdbregs.regs32[GDB32_EBP]);
-        context->setIntReg(INTREG_RSI, gdbregs.regs32[GDB32_ESI]);
-        context->setIntReg(INTREG_RDI, gdbregs.regs32[GDB32_EDI]);
-        context->pcState(gdbregs.regs32[GDB32_EIP]);
-        context->setMiscReg(MISCREG_RFLAGS, gdbregs.regs32[GDB32_EFLAGS]);
-        if (gdbregs.regs32[GDB64_CS_32] !=
-            context->readMiscRegNoEffect(MISCREG_CS)) {
-            warn("Remote gdb: Ignoring update to CS.\n");
-        }
-        if (gdbregs.regs32[GDB32_SS] !=
-            context->readMiscRegNoEffect(MISCREG_SS)) {
-            warn("Remote gdb: Ignoring update to SS.\n");
-        }
-        if (gdbregs.regs32[GDB32_DS] !=
-            context->readMiscRegNoEffect(MISCREG_DS)) {
-            warn("Remote gdb: Ignoring update to DS.\n");
-        }
-        if (gdbregs.regs32[GDB32_ES] !=
-            context->readMiscRegNoEffect(MISCREG_ES)) {
-            warn("Remote gdb: Ignoring update to ES.\n");
-        }
-        if (gdbregs.regs32[GDB32_FS] !=
-            context->readMiscRegNoEffect(MISCREG_FS)) {
-            warn("Remote gdb: Ignoring update to FS.\n");
-        }
-        if (gdbregs.regs32[GDB32_GS] !=
-            context->readMiscRegNoEffect(MISCREG_GS)) {
-            warn("Remote gdb: Ignoring update to GS.\n");
-        }
-    }
+    DPRINTF(GDBAcc, "getRegs in remotegdb \n");
+    r.eax = context->getReg(int_reg::Rax);
+    r.ecx = context->getReg(int_reg::Rcx);
+    r.edx = context->getReg(int_reg::Rdx);
+    r.ebx = context->getReg(int_reg::Rbx);
+    r.esp = context->getReg(int_reg::Rsp);
+    r.ebp = context->getReg(int_reg::Rbp);
+    r.esi = context->getReg(int_reg::Rsi);
+    r.edi = context->getReg(int_reg::Rdi);
+    r.eip = context->pcState().instAddr();
+    r.eflags = context->readMiscRegNoEffect(misc_reg::Rflags);
+    r.cs = context->readMiscRegNoEffect(misc_reg::Cs);
+    r.ss = context->readMiscRegNoEffect(misc_reg::Ss);
+    r.ds = context->readMiscRegNoEffect(misc_reg::Ds);
+    r.es = context->readMiscRegNoEffect(misc_reg::Es);
+    r.fs = context->readMiscRegNoEffect(misc_reg::Fs);
+    r.gs = context->readMiscRegNoEffect(misc_reg::Gs);
 }
+
+void
+RemoteGDB::AMD64GdbRegCache::setRegs(ThreadContext *context) const
+{
+    DPRINTF(GDBAcc, "setRegs in remotegdb \n");
+    context->setReg(int_reg::Rax, r.rax);
+    context->setReg(int_reg::Rbx, r.rbx);
+    context->setReg(int_reg::Rcx, r.rcx);
+    context->setReg(int_reg::Rdx, r.rdx);
+    context->setReg(int_reg::Rsi, r.rsi);
+    context->setReg(int_reg::Rdi, r.rdi);
+    context->setReg(int_reg::Rbp, r.rbp);
+    context->setReg(int_reg::Rsp, r.rsp);
+    context->setReg(int_reg::R8, r.r8);
+    context->setReg(int_reg::R9, r.r9);
+    context->setReg(int_reg::R10, r.r10);
+    context->setReg(int_reg::R11, r.r11);
+    context->setReg(int_reg::R12, r.r12);
+    context->setReg(int_reg::R13, r.r13);
+    context->setReg(int_reg::R14, r.r14);
+    context->setReg(int_reg::R15, r.r15);
+    context->pcState(r.rip);
+    context->setMiscReg(misc_reg::Rflags, r.eflags);
+    if (r.cs != context->readMiscRegNoEffect(misc_reg::Cs))
+        warn("Remote gdb: Ignoring update to CS.\n");
+    if (r.ss != context->readMiscRegNoEffect(misc_reg::Ss))
+        warn("Remote gdb: Ignoring update to SS.\n");
+    if (r.ds != context->readMiscRegNoEffect(misc_reg::Ds))
+        warn("Remote gdb: Ignoring update to DS.\n");
+    if (r.es != context->readMiscRegNoEffect(misc_reg::Es))
+        warn("Remote gdb: Ignoring update to ES.\n");
+    if (r.fs != context->readMiscRegNoEffect(misc_reg::Fs))
+        warn("Remote gdb: Ignoring update to FS.\n");
+    if (r.gs != context->readMiscRegNoEffect(misc_reg::Gs))
+        warn("Remote gdb: Ignoring update to GS.\n");
+}
+
+void
+RemoteGDB::X86GdbRegCache::setRegs(ThreadContext *context) const
+{
+    DPRINTF(GDBAcc, "setRegs in remotegdb \n");
+    context->setReg(int_reg::Rax, r.eax);
+    context->setReg(int_reg::Rcx, r.ecx);
+    context->setReg(int_reg::Rdx, r.edx);
+    context->setReg(int_reg::Rbx, r.ebx);
+    context->setReg(int_reg::Rsp, r.esp);
+    context->setReg(int_reg::Rbp, r.ebp);
+    context->setReg(int_reg::Rsi, r.esi);
+    context->setReg(int_reg::Rdi, r.edi);
+    context->pcState(r.eip);
+    context->setMiscReg(misc_reg::Rflags, r.eflags);
+    if (r.cs != context->readMiscRegNoEffect(misc_reg::Cs))
+        warn("Remote gdb: Ignoring update to CS.\n");
+    if (r.ss != context->readMiscRegNoEffect(misc_reg::Ss))
+        warn("Remote gdb: Ignoring update to SS.\n");
+    if (r.ds != context->readMiscRegNoEffect(misc_reg::Ds))
+        warn("Remote gdb: Ignoring update to DS.\n");
+    if (r.es != context->readMiscRegNoEffect(misc_reg::Es))
+        warn("Remote gdb: Ignoring update to ES.\n");
+    if (r.fs != context->readMiscRegNoEffect(misc_reg::Fs))
+        warn("Remote gdb: Ignoring update to FS.\n");
+    if (r.gs != context->readMiscRegNoEffect(misc_reg::Gs))
+        warn("Remote gdb: Ignoring update to GS.\n");
+}
+
+} // namespace gem5

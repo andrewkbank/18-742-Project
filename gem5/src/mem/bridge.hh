@@ -36,16 +36,12 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Ali Saidi
- *          Steve Reinhardt
- *          Andreas Hansson
  */
 
 /**
  * @file
- * Declaration of a memory-mapped bridge that connects a master
- * and a slave through a request and response queue.
+ * Declaration of a memory-mapped bridge that connects a requestor
+ * and a responder through a request and response queue.
  */
 
 #ifndef __MEM_BRIDGE_HH__
@@ -54,23 +50,31 @@
 #include <deque>
 
 #include "base/types.hh"
-#include "mem/mem_object.hh"
+#include "mem/port.hh"
 #include "params/Bridge.hh"
+#include "params/BridgeBase.hh"
+#include "sim/clocked_object.hh"
+
+namespace gem5
+{
 
 /**
  * A bridge is used to interface two different crossbars (or in general a
- * memory-mapped master and slave), with buffering for requests and
+ * memory-mapped requestor and responder), with buffering for requests and
  * responses. The bridge has a fixed delay for packets passing through
- * it and responds to a fixed set of address ranges.
+ * it and responds to a set of address ranges.
  *
- * The bridge comprises a slave port and a master port, that buffer
+ * The bridge comprises a response port and a request port, that buffer
  * outgoing responses and requests respectively. Buffer space is
  * reserved when a request arrives, also reserving response space
  * before forwarding the request. If there is no space present, then
  * the bridge will delay accepting the packet until space becomes
  * available.
+ *
+ * BridgeBase is an abstract class that provides the basic functionnality and
+ * can be extended to choose the set of address ranges to respond to.
  */
-class Bridge : public MemObject
+class BridgeBase : public ClockedObject
 {
   protected:
 
@@ -90,33 +94,30 @@ class Bridge : public MemObject
         { }
     };
 
-    // Forward declaration to allow the slave port to have a pointer
-    class BridgeMasterPort;
+    // Forward declaration to allow the response port to have a pointer
+    class BridgeRequestPort;
 
     /**
      * The port on the side that receives requests and sends
-     * responses. The slave port has a set of address ranges that it
-     * is responsible for. The slave port also has a buffer for the
+     * responses. The response port has a set of address ranges that it
+     * is responsible for. The response port also has a buffer for the
      * responses not yet sent.
      */
-    class BridgeSlavePort : public SlavePort
+    class BridgeResponsePort : public ResponsePort
     {
 
       private:
 
         /** The bridge to which this port belongs. */
-        Bridge& bridge;
+        BridgeBase& bridge;
 
         /**
-         * Master port on the other side of the bridge.
+         * Request port on the other side of the bridge.
          */
-        BridgeMasterPort& masterPort;
+        BridgeRequestPort& memSidePort;
 
         /** Minimum request delay though this bridge. */
         const Cycles delay;
-
-        /** Address ranges to pass through the bridge */
-        const AddrRangeList ranges;
 
         /**
          * Response packet queue. Response packets are held in this
@@ -136,6 +137,12 @@ class Bridge : public MemObject
         unsigned int respQueueLimit;
 
         /**
+         * Upstream caches need this packet until true is returned, so
+         * hold it for deletion until a subsequent call
+         */
+        std::unique_ptr<Packet> pendingDelete;
+
+        /**
          * Is this side blocked from accepting new response packets.
          *
          * @return true if the reserved space has reached the set limit
@@ -150,24 +157,23 @@ class Bridge : public MemObject
         void trySendTiming();
 
         /** Send event for the response queue. */
-        EventWrapper<BridgeSlavePort,
-                     &BridgeSlavePort::trySendTiming> sendEvent;
+        EventFunctionWrapper sendEvent;
 
       public:
 
         /**
-         * Constructor for the BridgeSlavePort.
+         * Constructor for the BridgeResponsePort.
          *
          * @param _name the port name including the owner
          * @param _bridge the structural owner
-         * @param _masterPort the master port on the other side of the bridge
+         * @param _memSidePort the request port on the other
+         *                       side of the bridge
          * @param _delay the delay in cycles from receiving to sending
          * @param _resp_limit the size of the response queue
-         * @param _ranges a number of address ranges to forward
          */
-        BridgeSlavePort(const std::string& _name, Bridge& _bridge,
-                        BridgeMasterPort& _masterPort, Cycles _delay,
-                        int _resp_limit, std::vector<AddrRange> _ranges);
+        BridgeResponsePort(const std::string& _name, BridgeBase& _bridge,
+                           BridgeRequestPort& _memSidePort, Cycles _delay,
+                           int _resp_limit);
 
         /**
          * Queue a response packet to be sent out later and also schedule
@@ -189,43 +195,55 @@ class Bridge : public MemObject
 
         /** When receiving a timing request from the peer port,
             pass it to the bridge. */
-        bool recvTimingReq(PacketPtr pkt);
+        bool recvTimingReq(PacketPtr pkt) override;
 
         /** When receiving a retry request from the peer port,
             pass it to the bridge. */
-        void recvRespRetry();
+        void recvRespRetry() override;
 
-        /** When receiving a Atomic requestfrom the peer port,
+        /** When receiving an Atomic request from the peer port,
             pass it to the bridge. */
-        Tick recvAtomic(PacketPtr pkt);
+        Tick recvAtomic(PacketPtr pkt) override;
+
+        /** When receiving an Atomic backdoor request from the peer port,
+            pass it to the bridge. */
+        Tick recvAtomicBackdoor(
+            PacketPtr pkt, MemBackdoorPtr &backdoor) override;
+
 
         /** When receiving a Functional request from the peer port,
             pass it to the bridge. */
-        void recvFunctional(PacketPtr pkt);
+        void recvFunctional(PacketPtr pkt) override;
+
+        /** When receiving a Functional backdoor request from the peer port,
+            pass it to the bridge. */
+        void recvMemBackdoorReq(
+            const MemBackdoorReq &req, MemBackdoorPtr &backdoor) override;
+
 
         /** When receiving a address range request the peer port,
             pass it to the bridge. */
-        AddrRangeList getAddrRanges() const;
+        AddrRangeList getAddrRanges() const override;
     };
 
 
     /**
      * Port on the side that forwards requests and receives
-     * responses. The master port has a buffer for the requests not
+     * responses. The request port has a buffer for the requests not
      * yet sent.
      */
-    class BridgeMasterPort : public MasterPort
+    class BridgeRequestPort : public RequestPort
     {
 
       private:
 
         /** The bridge to which this port belongs. */
-        Bridge& bridge;
+        BridgeBase& bridge;
 
         /**
-         * The slave port on the other side of the bridge.
+         * The response port on the other side of the bridge.
          */
-        BridgeSlavePort& slavePort;
+        BridgeResponsePort& cpuSidePort;
 
         /** Minimum delay though this bridge. */
         const Cycles delay;
@@ -249,23 +267,23 @@ class Bridge : public MemObject
         void trySendTiming();
 
         /** Send event for the request queue. */
-        EventWrapper<BridgeMasterPort,
-                     &BridgeMasterPort::trySendTiming> sendEvent;
+        EventFunctionWrapper sendEvent;
 
       public:
 
         /**
-         * Constructor for the BridgeMasterPort.
+         * Constructor for the BridgeRequestPort.
          *
          * @param _name the port name including the owner
          * @param _bridge the structural owner
-         * @param _slavePort the slave port on the other side of the bridge
+         * @param _cpuSidePort the response port on the other side of
+         * the bridge
          * @param _delay the delay in cycles from receiving to sending
          * @param _req_limit the size of the request queue
          */
-        BridgeMasterPort(const std::string& _name, Bridge& _bridge,
-                         BridgeSlavePort& _slavePort, Cycles _delay,
-                         int _req_limit);
+        BridgeRequestPort(const std::string& _name, BridgeBase& _bridge,
+                          BridgeResponsePort& _cpuSidePort, Cycles _delay,
+                          int _req_limit);
 
         /**
          * Is this side blocked from accepting new request packets.
@@ -291,37 +309,76 @@ class Bridge : public MemObject
          *
          * @return true if we find a match
          */
-        bool checkFunctional(PacketPtr pkt);
+        bool trySatisfyFunctional(PacketPtr pkt);
 
       protected:
 
         /** When receiving a timing request from the peer port,
             pass it to the bridge. */
-        bool recvTimingResp(PacketPtr pkt);
+        bool recvTimingResp(PacketPtr pkt) override;
 
         /** When receiving a retry request from the peer port,
             pass it to the bridge. */
-        void recvReqRetry();
+        void recvReqRetry() override;
+
+        /** When receiving an address range change from the peer port,
+            pass it to the bridge. */
+        void recvRangeChange() override;
     };
 
-    /** Slave port of the bridge. */
-    BridgeSlavePort slavePort;
+    /** Response port of the bridge. */
+    BridgeResponsePort cpuSidePort;
 
-    /** Master port of the bridge. */
-    BridgeMasterPort masterPort;
+    /** Request port of the bridge. */
+    BridgeRequestPort memSidePort;
+
+  protected:
+    /**
+     * Get a list of the non-overlapping address ranges the bridge is
+     * responsible for. All bridges must override this function.
+     *
+     * @return a list of ranges responded to
+     */
+    virtual AddrRangeList getAddrRanges() const = 0;
+
+    /**
+     * Called when the memory side port receives an address range change from
+     * the peer response port. The default implementation ignores the change
+     * and does nothing. Override this function in a derived class if
+     * the bridge needs to be aware of the address ranges,
+     * e.g. to accept dynamic ranges on CPU side.
+     */
+    virtual void recvRangeChange() {};
 
   public:
+    Port& getPort(const std::string& if_name,
+                  PortID idx=InvalidPortID) override;
 
-    virtual BaseMasterPort& getMasterPort(const std::string& if_name,
-                                          PortID idx = InvalidPortID);
-    virtual BaseSlavePort& getSlavePort(const std::string& if_name,
-                                        PortID idx = InvalidPortID);
+    void init() override;
 
-    virtual void init();
+    PARAMS(BridgeBase);
 
-    typedef BridgeParams Params;
-
-    Bridge(Params *p);
+    BridgeBase(const Params &p);
 };
+
+/**
+ * Implementation for a simple bridge with static and configurable set of
+ * address ranges.
+ */
+class Bridge : public BridgeBase
+{
+    /** Address ranges to pass through the bridge */
+    const AddrRangeList ranges;
+
+  protected:
+    AddrRangeList getAddrRanges() const override;
+
+  public:
+    PARAMS(Bridge);
+
+    Bridge(const Params &p);
+};
+
+} // namespace gem5
 
 #endif //__MEM_BRIDGE_HH__

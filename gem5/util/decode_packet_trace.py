@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 # Copyright (c) 2013-2014 ARM Limited
 # All rights reserved
@@ -34,78 +34,56 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Andreas Hansson
 
 # This script is used to dump protobuf packet traces to ASCII
-# format. It assumes that protoc has been executed and already
-# generated the Python package for the packet messages. This can
-# be done manually using:
-# protoc --python_out=. --proto_path=src/proto src/proto/packet.proto
-#
-# The ASCII trace format uses one line per request on the format cmd,
-# addr, size, tick,flags. For example:
-# r,128,64,4000,0
-# w,232123,64,500000,0
+# format.
 
-import protolib
+import os
+import subprocess
 import sys
 
-# Import the packet proto definitions. If they are not found, attempt
-# to generate them automatically. This assumes that the script is
-# executed from the gem5 root.
-try:
-    import packet_pb2
-except:
-    print "Did not find packet proto definitions, attempting to generate"
-    from subprocess import call
-    error = call(['protoc', '--python_out=util', '--proto_path=src/proto',
-                  'src/proto/packet.proto'])
-    if not error:
-        print "Generated packet proto definitions"
+import protolib
 
-        try:
-            import google.protobuf
-        except:
-            print "Please install Python protobuf module"
-            exit(-1)
+util_dir = os.path.dirname(os.path.realpath(__file__))
+# Make sure the proto definitions are up to date.
+subprocess.check_call(["make", "--quiet", "-C", util_dir, "packet_pb2.py"])
+import packet_pb2
 
-        import packet_pb2
-    else:
-        print "Failed to import packet proto definitions"
-        exit(-1)
 
 def main():
     if len(sys.argv) != 3:
-        print "Usage: ", sys.argv[0], " <protobuf input> <ASCII output>"
+        print("Usage: ", sys.argv[0], " <protobuf input> <ASCII output>")
         exit(-1)
 
     # Open the file in read mode
     proto_in = protolib.openFileRd(sys.argv[1])
 
     try:
-        ascii_out = open(sys.argv[2], 'w')
-    except IOError:
-        print "Failed to open ", sys.argv[2], " for writing"
+        ascii_out = open(sys.argv[2], "w")
+    except OSError:
+        print("Failed to open ", sys.argv[2], " for writing")
         exit(-1)
 
     # Read the magic number in 4-byte Little Endian
-    magic_number = proto_in.read(4)
+    magic_number = proto_in.read(4).decode()
 
     if magic_number != "gem5":
-        print "Unrecognized file", sys.argv[1]
+        print("Unrecognized file", sys.argv[1])
         exit(-1)
 
-    print "Parsing packet header"
+    print("Parsing packet header")
 
     # Add the packet header
     header = packet_pb2.PacketHeader()
     protolib.decodeMessage(proto_in, header)
 
-    print "Object id:", header.obj_id
-    print "Tick frequency:", header.tick_freq
+    print("Object id:", header.obj_id)
+    print("Tick frequency:", header.tick_freq)
 
-    print "Parsing packets"
+    for id_string in header.id_strings:
+        print("Master id %d: %s" % (id_string.key, id_string.value))
+
+    print("Parsing packets")
 
     num_packets = 0
     packet = packet_pb2.Packet()
@@ -114,21 +92,26 @@ def main():
     while protolib.decodeMessage(proto_in, packet):
         num_packets += 1
         # ReadReq is 1 and WriteReq is 4 in src/mem/packet.hh Command enum
-        cmd = 'r' if packet.cmd == 1 else ('w' if packet.cmd == 4 else 'u')
-        if packet.HasField('pkt_id'):
-            ascii_out.write('%s,' % (packet.pkt_id))
-        if packet.HasField('flags'):
-            ascii_out.write('%s,%s,%s,%s,%s\n' % (cmd, packet.addr, packet.size,
-                            packet.flags, packet.tick))
+        cmd = "r" if packet.cmd == 1 else ("w" if packet.cmd == 4 else "u")
+        if packet.HasField("pkt_id"):
+            ascii_out.write(f"{packet.pkt_id},")
+        if packet.HasField("flags"):
+            ascii_out.write(
+                f"{cmd},{packet.addr},{packet.size},{packet.flags},{packet.tick}"
+            )
         else:
-            ascii_out.write('%s,%s,%s,%s\n' % (cmd, packet.addr, packet.size,
-                                           packet.tick))
+            ascii_out.write(f"{cmd},{packet.addr},{packet.size},{packet.tick}")
+        if packet.HasField("pc"):
+            ascii_out.write(f",{packet.pc}\n")
+        else:
+            ascii_out.write("\n")
 
-    print "Parsed packets:", num_packets
+    print("Parsed packets:", num_packets)
 
     # We're done
     ascii_out.close()
     proto_in.close()
+
 
 if __name__ == "__main__":
     main()

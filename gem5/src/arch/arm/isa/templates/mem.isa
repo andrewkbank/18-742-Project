@@ -1,6 +1,6 @@
 // -*- mode:c++ -*-
 
-// Copyright (c) 2010, 2012, 2014 ARM Limited
+// Copyright (c) 2010, 2012, 2014, 2016 ARM Limited
 // All rights reserved
 //
 // The license below extends only to copyright in the software and shall
@@ -37,13 +37,12 @@
 // THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// Authors: Stephen Hines
 
 
 def template PanicExecute {{
-    Fault %(class_name)s::execute(CPU_EXEC_CONTEXT *xc,
-                                  Trace::InstRecord *traceData) const
+    Fault
+    %(class_name)s::execute(ExecContext *xc,
+                            trace::InstRecord *traceData) const
     {
         panic("Execute function executed when it shouldn't be!\n");
         return NoFault;
@@ -51,8 +50,9 @@ def template PanicExecute {{
 }};
 
 def template PanicInitiateAcc {{
-    Fault %(class_name)s::initiateAcc(CPU_EXEC_CONTEXT *xc,
-                                      Trace::InstRecord *traceData) const
+    Fault
+    %(class_name)s::initiateAcc(ExecContext *xc,
+                                trace::InstRecord *traceData) const
     {
         panic("InitiateAcc function executed when it shouldn't be!\n");
         return NoFault;
@@ -60,9 +60,9 @@ def template PanicInitiateAcc {{
 }};
 
 def template PanicCompleteAcc {{
-    Fault %(class_name)s::completeAcc(PacketPtr pkt,
-                                      CPU_EXEC_CONTEXT *xc,
-                                      Trace::InstRecord *traceData) const
+    Fault
+    %(class_name)s::completeAcc(PacketPtr pkt, ExecContext *xc,
+                                trace::InstRecord *traceData) const
     {
         panic("CompleteAcc function executed when it shouldn't be!\n");
         return NoFault;
@@ -71,8 +71,9 @@ def template PanicCompleteAcc {{
 
 
 def template SwapExecute {{
-    Fault %(class_name)s::execute(CPU_EXEC_CONTEXT *xc,
-                                  Trace::InstRecord *traceData) const
+    Fault
+    %(class_name)s::execute(ExecContext *xc,
+                            trace::InstRecord *traceData) const
     {
         Addr EA;
         Fault fault = NoFault;
@@ -82,13 +83,12 @@ def template SwapExecute {{
         %(op_rd)s;
         %(ea_code)s;
 
-        if (%(predicate_test)s)
-        {
+        if (%(predicate_test)s) {
             %(preacc_code)s;
 
             if (fault == NoFault) {
-                fault = writeMemAtomic(xc, traceData, Mem, EA, memAccessFlags,
-                        &memData);
+                fault = writeMemAtomicLE(xc, traceData, Mem, EA,
+                        memAccessFlags, &memData);
             }
 
             if (fault == NoFault) {
@@ -107,8 +107,9 @@ def template SwapExecute {{
 }};
 
 def template SwapInitiateAcc {{
-    Fault %(class_name)s::initiateAcc(CPU_EXEC_CONTEXT *xc,
-                                      Trace::InstRecord *traceData) const
+    Fault
+    %(class_name)s::initiateAcc(ExecContext *xc,
+                                trace::InstRecord *traceData) const
     {
         Addr EA;
         Fault fault = NoFault;
@@ -118,13 +119,12 @@ def template SwapInitiateAcc {{
         %(op_rd)s;
         %(ea_code)s;
 
-        if (%(predicate_test)s)
-        {
+        if (%(predicate_test)s) {
             %(preacc_code)s;
 
             if (fault == NoFault) {
-                fault = writeMemTiming(xc, traceData, Mem, EA, memAccessFlags,
-                        &memData);
+                fault = writeMemTimingLE(xc, traceData, Mem, EA,
+                        memAccessFlags, &memData);
             }
         } else {
             xc->setPredicate(false);
@@ -135,19 +135,18 @@ def template SwapInitiateAcc {{
 }};
 
 def template SwapCompleteAcc {{
-    Fault %(class_name)s::completeAcc(PacketPtr pkt,
-                                      CPU_EXEC_CONTEXT *xc,
-                                      Trace::InstRecord *traceData) const
+    Fault
+    %(class_name)s::completeAcc(PacketPtr pkt, ExecContext *xc,
+                                trace::InstRecord *traceData) const
     {
         Fault fault = NoFault;
 
         %(op_decl)s;
         %(op_rd)s;
 
-        if (%(predicate_test)s)
-        {
+        if (%(predicate_test)s) {
             // ARM instructions will not have a pkt if the predicate is false
-            getMem(pkt, Mem, traceData);
+            getMemLE(pkt, Mem, traceData);
             uint64_t memData = Mem;
 
             %(postacc_code)s;
@@ -162,8 +161,9 @@ def template SwapCompleteAcc {{
 }};
 
 def template LoadExecute {{
-    Fault %(class_name)s::execute(CPU_EXEC_CONTEXT *xc,
-                                  Trace::InstRecord *traceData) const
+    Fault
+    %(class_name)s::execute(ExecContext *xc,
+                            trace::InstRecord *traceData) const
     {
         Addr EA;
         Fault fault = NoFault;
@@ -172,10 +172,10 @@ def template LoadExecute {{
         %(op_rd)s;
         %(ea_code)s;
 
-        if (%(predicate_test)s)
-        {
+        if (%(predicate_test)s) {
             if (fault == NoFault) {
-                fault = readMemAtomic(xc, traceData, EA, Mem, memAccessFlags);
+                fault = readMemAtomicLE(
+                        xc, traceData, EA, Mem, memAccessFlags);
                 %(memacc_code)s;
             }
 
@@ -192,8 +192,9 @@ def template LoadExecute {{
 
 def template NeonLoadExecute {{
     template <class Element>
-    Fault %(class_name)s<Element>::execute(
-            CPU_EXEC_CONTEXT *xc, Trace::InstRecord *traceData) const
+    Fault
+    %(class_name)s<Element>::execute(
+            ExecContext *xc, trace::InstRecord *traceData) const
     {
         Addr EA;
         Fault fault = NoFault;
@@ -206,10 +207,12 @@ def template NeonLoadExecute {{
         MemUnion memUnion;
         uint8_t *dataPtr = memUnion.bytes;
 
-        if (%(predicate_test)s)
-        {
+        if (%(predicate_test)s) {
             if (fault == NoFault) {
-                fault = xc->readMem(EA, dataPtr, %(size)d, memAccessFlags);
+                const auto size = %(size)d;
+                fault = readMemAtomic(xc, EA, dataPtr,
+                                      size, memAccessFlags,
+                                      std::vector<bool>(size, true));
                 %(memacc_code)s;
             }
 
@@ -225,8 +228,9 @@ def template NeonLoadExecute {{
 }};
 
 def template StoreExecute {{
-    Fault %(class_name)s::execute(CPU_EXEC_CONTEXT *xc,
-                                  Trace::InstRecord *traceData) const
+    Fault
+    %(class_name)s::execute(ExecContext *xc,
+                            trace::InstRecord *traceData) const
     {
         Addr EA;
         Fault fault = NoFault;
@@ -235,14 +239,13 @@ def template StoreExecute {{
         %(op_rd)s;
         %(ea_code)s;
 
-        if (%(predicate_test)s)
-        {
+        if (%(predicate_test)s) {
             if (fault == NoFault) {
                 %(memacc_code)s;
             }
 
             if (fault == NoFault) {
-                fault = writeMemAtomic(xc, traceData, Mem, EA,
+                fault = writeMemAtomicLE(xc, traceData, Mem, EA,
                         memAccessFlags, NULL);
             }
 
@@ -259,8 +262,9 @@ def template StoreExecute {{
 
 def template NeonStoreExecute {{
     template <class Element>
-    Fault %(class_name)s<Element>::execute(
-            CPU_EXEC_CONTEXT *xc, Trace::InstRecord *traceData) const
+    Fault
+    %(class_name)s<Element>::execute(
+            ExecContext *xc, trace::InstRecord *traceData) const
     {
         Addr EA;
         Fault fault = NoFault;
@@ -273,15 +277,16 @@ def template NeonStoreExecute {{
         MemUnion memUnion;
         uint8_t *dataPtr = memUnion.bytes;
 
-        if (%(predicate_test)s)
-        {
+        if (%(predicate_test)s) {
             if (fault == NoFault) {
                 %(memacc_code)s;
             }
 
             if (fault == NoFault) {
-                fault = xc->writeMem(dataPtr, %(size)d, EA,
-                                     memAccessFlags, NULL);
+                const auto size = %(size)d;
+                fault = writeMemAtomic(xc, dataPtr, EA, size,
+                                       memAccessFlags, NULL,
+                                       std::vector<bool>(size, true));
             }
 
             if (fault == NoFault) {
@@ -296,8 +301,9 @@ def template NeonStoreExecute {{
 }};
 
 def template StoreExExecute {{
-    Fault %(class_name)s::execute(CPU_EXEC_CONTEXT *xc,
-                                  Trace::InstRecord *traceData) const
+    Fault
+    %(class_name)s::execute(ExecContext *xc,
+                            trace::InstRecord *traceData) const
     {
         Addr EA;
         Fault fault = NoFault;
@@ -306,8 +312,7 @@ def template StoreExExecute {{
         %(op_rd)s;
         %(ea_code)s;
 
-        if (%(predicate_test)s)
-        {
+        if (%(predicate_test)s) {
             if (fault == NoFault) {
                 %(memacc_code)s;
             }
@@ -315,8 +320,8 @@ def template StoreExExecute {{
             uint64_t writeResult;
 
             if (fault == NoFault) {
-                fault = writeMemAtomic(xc, traceData, Mem, EA, memAccessFlags,
-                        &writeResult);
+                fault = writeMemAtomicLE(xc, traceData, Mem, EA,
+                        memAccessFlags, &writeResult);
             }
 
             if (fault == NoFault) {
@@ -335,8 +340,9 @@ def template StoreExExecute {{
 }};
 
 def template StoreExInitiateAcc {{
-    Fault %(class_name)s::initiateAcc(CPU_EXEC_CONTEXT *xc,
-                                      Trace::InstRecord *traceData) const
+    Fault
+    %(class_name)s::initiateAcc(ExecContext *xc,
+                                trace::InstRecord *traceData) const
     {
         Addr EA;
         Fault fault = NoFault;
@@ -345,15 +351,14 @@ def template StoreExInitiateAcc {{
         %(op_rd)s;
         %(ea_code)s;
 
-        if (%(predicate_test)s)
-        {
+        if (%(predicate_test)s) {
             if (fault == NoFault) {
                 %(memacc_code)s;
             }
 
             if (fault == NoFault) {
-                fault = writeMemTiming(xc, traceData, Mem, EA, memAccessFlags,
-                        NULL);
+                fault = writeMemTimingLE(xc, traceData, Mem, EA,
+                        memAccessFlags, NULL);
             }
         } else {
             xc->setPredicate(false);
@@ -364,8 +369,9 @@ def template StoreExInitiateAcc {{
 }};
 
 def template StoreInitiateAcc {{
-    Fault %(class_name)s::initiateAcc(CPU_EXEC_CONTEXT *xc,
-                                      Trace::InstRecord *traceData) const
+    Fault
+    %(class_name)s::initiateAcc(ExecContext *xc,
+                                trace::InstRecord *traceData) const
     {
         Addr EA;
         Fault fault = NoFault;
@@ -374,15 +380,14 @@ def template StoreInitiateAcc {{
         %(op_rd)s;
         %(ea_code)s;
 
-        if (%(predicate_test)s)
-        {
+        if (%(predicate_test)s) {
             if (fault == NoFault) {
                 %(memacc_code)s;
             }
 
             if (fault == NoFault) {
-                fault = writeMemTiming(xc, traceData, Mem, EA, memAccessFlags,
-                        NULL);
+                fault = writeMemTimingLE(xc, traceData, Mem, EA,
+                        memAccessFlags, NULL);
             }
         } else {
             xc->setPredicate(false);
@@ -394,8 +399,9 @@ def template StoreInitiateAcc {{
 
 def template NeonStoreInitiateAcc {{
     template <class Element>
-    Fault %(class_name)s<Element>::initiateAcc(
-            CPU_EXEC_CONTEXT *xc, Trace::InstRecord *traceData) const
+    Fault
+    %(class_name)s<Element>::initiateAcc(
+            ExecContext *xc, trace::InstRecord *traceData) const
     {
         Addr EA;
         Fault fault = NoFault;
@@ -405,16 +411,17 @@ def template NeonStoreInitiateAcc {{
         %(op_rd)s;
         %(ea_code)s;
 
-        if (%(predicate_test)s)
-        {
+        if (%(predicate_test)s) {
             MemUnion memUnion;
             if (fault == NoFault) {
                 %(memacc_code)s;
             }
 
             if (fault == NoFault) {
-                fault = xc->writeMem(memUnion.bytes, %(size)d, EA,
-                                     memAccessFlags, NULL);
+                const auto size = %(size)d;
+                fault = writeMemTiming(xc, memUnion.bytes, EA,
+                                       size, memAccessFlags, nullptr,
+                                       std::vector<bool>(size, true));
             }
         } else {
             xc->setPredicate(false);
@@ -425,8 +432,9 @@ def template NeonStoreInitiateAcc {{
 }};
 
 def template LoadInitiateAcc {{
-    Fault %(class_name)s::initiateAcc(CPU_EXEC_CONTEXT *xc,
-                                      Trace::InstRecord *traceData) const
+    Fault
+    %(class_name)s::initiateAcc(ExecContext *xc,
+                                trace::InstRecord *traceData) const
     {
         Addr EA;
         Fault fault = NoFault;
@@ -435,10 +443,10 @@ def template LoadInitiateAcc {{
         %(op_rd)s;
         %(ea_code)s;
 
-        if (%(predicate_test)s)
-        {
+        if (%(predicate_test)s) {
             if (fault == NoFault) {
-                fault = readMemTiming(xc, traceData, EA, Mem, memAccessFlags);
+                fault = initiateMemRead(xc, traceData, EA, Mem,
+                                        memAccessFlags);
             }
         } else {
             xc->setPredicate(false);
@@ -450,8 +458,9 @@ def template LoadInitiateAcc {{
 
 def template NeonLoadInitiateAcc {{
     template <class Element>
-    Fault %(class_name)s<Element>::initiateAcc(
-            CPU_EXEC_CONTEXT *xc, Trace::InstRecord *traceData) const
+    Fault
+    %(class_name)s<Element>::initiateAcc(
+            ExecContext *xc, trace::InstRecord *traceData) const
     {
         Addr EA;
         Fault fault = NoFault;
@@ -461,13 +470,11 @@ def template NeonLoadInitiateAcc {{
         %(op_rd)s;
         %(ea_code)s;
 
-        MemUnion memUnion;
-        uint8_t *dataPtr = memUnion.bytes;
-
-        if (%(predicate_test)s)
-        {
+        if (%(predicate_test)s) {
             if (fault == NoFault) {
-                fault = xc->readMem(EA, dataPtr, %(size)d, memAccessFlags);
+                const auto size = %(size)d;
+                fault = initiateMemRead(xc, EA, size, memAccessFlags,
+                                        std::vector<bool>(size, true));
             }
         } else {
             xc->setPredicate(false);
@@ -478,19 +485,18 @@ def template NeonLoadInitiateAcc {{
 }};
 
 def template LoadCompleteAcc {{
-    Fault %(class_name)s::completeAcc(PacketPtr pkt,
-                                      CPU_EXEC_CONTEXT *xc,
-                                      Trace::InstRecord *traceData) const
+    Fault
+    %(class_name)s::completeAcc(PacketPtr pkt, ExecContext *xc,
+                                trace::InstRecord *traceData) const
     {
         Fault fault = NoFault;
 
         %(op_decl)s;
         %(op_rd)s;
 
-        if (%(predicate_test)s)
-        {
+        if (%(predicate_test)s) {
             // ARM instructions will not have a pkt if the predicate is false
-            getMem(pkt, Mem, traceData);
+            getMemLE(pkt, Mem, traceData);
 
             if (fault == NoFault) {
                 %(memacc_code)s;
@@ -507,9 +513,9 @@ def template LoadCompleteAcc {{
 
 def template NeonLoadCompleteAcc {{
     template <class Element>
-    Fault %(class_name)s<Element>::completeAcc(
-            PacketPtr pkt, CPU_EXEC_CONTEXT *xc,
-            Trace::InstRecord *traceData) const
+    Fault
+    %(class_name)s<Element>::completeAcc(
+            PacketPtr pkt, ExecContext *xc, trace::InstRecord *traceData) const
     {
         Fault fault = NoFault;
 
@@ -517,8 +523,7 @@ def template NeonLoadCompleteAcc {{
         %(op_decl)s;
         %(op_rd)s;
 
-        if (%(predicate_test)s)
-        {
+        if (%(predicate_test)s) {
             // ARM instructions will not have a pkt if the predicate is false
             MemUnion &memUnion = *(MemUnion *)pkt->getPtr<uint8_t>();
 
@@ -536,9 +541,9 @@ def template NeonLoadCompleteAcc {{
 }};
 
 def template StoreCompleteAcc {{
-    Fault %(class_name)s::completeAcc(PacketPtr pkt,
-                                      CPU_EXEC_CONTEXT *xc,
-                                      Trace::InstRecord *traceData) const
+    Fault
+    %(class_name)s::completeAcc(PacketPtr pkt, ExecContext *xc,
+                                trace::InstRecord *traceData) const
     {
         return NoFault;
     }
@@ -546,26 +551,25 @@ def template StoreCompleteAcc {{
 
 def template NeonStoreCompleteAcc {{
     template <class Element>
-    Fault %(class_name)s<Element>::completeAcc(
-            PacketPtr pkt, CPU_EXEC_CONTEXT *xc,
-            Trace::InstRecord *traceData) const
+    Fault
+    %(class_name)s<Element>::completeAcc(
+            PacketPtr pkt, ExecContext *xc, trace::InstRecord *traceData) const
     {
         return NoFault;
     }
 }};
 
 def template StoreExCompleteAcc {{
-    Fault %(class_name)s::completeAcc(PacketPtr pkt,
-                                      CPU_EXEC_CONTEXT *xc,
-                                      Trace::InstRecord *traceData) const
+    Fault
+    %(class_name)s::completeAcc(PacketPtr pkt, ExecContext *xc,
+                                trace::InstRecord *traceData) const
     {
         Fault fault = NoFault;
 
         %(op_decl)s;
         %(op_rd)s;
 
-        if (%(predicate_test)s)
-        {
+        if (%(predicate_test)s) {
             uint64_t writeResult = pkt->req->getExtraData();
             %(postacc_code)s;
 
@@ -584,17 +588,18 @@ def template RfeDeclare {{
      */
     class %(class_name)s : public %(base_class)s
     {
-      public:
+      private:
+        %(reg_idx_arr_decl)s;
 
+      public:
         /// Constructor.
         %(class_name)s(ExtMachInst machInst,
                 uint32_t _base, int _mode, bool _wb);
 
-        %(BasicExecDeclare)s
-
-        %(InitiateAccDeclare)s
-
-        %(CompleteAccDeclare)s
+        Fault execute(ExecContext *, trace::InstRecord *) const override;
+        Fault initiateAcc(ExecContext *, trace::InstRecord *) const override;
+        Fault completeAcc(PacketPtr, ExecContext *,
+                          trace::InstRecord *) const override;
     };
 }};
 
@@ -604,17 +609,18 @@ def template SrsDeclare {{
      */
     class %(class_name)s : public %(base_class)s
     {
-      public:
+      private:
+        %(reg_idx_arr_decl)s;
 
+      public:
         /// Constructor.
         %(class_name)s(ExtMachInst machInst,
                 uint32_t _regMode, int _mode, bool _wb);
 
-        %(BasicExecDeclare)s
-
-        %(InitiateAccDeclare)s
-
-        %(CompleteAccDeclare)s
+        Fault execute(ExecContext *, trace::InstRecord *) const override;
+        Fault initiateAcc(ExecContext *, trace::InstRecord *) const override;
+        Fault completeAcc(PacketPtr, ExecContext *,
+                          trace::InstRecord *) const override;
     };
 }};
 
@@ -624,17 +630,18 @@ def template SwapDeclare {{
      */
     class %(class_name)s : public %(base_class)s
     {
-      public:
+      private:
+        %(reg_idx_arr_decl)s;
 
+      public:
         /// Constructor.
         %(class_name)s(ExtMachInst machInst,
                 uint32_t _dest, uint32_t _op1, uint32_t _base);
 
-        %(BasicExecDeclare)s
-
-        %(InitiateAccDeclare)s
-
-        %(CompleteAccDeclare)s
+        Fault execute(ExecContext *, trace::InstRecord *) const override;
+        Fault initiateAcc(ExecContext *, trace::InstRecord *) const override;
+        Fault completeAcc(PacketPtr, ExecContext *,
+                          trace::InstRecord *) const override;
     };
 }};
 
@@ -644,18 +651,19 @@ def template LoadStoreDImmDeclare {{
      */
     class %(class_name)s : public %(base_class)s
     {
-      public:
+      private:
+        %(reg_idx_arr_decl)s;
 
+      public:
         /// Constructor.
         %(class_name)s(ExtMachInst machInst,
                 uint32_t _dest, uint32_t _dest2,
                 uint32_t _base, bool _add, int32_t _imm);
 
-        %(BasicExecDeclare)s
-
-        %(InitiateAccDeclare)s
-
-        %(CompleteAccDeclare)s
+        Fault execute(ExecContext *, trace::InstRecord *) const override;
+        Fault initiateAcc(ExecContext *, trace::InstRecord *) const override;
+        Fault completeAcc(PacketPtr, ExecContext *,
+                          trace::InstRecord *) const override;
     };
 }};
 
@@ -665,18 +673,19 @@ def template StoreExDImmDeclare {{
      */
     class %(class_name)s : public %(base_class)s
     {
-      public:
+      private:
+        %(reg_idx_arr_decl)s;
 
+      public:
         /// Constructor.
         %(class_name)s(ExtMachInst machInst,
                 uint32_t _result, uint32_t _dest, uint32_t _dest2,
                 uint32_t _base, bool _add, int32_t _imm);
 
-        %(BasicExecDeclare)s
-
-        %(InitiateAccDeclare)s
-
-        %(CompleteAccDeclare)s
+        Fault execute(ExecContext *, trace::InstRecord *) const override;
+        Fault initiateAcc(ExecContext *, trace::InstRecord *) const override;
+        Fault completeAcc(PacketPtr, ExecContext *,
+                          trace::InstRecord *) const override;
     };
 }};
 
@@ -686,20 +695,22 @@ def template LoadStoreImmDeclare {{
      */
     class %(class_name)s : public %(base_class)s
     {
-      public:
+      private:
+        %(reg_idx_arr_decl)s;
 
+      public:
         /// Constructor.
         %(class_name)s(ExtMachInst machInst,
                 uint32_t _dest, uint32_t _base, bool _add, int32_t _imm);
 
-        %(BasicExecDeclare)s
+        Fault execute(ExecContext *, trace::InstRecord *) const override;
+        Fault initiateAcc(ExecContext *, trace::InstRecord *) const override;
+        Fault completeAcc(PacketPtr, ExecContext *,
+                          trace::InstRecord *) const override;
 
-        %(InitiateAccDeclare)s
-
-        %(CompleteAccDeclare)s
-
-        virtual void
-        annotateFault(ArmFault *fault) {
+        void
+        annotateFault(ArmISA::ArmFault *fault) override
+        {
             %(fa_code)s
         }
     };
@@ -711,18 +722,19 @@ def template StoreExImmDeclare {{
      */
     class %(class_name)s : public %(base_class)s
     {
-      public:
+      private:
+        %(reg_idx_arr_decl)s;
 
+      public:
         /// Constructor.
         %(class_name)s(ExtMachInst machInst,
                 uint32_t _result, uint32_t _dest, uint32_t _base,
                 bool _add, int32_t _imm);
 
-        %(BasicExecDeclare)s
-
-        %(InitiateAccDeclare)s
-
-        %(CompleteAccDeclare)s
+        Fault execute(ExecContext *, trace::InstRecord *) const override;
+        Fault initiateAcc(ExecContext *, trace::InstRecord *) const override;
+        Fault completeAcc(PacketPtr, ExecContext *,
+                          trace::InstRecord *) const override;
     };
 }};
 
@@ -732,8 +744,10 @@ def template StoreDRegDeclare {{
      */
     class %(class_name)s : public %(base_class)s
     {
-      public:
+      private:
+        %(reg_idx_arr_decl)s;
 
+      public:
         /// Constructor.
         %(class_name)s(ExtMachInst machInst,
                 uint32_t _dest, uint32_t _dest2,
@@ -741,11 +755,10 @@ def template StoreDRegDeclare {{
                 int32_t _shiftAmt, uint32_t _shiftType,
                 uint32_t _index);
 
-        %(BasicExecDeclare)s
-
-        %(InitiateAccDeclare)s
-
-        %(CompleteAccDeclare)s
+        Fault execute(ExecContext *, trace::InstRecord *) const override;
+        Fault initiateAcc(ExecContext *, trace::InstRecord *) const override;
+        Fault completeAcc(PacketPtr, ExecContext *,
+                          trace::InstRecord *) const override;
     };
 }};
 
@@ -755,22 +768,24 @@ def template StoreRegDeclare {{
      */
     class %(class_name)s : public %(base_class)s
     {
-      public:
+      private:
+        %(reg_idx_arr_decl)s;
 
+      public:
         /// Constructor.
         %(class_name)s(ExtMachInst machInst,
                 uint32_t _dest, uint32_t _base, bool _add,
                 int32_t _shiftAmt, uint32_t _shiftType,
                 uint32_t _index);
 
-        %(BasicExecDeclare)s
+        Fault execute(ExecContext *, trace::InstRecord *) const override;
+        Fault initiateAcc(ExecContext *, trace::InstRecord *) const override;
+        Fault completeAcc(PacketPtr, ExecContext *,
+                          trace::InstRecord *) const override;
 
-        %(InitiateAccDeclare)s
-
-        %(CompleteAccDeclare)s
-
-        virtual void
-        annotateFault(ArmFault *fault) {
+        void
+        annotateFault(ArmISA::ArmFault *fault) override
+        {
             %(fa_code)s
         }
     };
@@ -782,8 +797,10 @@ def template LoadDRegDeclare {{
      */
     class %(class_name)s : public %(base_class)s
     {
-      public:
+      private:
+        %(reg_idx_arr_decl)s;
 
+      public:
         /// Constructor.
         %(class_name)s(ExtMachInst machInst,
                 uint32_t _dest, uint32_t _dest2,
@@ -791,11 +808,10 @@ def template LoadDRegDeclare {{
                 int32_t _shiftAmt, uint32_t _shiftType,
                 uint32_t _index);
 
-        %(BasicExecDeclare)s
-
-        %(InitiateAccDeclare)s
-
-        %(CompleteAccDeclare)s
+        Fault execute(ExecContext *, trace::InstRecord *) const override;
+        Fault initiateAcc(ExecContext *, trace::InstRecord *) const override;
+        Fault completeAcc(PacketPtr, ExecContext *,
+                          trace::InstRecord *) const override;
     };
 }};
 
@@ -805,22 +821,24 @@ def template LoadRegDeclare {{
      */
     class %(class_name)s : public %(base_class)s
     {
-      public:
+      private:
+        %(reg_idx_arr_decl)s;
 
+      public:
         /// Constructor.
         %(class_name)s(ExtMachInst machInst,
                 uint32_t _dest, uint32_t _base, bool _add,
                 int32_t _shiftAmt, uint32_t _shiftType,
                 uint32_t _index);
 
-        %(BasicExecDeclare)s
+        Fault execute(ExecContext *, trace::InstRecord *) const override;
+        Fault initiateAcc(ExecContext *, trace::InstRecord *) const override;
+        Fault completeAcc(PacketPtr, ExecContext *,
+                          trace::InstRecord *) const override;
 
-        %(InitiateAccDeclare)s
-
-        %(CompleteAccDeclare)s
-
-        virtual void
-        annotateFault(ArmFault *fault) {
+        void
+        annotateFault(ArmISA::ArmFault *fault) override
+        {
             %(fa_code)s
         }
     };
@@ -832,43 +850,38 @@ def template LoadImmDeclare {{
      */
     class %(class_name)s : public %(base_class)s
     {
-      public:
+      private:
+        %(reg_idx_arr_decl)s;
 
+      public:
         /// Constructor.
         %(class_name)s(ExtMachInst machInst,
                 uint32_t _dest, uint32_t _base, bool _add, int32_t _imm);
 
-        %(BasicExecDeclare)s
+        Fault execute(ExecContext *, trace::InstRecord *) const override;
+        Fault initiateAcc(ExecContext *, trace::InstRecord *) const override;
+        Fault completeAcc(PacketPtr, ExecContext *,
+                          trace::InstRecord *) const override;
 
-        %(InitiateAccDeclare)s
-
-        %(CompleteAccDeclare)s
-
-        virtual void
-        annotateFault(ArmFault *fault) {
+        void
+        annotateFault(ArmISA::ArmFault *fault) override
+        {
             %(fa_code)s
         }
     };
 }};
 
-def template InitiateAccDeclare {{
-    Fault initiateAcc(%(CPU_exec_context)s *, Trace::InstRecord *) const;
-}};
-
-def template CompleteAccDeclare {{
-    Fault completeAcc(PacketPtr,  %(CPU_exec_context)s *, Trace::InstRecord *) const;
-}};
-
 def template RfeConstructor {{
     %(class_name)s::%(class_name)s(ExtMachInst machInst,
-                                          uint32_t _base, int _mode, bool _wb)
-        : %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
-                         (IntRegIndex)_base, (AddrMode)_mode, _wb)
+            uint32_t _base, int _mode, bool _wb) :
+        %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
+                       (RegIndex)_base, (AddrMode)_mode, _wb)
     {
+        %(set_reg_idx_arr)s;
         %(constructor)s;
         if (!(condCode == COND_AL || condCode == COND_UC)) {
             for (int x = 0; x < _numDestRegs; x++) {
-                _srcRegIdx[_numSrcRegs++] = _destRegIdx[x];
+                setSrcRegIdx(_numSrcRegs++, destRegIdx(x));
             }
         }
 #if %(use_uops)d
@@ -891,14 +904,15 @@ def template RfeConstructor {{
 
 def template SrsConstructor {{
     %(class_name)s::%(class_name)s(ExtMachInst machInst,
-            uint32_t _regMode, int _mode, bool _wb)
-         : %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
+            uint32_t _regMode, int _mode, bool _wb) :
+         %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
                  (OperatingMode)_regMode, (AddrMode)_mode, _wb)
     {
+        %(set_reg_idx_arr)s;
         %(constructor)s;
         if (!(condCode == COND_AL || condCode == COND_UC)) {
             for (int x = 0; x < _numDestRegs; x++) {
-                _srcRegIdx[_numSrcRegs++] = _destRegIdx[x];
+                setSrcRegIdx(_numSrcRegs++, destRegIdx(x));
             }
         }
 #if %(use_uops)d
@@ -915,14 +929,15 @@ def template SrsConstructor {{
 
 def template SwapConstructor {{
     %(class_name)s::%(class_name)s(ExtMachInst machInst,
-            uint32_t _dest, uint32_t _op1, uint32_t _base)
-         : %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
-                 (IntRegIndex)_dest, (IntRegIndex)_op1, (IntRegIndex)_base)
+            uint32_t _dest, uint32_t _op1, uint32_t _base) :
+         %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
+                 (RegIndex)_dest, (RegIndex)_op1, (RegIndex)_base)
     {
+        %(set_reg_idx_arr)s;
         %(constructor)s;
         if (!(condCode == COND_AL || condCode == COND_UC)) {
             for (int x = 0; x < _numDestRegs; x++) {
-                _srcRegIdx[_numSrcRegs++] = _destRegIdx[x];
+                setSrcRegIdx(_numSrcRegs++, destRegIdx(x));
             }
         }
     }
@@ -931,15 +946,16 @@ def template SwapConstructor {{
 def template LoadStoreDImmConstructor {{
     %(class_name)s::%(class_name)s(ExtMachInst machInst,
             uint32_t _dest, uint32_t _dest2,
-            uint32_t _base, bool _add, int32_t _imm)
-         : %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
-                 (IntRegIndex)_dest, (IntRegIndex)_dest2,
-                 (IntRegIndex)_base, _add, _imm)
+            uint32_t _base, bool _add, int32_t _imm) :
+         %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
+                 (RegIndex)_dest, (RegIndex)_dest2,
+                 (RegIndex)_base, _add, _imm)
     {
+        %(set_reg_idx_arr)s;
         %(constructor)s;
         if (!(condCode == COND_AL || condCode == COND_UC)) {
             for (int x = 0; x < _numDestRegs; x++) {
-                _srcRegIdx[_numSrcRegs++] = _destRegIdx[x];
+                setSrcRegIdx(_numSrcRegs++, destRegIdx(x));
             }
         }
 #if %(use_uops)d
@@ -957,16 +973,16 @@ def template LoadStoreDImmConstructor {{
 def template StoreExDImmConstructor {{
     %(class_name)s::%(class_name)s(ExtMachInst machInst,
             uint32_t _result, uint32_t _dest, uint32_t _dest2,
-            uint32_t _base, bool _add, int32_t _imm)
-         : %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
-                 (IntRegIndex)_result,
-                 (IntRegIndex)_dest, (IntRegIndex)_dest2,
-                 (IntRegIndex)_base, _add, _imm)
+            uint32_t _base, bool _add, int32_t _imm) :
+         %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
+                 (RegIndex)_result, (RegIndex)_dest, (RegIndex)_dest2,
+                 (RegIndex)_base, _add, _imm)
     {
+        %(set_reg_idx_arr)s;
         %(constructor)s;
         if (!(condCode == COND_AL || condCode == COND_UC)) {
             for (int x = 0; x < _numDestRegs; x++) {
-                _srcRegIdx[_numSrcRegs++] = _destRegIdx[x];
+                setSrcRegIdx(_numSrcRegs++, destRegIdx(x));
             }
         }
 #if %(use_uops)d
@@ -984,14 +1000,15 @@ def template StoreExDImmConstructor {{
 
 def template LoadStoreImmConstructor {{
     %(class_name)s::%(class_name)s(ExtMachInst machInst,
-            uint32_t _dest, uint32_t _base, bool _add, int32_t _imm)
-         : %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
-                 (IntRegIndex)_dest, (IntRegIndex)_base, _add, _imm)
+            uint32_t _dest, uint32_t _base, bool _add, int32_t _imm) :
+         %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
+                 (RegIndex)_dest, (RegIndex)_base, _add, _imm)
     {
+        %(set_reg_idx_arr)s;
         %(constructor)s;
         if (!(condCode == COND_AL || condCode == COND_UC)) {
             for (int x = 0; x < _numDestRegs; x++) {
-                _srcRegIdx[_numSrcRegs++] = _destRegIdx[x];
+                setSrcRegIdx(_numSrcRegs++, destRegIdx(x));
             }
         }
 #if %(use_uops)d
@@ -1009,15 +1026,16 @@ def template LoadStoreImmConstructor {{
 def template StoreExImmConstructor {{
     %(class_name)s::%(class_name)s(ExtMachInst machInst,
             uint32_t _result, uint32_t _dest, uint32_t _base,
-            bool _add, int32_t _imm)
-         : %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
-                 (IntRegIndex)_result, (IntRegIndex)_dest,
-                 (IntRegIndex)_base, _add, _imm)
+            bool _add, int32_t _imm) :
+         %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
+                 (RegIndex)_result, (RegIndex)_dest,
+                 (RegIndex)_base, _add, _imm)
     {
+        %(set_reg_idx_arr)s;
         %(constructor)s;
         if (!(condCode == COND_AL || condCode == COND_UC)) {
             for (int x = 0; x < _numDestRegs; x++) {
-                _srcRegIdx[_numSrcRegs++] = _destRegIdx[x];
+                setSrcRegIdx(_numSrcRegs++, destRegIdx(x));
             }
         }
 #if %(use_uops)d
@@ -1036,17 +1054,18 @@ def template StoreExImmConstructor {{
 def template StoreDRegConstructor {{
     %(class_name)s::%(class_name)s(ExtMachInst machInst,
             uint32_t _dest, uint32_t _dest2, uint32_t _base, bool _add,
-            int32_t _shiftAmt, uint32_t _shiftType, uint32_t _index)
-         : %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
-                 (IntRegIndex)_dest, (IntRegIndex)_dest2,
-                 (IntRegIndex)_base, _add,
+            int32_t _shiftAmt, uint32_t _shiftType, uint32_t _index) :
+         %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
+                 (RegIndex)_dest, (RegIndex)_dest2,
+                 (RegIndex)_base, _add,
                  _shiftAmt, (ArmShiftType)_shiftType,
-                 (IntRegIndex)_index)
+                 (RegIndex)_index)
     {
+        %(set_reg_idx_arr)s;
         %(constructor)s;
         if (!(condCode == COND_AL || condCode == COND_UC)) {
             for (int x = 0; x < _numDestRegs; x++) {
-                _srcRegIdx[_numSrcRegs++] = _destRegIdx[x];
+                setSrcRegIdx(_numSrcRegs++, destRegIdx(x));
             }
         }
 #if %(use_uops)d
@@ -1065,16 +1084,17 @@ def template StoreDRegConstructor {{
 def template StoreRegConstructor {{
     %(class_name)s::%(class_name)s(ExtMachInst machInst,
             uint32_t _dest, uint32_t _base, bool _add,
-            int32_t _shiftAmt, uint32_t _shiftType, uint32_t _index)
-         : %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
-                 (IntRegIndex)_dest, (IntRegIndex)_base, _add,
+            int32_t _shiftAmt, uint32_t _shiftType, uint32_t _index) :
+         %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
+                 (RegIndex)_dest, (RegIndex)_base, _add,
                  _shiftAmt, (ArmShiftType)_shiftType,
-                 (IntRegIndex)_index)
+                 (RegIndex)_index)
     {
+        %(set_reg_idx_arr)s;
         %(constructor)s;
         if (!(condCode == COND_AL || condCode == COND_UC)) {
             for (int x = 0; x < _numDestRegs; x++) {
-                _srcRegIdx[_numSrcRegs++] = _destRegIdx[x];
+                setSrcRegIdx(_numSrcRegs++, destRegIdx(x));
             }
         }
 #if %(use_uops)d
@@ -1093,25 +1113,26 @@ def template StoreRegConstructor {{
 def template LoadDRegConstructor {{
     %(class_name)s::%(class_name)s(ExtMachInst machInst,
             uint32_t _dest, uint32_t _dest2, uint32_t _base, bool _add,
-            int32_t _shiftAmt, uint32_t _shiftType, uint32_t _index)
-         : %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
-                 (IntRegIndex)_dest, (IntRegIndex)_dest2,
-                 (IntRegIndex)_base, _add,
+            int32_t _shiftAmt, uint32_t _shiftType, uint32_t _index) :
+         %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
+                 (RegIndex)_dest, (RegIndex)_dest2,
+                 (RegIndex)_base, _add,
                  _shiftAmt, (ArmShiftType)_shiftType,
-                 (IntRegIndex)_index)
+                 (RegIndex)_index)
     {
+        %(set_reg_idx_arr)s;
         %(constructor)s;
         if (!(condCode == COND_AL || condCode == COND_UC)) {
             for (int x = 0; x < _numDestRegs; x++) {
-                _srcRegIdx[_numSrcRegs++] = _destRegIdx[x];
+                setSrcRegIdx(_numSrcRegs++, destRegIdx(x));
             }
         }
 #if %(use_uops)d
         assert(numMicroops >= 2);
         uops = new StaticInstPtr[numMicroops];
         if ((_dest == _index) || (_dest2 == _index)) {
-            IntRegIndex wbIndexReg = INTREG_UREG0;
-            uops[0] = new MicroUopRegMov(machInst, INTREG_UREG0, _index);
+            RegIndex wbIndexReg = int_reg::Ureg0;
+            uops[0] = new MicroUopRegMov(machInst, int_reg::Ureg0, _index);
             uops[0]->setDelayedCommit();
             uops[0]->setFirstMicroop();
             uops[1] = new %(acc_name)s(machInst, _dest, _dest2, _base, _add,
@@ -1120,7 +1141,7 @@ def template LoadDRegConstructor {{
             uops[2] = new %(wb_decl)s;
             uops[2]->setLastMicroop();
         } else {
-            IntRegIndex wbIndexReg = index;
+            RegIndex wbIndexReg = index;
             uops[0] = new %(acc_name)s(machInst, _dest, _dest2, _base, _add,
                                        _shiftAmt, _shiftType, _index);
             uops[0]->setDelayedCommit();
@@ -1135,32 +1156,34 @@ def template LoadDRegConstructor {{
 def template LoadRegConstructor {{
     %(class_name)s::%(class_name)s(ExtMachInst machInst,
             uint32_t _dest, uint32_t _base, bool _add,
-            int32_t _shiftAmt, uint32_t _shiftType, uint32_t _index)
-         : %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
-                 (IntRegIndex)_dest, (IntRegIndex)_base, _add,
+            int32_t _shiftAmt, uint32_t _shiftType, uint32_t _index) :
+         %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
+                 (RegIndex)_dest, (RegIndex)_base, _add,
                  _shiftAmt, (ArmShiftType)_shiftType,
-                 (IntRegIndex)_index)
+                 (RegIndex)_index)
     {
+        %(set_reg_idx_arr)s;
         %(constructor)s;
-        bool conditional M5_VAR_USED = false;
+        [[maybe_unused]] bool conditional = false;
         if (!(condCode == COND_AL || condCode == COND_UC)) {
             conditional = true;
             for (int x = 0; x < _numDestRegs; x++) {
-                _srcRegIdx[_numSrcRegs++] = _destRegIdx[x];
+                setSrcRegIdx(_numSrcRegs++, destRegIdx(x));
             }
         }
 #if %(use_uops)d
         assert(numMicroops >= 2);
         uops = new StaticInstPtr[numMicroops];
-        if (_dest == INTREG_PC && !isFloating()) {
-            IntRegIndex wbIndexReg = index;
-            uops[0] = new %(acc_name)s(machInst, INTREG_UREG0, _base, _add,
+        if (_dest == int_reg::Pc && !isFloating() && !isVector()) {
+            RegIndex wbIndexReg = index;
+            uops[0] = new %(acc_name)s(machInst, int_reg::Ureg0, _base, _add,
                                        _shiftAmt, _shiftType, _index);
             uops[0]->setDelayedCommit();
             uops[0]->setFirstMicroop();
             uops[1] = new %(wb_decl)s;
             uops[1]->setDelayedCommit();
-            uops[2] = new MicroUopRegMov(machInst, INTREG_PC, INTREG_UREG0);
+            uops[2] = new MicroUopRegMov(machInst, int_reg::Pc,
+                                         int_reg::Ureg0);
             uops[2]->setFlag(StaticInst::IsControl);
             uops[2]->setFlag(StaticInst::IsIndirectControl);
             if (conditional)
@@ -1169,8 +1192,8 @@ def template LoadRegConstructor {{
                 uops[2]->setFlag(StaticInst::IsUncondControl);
             uops[2]->setLastMicroop();
         } else if(_dest == _index) {
-            IntRegIndex wbIndexReg = INTREG_UREG0;
-            uops[0] = new MicroUopRegMov(machInst, INTREG_UREG0, _index);
+            RegIndex wbIndexReg = int_reg::Ureg0;
+            uops[0] = new MicroUopRegMov(machInst, int_reg::Ureg0, _index);
             uops[0]->setDelayedCommit();
             uops[0]->setFirstMicroop();
             uops[1] = new %(acc_name)s(machInst, _dest, _base, _add,
@@ -1179,7 +1202,7 @@ def template LoadRegConstructor {{
             uops[2] = new %(wb_decl)s;
             uops[2]->setLastMicroop();
         } else {
-            IntRegIndex wbIndexReg = index;
+            RegIndex wbIndexReg = index;
             uops[0] = new %(acc_name)s(machInst, _dest, _base, _add,
                                       _shiftAmt, _shiftType, _index);
             uops[0]->setDelayedCommit();
@@ -1189,7 +1212,7 @@ def template LoadRegConstructor {{
 
         }
 #else
-        if (_dest == INTREG_PC && !isFloating()) {
+        if (_dest == int_reg::Pc && !isFloating() && !isVector()) {
             flags[IsControl] = true;
             flags[IsIndirectControl] = true;
             if (conditional)
@@ -1203,29 +1226,31 @@ def template LoadRegConstructor {{
 
 def template LoadImmConstructor {{
     %(class_name)s::%(class_name)s(ExtMachInst machInst,
-            uint32_t _dest, uint32_t _base, bool _add, int32_t _imm)
-         : %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
-                 (IntRegIndex)_dest, (IntRegIndex)_base, _add, _imm)
+            uint32_t _dest, uint32_t _base, bool _add, int32_t _imm) :
+         %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
+                 (RegIndex)_dest, (RegIndex)_base, _add, _imm)
     {
+        %(set_reg_idx_arr)s;
         %(constructor)s;
-        bool conditional M5_VAR_USED = false;
+        [[maybe_unused]] bool conditional = false;
         if (!(condCode == COND_AL || condCode == COND_UC)) {
             conditional = true;
             for (int x = 0; x < _numDestRegs; x++) {
-                _srcRegIdx[_numSrcRegs++] = _destRegIdx[x];
+                setSrcRegIdx(_numSrcRegs++, destRegIdx(x));
             }
         }
 #if %(use_uops)d
         assert(numMicroops >= 2);
         uops = new StaticInstPtr[numMicroops];
-        if (_dest == INTREG_PC && !isFloating()) {
-            uops[0] = new %(acc_name)s(machInst, INTREG_UREG0, _base, _add,
+        if (_dest == int_reg::Pc && !isFloating() && !isVector()) {
+            uops[0] = new %(acc_name)s(machInst, int_reg::Ureg0, _base, _add,
                                    _imm);
             uops[0]->setDelayedCommit();
             uops[0]->setFirstMicroop();
             uops[1] = new %(wb_decl)s;
             uops[1]->setDelayedCommit();
-            uops[2] = new MicroUopRegMov(machInst, INTREG_PC, INTREG_UREG0);
+            uops[2] = new MicroUopRegMov(
+                    machInst, int_reg::Pc, int_reg::Ureg0);
             uops[2]->setFlag(StaticInst::IsControl);
             uops[2]->setFlag(StaticInst::IsIndirectControl);
             /* Also set flags on the macroop so that pre-microop decomposition
@@ -1239,7 +1264,7 @@ def template LoadImmConstructor {{
                 uops[2]->setFlag(StaticInst::IsUncondControl);
                 setFlag(StaticInst::IsUncondControl);
             }
-            if (_base == INTREG_SP && _add && _imm == 4 && %(is_ras_pop)s) {
+            if (_base == int_reg::Sp && _add && _imm == 4 && %(is_ras_pop)s) {
                 uops[2]->setFlag(StaticInst::IsReturn);
                 setFlag(StaticInst::IsReturn);
             }
@@ -1252,7 +1277,7 @@ def template LoadImmConstructor {{
             uops[1]->setLastMicroop();
         }
 #else
-        if (_dest == INTREG_PC && !isFloating()) {
+        if (_dest == int_reg::Pc && !isFloating() && !isVector()) {
             flags[IsControl] = true;
             flags[IsIndirectControl] = true;
             if (conditional)
@@ -1263,4 +1288,3 @@ def template LoadImmConstructor {{
 #endif
     }
 }};
-

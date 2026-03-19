@@ -33,29 +33,31 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Vasileios Spiliopoulos
- *          Akash Bagdia
- *          Stephan Diestelhorst
  */
 
-#include "debug/EnergyCtrl.hh"
 #include "dev/arm/energy_ctrl.hh"
+
+#include "base/trace.hh"
+#include "debug/EnergyCtrl.hh"
 #include "mem/packet.hh"
 #include "mem/packet_access.hh"
 #include "params/EnergyCtrl.hh"
 #include "sim/dvfs_handler.hh"
+#include "sim/serialize.hh"
 
-EnergyCtrl::EnergyCtrl(const Params *p)
+namespace gem5
+{
+
+EnergyCtrl::EnergyCtrl(const Params &p)
     : BasicPioDevice(p, PIO_NUM_FIELDS * 4),        // each field is 32 bit
-      dvfsHandler(p->dvfs_handler),
+      dvfsHandler(p.dvfs_handler),
       domainID(0),
       domainIDIndexToRead(0),
       perfLevelAck(0),
       perfLevelToRead(0),
-      updateAckEvent(this)
+      updateAckEvent([this]{ updatePLAck(); }, name())
 {
-    fatal_if(!p->dvfs_handler, "EnergyCtrl: Needs a DVFSHandler for a "
+    fatal_if(!p.dvfs_handler, "EnergyCtrl: Needs a DVFSHandler for a "
              "functioning system.\n");
 }
 
@@ -71,7 +73,7 @@ EnergyCtrl::read(PacketPtr pkt)
 
     if (!dvfsHandler->isEnabled()) {
         // NB: Zero is a good response if the handler is disabled
-        pkt->set<uint32_t>(0);
+        pkt->setLE<uint32_t>(0);
         warn_once("EnergyCtrl: Disabled handler, ignoring read from reg %i\n",
                   reg);
         DPRINTF(EnergyCtrl, "dvfs handler disabled, return 0 for read from "\
@@ -100,7 +102,7 @@ EnergyCtrl::read(PacketPtr pkt)
         break;
       case DVFS_HANDLER_TRANS_LATENCY:
         // Return transition latency in nanoseconds
-        result = dvfsHandler->transLatency() / SimClock::Int::ns;
+        result = dvfsHandler->transLatency() / sim_clock::as_int::ns;
         DPRINTF(EnergyCtrl, "reading dvfs handler trans latency %d ns\n",
                 result);
         break;
@@ -140,7 +142,7 @@ EnergyCtrl::read(PacketPtr pkt)
         panic("Tried to read EnergyCtrl at offset %#x / reg %i\n", daddr,
               reg);
     }
-    pkt->set<uint32_t>(result);
+    pkt->setLE<uint32_t>(result);
     pkt->makeAtomicResponse();
     return pioDelay;
 }
@@ -152,7 +154,7 @@ EnergyCtrl::write(PacketPtr pkt)
     assert(pkt->getSize() == 4);
 
     uint32_t data;
-    data = pkt->get<uint32_t>();
+    data = pkt->getLE<uint32_t>();
 
     Addr daddr = pkt->getAddr() - pioAddr;
     assert((daddr & 3) == 0);
@@ -243,11 +245,6 @@ EnergyCtrl::unserialize(CheckpointIn &cp)
     }
 }
 
-EnergyCtrl * EnergyCtrlParams::create()
-{
-    return new EnergyCtrl(this);
-}
-
 void
 EnergyCtrl::startup()
 {
@@ -261,3 +258,5 @@ EnergyCtrl::init()
 {
     BasicPioDevice::init();
 }
+
+} // namespace gem5

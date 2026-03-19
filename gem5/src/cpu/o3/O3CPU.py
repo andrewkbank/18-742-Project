@@ -1,5 +1,4 @@
-# Copyright (c) 2005-2007 The Regents of The University of Michigan
-# All rights reserved.
+# Copyright 2021 Google, Inc.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are
@@ -23,140 +22,33 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Kevin Lim
 
-from m5.defines import buildEnv
-from m5.params import *
-from m5.proxy import *
-from BaseCPU import BaseCPU
-from FUPool import *
-from O3Checker import O3Checker
-from BranchPredictor import *
+import m5.defines
 
-class DerivO3CPU(BaseCPU):
-    type = 'DerivO3CPU'
-    cxx_header = 'cpu/o3/deriv.hh'
+arch_vars = [
+    "USE_ARM_ISA",
+    "USE_MIPS_ISA",
+    "USE_POWER_ISA",
+    "USE_RISCV_ISA",
+    "USE_SPARC_ISA",
+    "USE_X86_ISA",
+]
 
-    @classmethod
-    def memory_mode(cls):
-        return 'timing'
+enabled = list(filter(lambda var: m5.defines.buildEnv[var], arch_vars))
 
-    @classmethod
-    def require_caches(cls):
-        return True
+if len(enabled) == 1:
+    arch = enabled[0]
+    if arch == "USE_ARM_ISA":
+        from m5.objects.ArmCPU import ArmO3CPU as O3CPU
+    elif arch == "USE_MIPS_ISA":
+        from m5.objects.MipsCPU import MipsO3CPU as O3CPU
+    elif arch == "USE_POWER_ISA":
+        from m5.objects.PowerCPU import PowerO3CPU as O3CPU
+    elif arch == "USE_RISCV_ISA":
+        from m5.objects.RiscvCPU import RiscvO3CPU as O3CPU
+    elif arch == "USE_SPARC_ISA":
+        from m5.objects.SparcCPU import SparcO3CPU as O3CPU
+    elif arch == "USE_X86_ISA":
+        from m5.objects.X86CPU import X86O3CPU as O3CPU
 
-    @classmethod
-    def support_take_over(cls):
-        return True
-
-    activity = Param.Unsigned(0, "Initial count")
-
-    cachePorts = Param.Unsigned(200, "Cache Ports")
-
-    decodeToFetchDelay = Param.Cycles(1, "Decode to fetch delay")
-    renameToFetchDelay = Param.Cycles(1 ,"Rename to fetch delay")
-    iewToFetchDelay = Param.Cycles(1, "Issue/Execute/Writeback to fetch "
-                                   "delay")
-    commitToFetchDelay = Param.Cycles(1, "Commit to fetch delay")
-    fetchWidth = Param.Unsigned(8, "Fetch width")
-    fetchBufferSize = Param.Unsigned(64, "Fetch buffer size in bytes")
-    fetchQueueSize = Param.Unsigned(32, "Fetch queue size in micro-ops "
-                                    "per-thread")
-
-    renameToDecodeDelay = Param.Cycles(1, "Rename to decode delay")
-    iewToDecodeDelay = Param.Cycles(1, "Issue/Execute/Writeback to decode "
-                                    "delay")
-    commitToDecodeDelay = Param.Cycles(1, "Commit to decode delay")
-    fetchToDecodeDelay = Param.Cycles(1, "Fetch to decode delay")
-    decodeWidth = Param.Unsigned(8, "Decode width")
-
-    iewToRenameDelay = Param.Cycles(1, "Issue/Execute/Writeback to rename "
-                                    "delay")
-    commitToRenameDelay = Param.Cycles(1, "Commit to rename delay")
-    decodeToRenameDelay = Param.Cycles(1, "Decode to rename delay")
-    renameWidth = Param.Unsigned(8, "Rename width")
-
-    commitToIEWDelay = Param.Cycles(1, "Commit to "
-               "Issue/Execute/Writeback delay")
-    renameToIEWDelay = Param.Cycles(2, "Rename to "
-               "Issue/Execute/Writeback delay")
-    issueToExecuteDelay = Param.Cycles(1, "Issue to execute delay (internal "
-              "to the IEW stage)")
-    dispatchWidth = Param.Unsigned(8, "Dispatch width")
-    issueWidth = Param.Unsigned(8, "Issue width")
-    wbWidth = Param.Unsigned(8, "Writeback width")
-    fuPool = Param.FUPool(DefaultFUPool(), "Functional Unit pool")
-
-    iewToCommitDelay = Param.Cycles(1, "Issue/Execute/Writeback to commit "
-               "delay")
-    renameToROBDelay = Param.Cycles(1, "Rename to reorder buffer delay")
-    commitWidth = Param.Unsigned(8, "Commit width")
-    squashWidth = Param.Unsigned(8, "Squash width")
-    trapLatency = Param.Cycles(13, "Trap latency")
-    fetchTrapLatency = Param.Cycles(1, "Fetch trap latency")
-
-    backComSize = Param.Unsigned(5, "Time buffer size for backwards communication")
-    forwardComSize = Param.Unsigned(5, "Time buffer size for forward communication")
-
-    LQEntries = Param.Unsigned(32, "Number of load queue entries")
-    SQEntries = Param.Unsigned(32, "Number of store queue entries")
-    LSQDepCheckShift = Param.Unsigned(4, "Number of places to shift addr before check")
-    LSQCheckLoads = Param.Bool(True,
-        "Should dependency violations be checked for loads & stores or just stores")
-    store_set_clear_period = Param.Unsigned(250000,
-            "Number of load/store insts before the dep predictor should be invalidated")
-    LFSTSize = Param.Unsigned(1024, "Last fetched store table size")
-    SSITSize = Param.Unsigned(1024, "Store set ID table size")
-
-    numRobs = Param.Unsigned(1, "Number of Reorder Buffers");
-
-    numPhysIntRegs = Param.Unsigned(256, "Number of physical integer registers")
-    numPhysFloatRegs = Param.Unsigned(256, "Number of physical floating point "
-                                      "registers")
-    # most ISAs don't use condition-code regs, so default is 0
-    _defaultNumPhysCCRegs = 0
-    if buildEnv['TARGET_ISA'] in ('arm','x86'):
-        # For x86, each CC reg is used to hold only a subset of the
-        # flags, so we need 4-5 times the number of CC regs as
-        # physical integer regs to be sure we don't run out.  In
-        # typical real machines, CC regs are not explicitly renamed
-        # (it's a side effect of int reg renaming), so they should
-        # never be the bottleneck here.
-        _defaultNumPhysCCRegs = Self.numPhysIntRegs * 5
-    numPhysCCRegs = Param.Unsigned(_defaultNumPhysCCRegs,
-                                   "Number of physical cc registers")
-    numIQEntries = Param.Unsigned(64, "Number of instruction queue entries")
-    numROBEntries = Param.Unsigned(192, "Number of reorder buffer entries")
-
-    smtNumFetchingThreads = Param.Unsigned(1, "SMT Number of Fetching Threads")
-    smtFetchPolicy = Param.String('SingleThread', "SMT Fetch policy")
-    smtLSQPolicy    = Param.String('Partitioned', "SMT LSQ Sharing Policy")
-    smtLSQThreshold = Param.Int(100, "SMT LSQ Threshold Sharing Parameter")
-    smtIQPolicy    = Param.String('Partitioned', "SMT IQ Sharing Policy")
-    smtIQThreshold = Param.Int(100, "SMT IQ Threshold Sharing Parameter")
-    smtROBPolicy   = Param.String('Partitioned', "SMT ROB Sharing Policy")
-    smtROBThreshold = Param.Int(100, "SMT ROB Threshold Sharing Parameter")
-    smtCommitPolicy = Param.String('RoundRobin', "SMT Commit Policy")
-
-    branchPred = Param.BranchPredictor(TournamentBP(numThreads =
-                                                       Parent.numThreads),
-                                       "Branch Predictor")
-    needsTSO = Param.Bool(buildEnv['TARGET_ISA'] == 'x86',
-                          "Enable TSO Memory model")
-
-    def addCheckerCpu(self):
-        if buildEnv['TARGET_ISA'] in ['arm']:
-            from ArmTLB import ArmTLB
-
-            self.checker = O3Checker(workload=self.workload,
-                                     exitOnError=False,
-                                     updateOnError=True,
-                                     warnOnlyOnLoadError=True)
-            self.checker.itb = ArmTLB(size = self.itb.size)
-            self.checker.dtb = ArmTLB(size = self.dtb.size)
-            self.checker.cpu_id = self.cpu_id
-
-        else:
-            print "ERROR: Checker only supported under ARM ISA!"
-            exit(1)
+    DerivO3CPU = O3CPU

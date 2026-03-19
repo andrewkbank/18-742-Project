@@ -27,7 +27,7 @@
  */
 
 //
-// This Deterministic Generator generates GETX requests for all nodes in the 
+// This Deterministic Generator generates GETX requests for all nodes in the
 // system.  The GETX requests are generated one at a time in round-robin fashion
 // 0...1...2...etc.
 //
@@ -35,29 +35,35 @@
 #ifndef __CPU_DIRECTEDTEST_SERIESREQUESTGENERATOR_HH__
 #define __CPU_DIRECTEDTEST_SERIESREQUESTGENERATOR_HH__
 
+#include "base/random.hh"
 #include "cpu/testers/directedtest/DirectedGenerator.hh"
 #include "cpu/testers/directedtest/RubyDirectedTester.hh"
-#include "mem/protocol/SeriesRequestGeneratorStatus.hh"
+#include "mem/ruby/protocol/SeriesRequestGeneratorStatus.hh"
 #include "params/SeriesRequestGenerator.hh"
 
-class SeriesRequestGenerator : public DirectedGenerator 
+namespace gem5
+{
+
+class SeriesRequestGenerator : public DirectedGenerator
 {
   public:
     typedef SeriesRequestGeneratorParams Params;
-    SeriesRequestGenerator(const Params *p);
-    
+    SeriesRequestGenerator(const Params &p);
+
     ~SeriesRequestGenerator();
-    
+
     bool initiate();
     void performCallback(uint32_t proc, Addr address);
-    
+
   private:
-    SeriesRequestGeneratorStatus m_status;
+    ruby::SeriesRequestGeneratorStatus m_status;
     Addr m_address;
     uint32_t m_active_node;
     uint32_t m_addr_increment_size;
     uint32_t m_percent_writes;
+    Random::RandomPtr rng = Random::genRandom();
 };
 
-#endif //__CPU_DIRECTEDTEST_SERIESREQUESTGENERATOR_HH__
+} // namespace gem5
 
+#endif //__CPU_DIRECTEDTEST_SERIESREQUESTGENERATOR_HH__

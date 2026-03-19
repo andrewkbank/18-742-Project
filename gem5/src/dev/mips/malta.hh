@@ -24,9 +24,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Ali Saidi
- *          Rick Strong
  */
 
 /**
@@ -41,11 +38,11 @@
 #include "dev/platform.hh"
 #include "params/Malta.hh"
 
-class IdeController;
+namespace gem5
+{
+
 class MaltaCChip;
-class MaltaPChip;
 class MaltaIO;
-class System;
 
 /**
   * Top level class for Malta Chipset emulation.
@@ -60,9 +57,6 @@ class Malta : public Platform
     /** Max number of CPUs in a Malta */
     static const int Max_CPUs = 64;
 
-    /** Pointer to the system */
-    System *system;
-
     /** Pointer to the MaltaIO device which has the RTC */
     MaltaIO *io;
 
@@ -72,71 +66,37 @@ class Malta : public Platform
      */
     MaltaCChip *cchip;
 
-    /** Pointer to the Malta PChip.
-     * The pchip is the interface to the PCI bus, in our case
-     * it does not have to do much.
-     */
-    MaltaPChip *pchip;
-
     int intr_sum_type[Malta::Max_CPUs];
     int ipi_pending[Malta::Max_CPUs];
 
   public:
-    /**
-     * Constructor for the Malta Class.
-     * @param name name of the object
-     * @param s system the object belongs to
-     * @param intctrl pointer to the interrupt controller
-     */
     typedef MaltaParams Params;
-    Malta(const Params *p);
+    Malta(const Params &p);
 
     /**
      * Cause the cpu to post a serial interrupt to the CPU.
      */
-    virtual void postConsoleInt();
+    void postConsoleInt() override;
 
     /**
      * Clear a posted CPU interrupt (id=55)
      */
-    virtual void clearConsoleInt();
+    void clearConsoleInt() override;
 
     /**
      * Cause the chipset to post a cpi interrupt to the CPU.
      */
-    virtual void postPciInt(int line);
+    void postPciInt(int line) override;
 
     /**
      * Clear a posted PCI->CPU interrupt
      */
-    virtual void clearPciInt(int line);
+    void clearPciInt(int line) override;
 
-
-    virtual Addr pciToDma(Addr pciAddr) const;
-
-    Addr
-    calcPciConfigAddr(int bus, int dev, int func)
-    {
-        panic("Need implementation\n");
-        M5_DUMMY_RETURN
-    }
-
-    Addr
-    calcPciIOAddr(Addr addr)
-    {
-        panic("Need implementation\n");
-        M5_DUMMY_RETURN
-    }
-
-    Addr
-    calcPciMemAddr(Addr addr)
-    {
-        panic("Need implementation\n");
-        M5_DUMMY_RETURN
-    }
-
-    void serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE;
-    void unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE;
+    void serialize(CheckpointOut &cp) const override;
+    void unserialize(CheckpointIn &cp) override;
 };
+
+} // namespace gem5
 
 #endif // __DEV_MALTA_HH__

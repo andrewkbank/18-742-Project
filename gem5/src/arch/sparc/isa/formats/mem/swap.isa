@@ -23,21 +23,17 @@
 // THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// Authors: Gabe Black
-//          Ali Saidi
 
 // This template provides the execute functions for a swap
 def template SwapExecute {{
-        Fault %(class_name)s::execute(CPU_EXEC_CONTEXT *xc,
-                Trace::InstRecord *traceData) const
+        Fault %(class_name)s::execute(ExecContext *xc,
+                trace::InstRecord *traceData) const
         {
             Fault fault = NoFault;
             // This is to support the conditional store in cas instructions.
             // It should be optomized out in all the others
             bool storeCond = true;
             Addr EA;
-            %(fp_enable_check)s;
             %(op_decl)s;
             uint64_t mem_data = 0;
 
@@ -50,7 +46,7 @@ def template SwapExecute {{
             }
             if (storeCond && fault == NoFault) {
                 %(EA_trunc)s
-                fault = writeMemAtomic(xc, traceData, Mem, EA,
+                fault = writeMemAtomicBE(xc, traceData, Mem, EA,
                         %(asi_val)s, &mem_data);
             }
             if (fault == NoFault) {
@@ -68,12 +64,11 @@ def template SwapExecute {{
 
 
 def template SwapInitiateAcc {{
-        Fault %(class_name)s::initiateAcc(CPU_EXEC_CONTEXT * xc,
-                Trace::InstRecord * traceData) const
+        Fault %(class_name)s::initiateAcc(ExecContext * xc,
+                trace::InstRecord * traceData) const
         {
             Fault fault = NoFault;
             Addr EA;
-            %(fp_enable_check)s;
             uint64_t mem_data = 0;
             %(op_decl)s;
             %(op_rd)s;
@@ -87,7 +82,7 @@ def template SwapInitiateAcc {{
             }
             if (fault == NoFault) {
                 %(EA_trunc)s
-                fault = writeMemTiming(xc, traceData, Mem, EA, %(asi_val)s,
+                fault = writeMemTimingBE(xc, traceData, Mem, EA, %(asi_val)s,
                         &mem_data);
             }
             return fault;
@@ -97,13 +92,13 @@ def template SwapInitiateAcc {{
 
 
 def template SwapCompleteAcc {{
-        Fault %(class_name)s::completeAcc(PacketPtr pkt, CPU_EXEC_CONTEXT * xc,
-                Trace::InstRecord * traceData) const
+        Fault %(class_name)s::completeAcc(PacketPtr pkt, ExecContext * xc,
+                trace::InstRecord * traceData) const
         {
             Fault fault = NoFault;
             %(op_decl)s;
 
-            getMem(pkt, Mem, traceData);
+            getMemBE(pkt, Mem, traceData);
             uint64_t mem_data = Mem;
 
             if (fault == NoFault) {
@@ -127,7 +122,7 @@ let {{
 def format Swap(code, postacc_code, mem_flags, *opt_flags) {{
     mem_flags = makeList(mem_flags)
     mem_flags = [ 'Request::%s' % flag for flag in mem_flags ]
-    flags = string.join(mem_flags, '|')
+    flags = '|'.join(mem_flags)
 
     (header_output,
      decoder_output,
@@ -140,7 +135,7 @@ def format SwapAlt(code, postacc_code, mem_flags, *opt_flags) {{
     mem_flags = makeList(mem_flags)
     mem_flags = [ 'Request::%s' % flag for flag in mem_flags ]
     mem_flags.append("EXT_ASI")
-    flags = string.join(mem_flags, '|')
+    flags = '|'.join(mem_flags)
     (header_output,
      decoder_output,
      exec_output,
@@ -164,7 +159,7 @@ let {{
             "EA_trunc" : TruncateEA}
         exec_output = doSplitExecute(execute, name, Name, mem_flags,
                 ["IsStoreConditional"], microParams);
-        return (header_output, decoder_output, exec_output + EACompExecute.subst(iop), decode_block)
+        return (header_output, decoder_output, exec_output, decode_block)
 }};
 
 
@@ -172,12 +167,10 @@ def format CasAlt(code, postacc_code, mem_flags, *opt_flags) {{
     mem_flags = makeList(mem_flags)
     mem_flags = [ 'Request::%s' % flag for flag in mem_flags ]
     mem_flags.append("EXT_ASI")
-    flags = string.join(mem_flags, '|')
+    flags = '|'.join(mem_flags)
     (header_output,
      decoder_output,
      exec_output,
      decode_block) = doCasFormat(code, SwapFuncs, AlternateASIPrivFaultCheck,
          name, Name, flags, ["IsStoreConditional"], postacc_code)
 }};
-
-

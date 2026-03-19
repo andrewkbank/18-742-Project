@@ -23,19 +23,18 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Gabe Black
 
+from m5.objects.Device import BasicPioDevice
 from m5.params import *
 from m5.proxy import *
-from Device import BasicPioDevice
-from X86IntPin import X86IntSourcePin
+
 
 class Cmos(BasicPioDevice):
-    type = 'Cmos'
-    cxx_class='X86ISA::Cmos'
+    type = "Cmos"
+    cxx_class = "gem5::X86ISA::Cmos"
     cxx_header = "dev/x86/cmos.hh"
-    time = Param.Time('01/01/2012',
-        "System time to use ('Now' for actual time)")
-    int_pin = Param.X86IntSourcePin(X86IntSourcePin(),
-            'Pin to signal RTC alarm interrupts to')
+
+    time = Param.Time(
+        "01/01/2012", "System time to use ('Now' for actual time)"
+    )
+    int_pin = IntSourcePin("Pin to signal RTC alarm interrupts to")

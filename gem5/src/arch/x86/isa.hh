@@ -24,8 +24,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Gabe Black
  */
 
 #ifndef __ARCH_X86_ISA_HH__
@@ -34,78 +32,73 @@
 #include <iostream>
 #include <string>
 
+#include "arch/generic/isa.hh"
+#include "arch/x86/cpuid.hh"
+#include "arch/x86/pcstate.hh"
+#include "arch/x86/regs/ccr.hh"
 #include "arch/x86/regs/float.hh"
+#include "arch/x86/regs/int.hh"
 #include "arch/x86/regs/misc.hh"
-#include "arch/x86/registers.hh"
 #include "base/types.hh"
-#include "sim/sim_object.hh"
+#include "cpu/reg_class.hh"
 
-class Checkpoint;
-class EventManager;
+namespace gem5
+{
+
 class ThreadContext;
 struct X86ISAParams;
 
 namespace X86ISA
 {
-    class ISA : public SimObject
+
+class ISA : public BaseISA
+{
+  private:
+    RegVal regVal[misc_reg::NumRegs];
+    void updateHandyM5Reg(Efer efer, CR0 cr0,
+            SegAttr csAttr, SegAttr ssAttr, RFLAGS rflags);
+
+    std::string vendorString;
+
+  public:
+    void clear() override;
+
+    PCStateBase *
+    newPCState(Addr new_inst_addr=0) const override
     {
-      protected:
-        MiscReg regVal[NUM_MISCREGS];
-        void updateHandyM5Reg(Efer efer, CR0 cr0,
-                SegAttr csAttr, SegAttr ssAttr, RFLAGS rflags,
-                ThreadContext *tc);
+        return new PCState(new_inst_addr);
+    }
 
-      public:
-        typedef X86ISAParams Params;
+    using Params = X86ISAParams;
 
-        void clear();
+    ISA(const Params &p);
 
-        ISA(Params *p);
-        const Params *params() const;
+    RegVal readMiscRegNoEffect(RegIndex idx) const override;
+    RegVal readMiscReg(RegIndex idx) override;
 
-        MiscReg readMiscRegNoEffect(int miscReg) const;
-        MiscReg readMiscReg(int miscReg, ThreadContext *tc);
+    void setMiscRegNoEffect(RegIndex idx, RegVal val) override;
+    void setMiscReg(RegIndex idx, RegVal val) override;
 
-        void setMiscRegNoEffect(int miscReg, MiscReg val);
-        void setMiscReg(int miscReg, MiscReg val, ThreadContext *tc);
+    bool
+    inUserMode() const override
+    {
+        HandyM5Reg m5reg = readMiscRegNoEffect(misc_reg::M5Reg);
+        return m5reg.cpl == 3;
+    }
 
-        int
-        flattenIntIndex(int reg) const
-        {
-            return reg & ~IntFoldBit;
-        }
+    void copyRegsFrom(ThreadContext *src) override;
 
-        int
-        flattenFloatIndex(int reg) const
-        {
-            if (reg >= NUM_FLOATREGS) {
-                reg = FLOATREG_STACK(reg - NUM_FLOATREGS,
-                                     regVal[MISCREG_X87_TOP]);
-            }
-            return reg;
-        }
+    void serialize(CheckpointOut &cp) const override;
+    void unserialize(CheckpointIn &cp) override;
 
-        int
-        flattenCCIndex(int reg) const
-        {
-            return reg;
-        }
+    void setThreadContext(ThreadContext *_tc) override;
 
-        int
-        flattenMiscIndex(int reg) const
-        {
-            return reg;
-        }
+    std::string getVendorString() const;
 
-        void serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE;
-        void unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE;
+    std::unique_ptr<X86CPUID> cpuid;
+};
 
-        void startup(ThreadContext *tc);
-
-        /// Explicitly import the otherwise hidden startup
-        using SimObject::startup;
-
-    };
-}
+} // namespace X86ISA
+} // namespace gem5
 
 #endif

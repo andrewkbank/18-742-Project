@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2012 ARM Limited
+ * Copyright (c) 2011-2012, 2016-2018, 2020 ARM Limited
  * Copyright (c) 2013 Advanced Micro Devices, Inc.
  * All rights reserved
  *
@@ -37,53 +37,49 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Steve Reinhardt
- *          Nathan Binkert
  */
 
 #ifndef __CPU_SIMPLE_THREAD_HH__
 #define __CPU_SIMPLE_THREAD_HH__
 
-#include "arch/decoder.hh"
-#include "arch/isa.hh"
-#include "arch/isa_traits.hh"
-#include "arch/registers.hh"
-#include "arch/tlb.hh"
-#include "arch/types.hh"
+#include <algorithm>
+#include <vector>
+
+#include "arch/generic/htm.hh"
+#include "arch/generic/mmu.hh"
+#include "arch/generic/pcstate.hh"
+#include "arch/generic/tlb.hh"
+#include "base/logging.hh"
 #include "base/types.hh"
-#include "config/the_isa.hh"
+#include "cpu/regfile.hh"
 #include "cpu/thread_context.hh"
 #include "cpu/thread_state.hh"
 #include "debug/CCRegs.hh"
 #include "debug/FloatRegs.hh"
 #include "debug/IntRegs.hh"
+#include "debug/MatRegs.hh"
+#include "debug/VecPredRegs.hh"
+#include "debug/VecRegs.hh"
+#include "mem/htm.hh"
 #include "mem/page_table.hh"
 #include "mem/request.hh"
 #include "sim/byteswap.hh"
 #include "sim/eventq.hh"
+#include "sim/full_system.hh"
 #include "sim/process.hh"
 #include "sim/serialize.hh"
 #include "sim/system.hh"
 
+namespace gem5
+{
+
 class BaseCPU;
 class CheckerCPU;
-
-class FunctionProfile;
-class ProfileNode;
-
-namespace TheISA {
-    namespace Kernel {
-        class Statistics;
-    }
-}
 
 /**
  * The SimpleThread object provides a combination of the ThreadState
  * object and the ThreadContext interface. It implements the
- * ThreadContext interface so that a ProxyThreadContext class can be
- * made using SimpleThread as the template parameter (see
- * thread_context.hh). It adds to the ThreadState object by adding all
+ * ThreadContext interface and adds to the ThreadState object by adding all
  * the objects needed for simple functional execution, including a
  * simple architectural register file, and pointers to the ITB and DTB
  * in full system mode. For CPU models that do not need more advanced
@@ -94,69 +90,68 @@ namespace TheISA {
  * examples.
  */
 
-class SimpleThread : public ThreadState
+class SimpleThread : public ThreadState, public ThreadContext
 {
-  protected:
-    typedef TheISA::MachInst MachInst;
-    typedef TheISA::MiscReg MiscReg;
-    typedef TheISA::FloatReg FloatReg;
-    typedef TheISA::FloatRegBits FloatRegBits;
-    typedef TheISA::CCReg CCReg;
   public:
     typedef ThreadContext::Status Status;
 
   protected:
-    union {
-        FloatReg f[TheISA::NumFloatRegs];
-        FloatRegBits i[TheISA::NumFloatRegs];
-    } floatRegs;
-    TheISA::IntReg intRegs[TheISA::NumIntRegs];
-#ifdef ISA_HAS_CC_REGS
-    TheISA::CCReg ccRegs[TheISA::NumCCRegs];
-#endif
-    TheISA::ISA *const isa;    // one "instance" of the current ISA.
+    std::array<RegFile, CCRegClass + 1> regFiles;
 
-    TheISA::PCState _pcState;
+    BaseISA *const isa;    // one "instance" of the current ISA.
+
+    std::unique_ptr<PCStateBase> _pcState;
+
+    // hardware transactional memory
+    std::unique_ptr<BaseHTMCheckpoint> _htmCheckpoint;
 
     /** Did this instruction execute or is it predicated false */
     bool predicate;
 
+    /** True if the memory access should be skipped for this instruction */
+    bool memAccPredicate;
+
   public:
-    std::string name() const
+    std::string
+    name() const
     {
-        return csprintf("%s.[tid:%i]", baseCpu->name(), tc->threadId());
+        return csprintf("%s.[tid:%i]", baseCpu->name(), threadId());
     }
 
-    ProxyThreadContext<SimpleThread> *tc;
+    PCEventQueue pcEventQueue;
+    /**
+     * An instruction-based event queue. Used for scheduling events based on
+     * number of instructions committed.
+     */
+    EventQueue comInstEventQueue;
 
     System *system;
 
-    TheISA::TLB *itb;
-    TheISA::TLB *dtb;
+    BaseMMU *mmu;
 
-    TheISA::Decoder decoder;
+    InstDecoder *decoder;
+
+    // hardware transactional memory
+    int64_t htmTransactionStarts;
+    int64_t htmTransactionStops;
 
     // constructor: initialize SimpleThread from given process structure
     // FS
     SimpleThread(BaseCPU *_cpu, int _thread_num, System *_system,
-                 TheISA::TLB *_itb, TheISA::TLB *_dtb, TheISA::ISA *_isa,
-                 bool use_kernel_stats = true);
+                 BaseMMU *_mmu, BaseISA *_isa, InstDecoder *_decoder);
     // SE
     SimpleThread(BaseCPU *_cpu, int _thread_num, System *_system,
-                 Process *_process, TheISA::TLB *_itb, TheISA::TLB *_dtb,
-                 TheISA::ISA *_isa);
+                 Process *_process, BaseMMU *_mmu,
+                 BaseISA *_isa, InstDecoder *_decoder);
 
-    virtual ~SimpleThread();
+    virtual ~SimpleThread() {}
 
-    virtual void takeOverFrom(ThreadContext *oldContext);
-
-    void regStats(const std::string &name);
+    void takeOverFrom(ThreadContext *oldContext) override;
 
     void copyState(ThreadContext *oldContext);
 
-    void serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE;
-    void unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE;
-    void startup();
+    void serialize(CheckpointOut &cp) const override;
+    void unserialize(CheckpointIn &cp) override;
 
     /***************************************************************
      *  SimpleThread functions to provide CPU with access to various
@@ -167,290 +162,237 @@ class SimpleThread : public ThreadState
      *  when a ThreadContext must be passed to objects outside of the
      *  CPU.
      */
-    ThreadContext *getTC() { return tc; }
+    ThreadContext *getTC() { return this; }
 
-    void demapPage(Addr vaddr, uint64_t asn)
+    void
+    demapPage(Addr vaddr, uint64_t asn)
     {
-        itb->demapPage(vaddr, asn);
-        dtb->demapPage(vaddr, asn);
+        mmu->demapPage(vaddr, asn);
     }
-
-    void demapInstPage(Addr vaddr, uint64_t asn)
-    {
-        itb->demapPage(vaddr, asn);
-    }
-
-    void demapDataPage(Addr vaddr, uint64_t asn)
-    {
-        dtb->demapPage(vaddr, asn);
-    }
-
-    void dumpFuncProfile();
-
-    Fault hwrei();
-
-    bool simPalCheck(int palFunc);
 
     /*******************************************
      * ThreadContext interface functions.
      ******************************************/
 
-    BaseCPU *getCpuPtr() { return baseCpu; }
+    bool schedule(PCEvent *e) override { return pcEventQueue.schedule(e); }
+    bool remove(PCEvent *e) override { return pcEventQueue.remove(e); }
 
-    TheISA::TLB *getITBPtr() { return itb; }
+    void
+    scheduleInstCountEvent(Event *event, Tick count) override
+    {
+        comInstEventQueue.schedule(event, count);
+    }
+    void
+    descheduleInstCountEvent(Event *event) override
+    {
+        comInstEventQueue.deschedule(event);
+    }
+    Tick
+    getCurrentInstCount() override
+    {
+        return comInstEventQueue.getCurTick();
+    }
 
-    TheISA::TLB *getDTBPtr() { return dtb; }
+    BaseCPU *getCpuPtr() override { return baseCpu; }
 
-    CheckerCPU *getCheckerCpuPtr() { return NULL; }
+    int cpuId() const override { return ThreadState::cpuId(); }
+    uint32_t socketId() const override { return ThreadState::socketId(); }
+    int threadId() const override { return ThreadState::threadId(); }
+    void setThreadId(int id) override { ThreadState::setThreadId(id); }
+    ContextID contextId() const override { return ThreadState::contextId(); }
+    void setContextId(ContextID id) override { ThreadState::setContextId(id); }
 
-    TheISA::Decoder *getDecoderPtr() { return &decoder; }
+    BaseMMU *getMMUPtr() override { return mmu; }
 
-    System *getSystemPtr() { return system; }
+    CheckerCPU *getCheckerCpuPtr() override { return NULL; }
 
-    Status status() const { return _status; }
+    BaseISA *getIsaPtr() const override { return isa; }
 
-    void setStatus(Status newStatus) { _status = newStatus; }
+    InstDecoder *getDecoderPtr() override { return decoder; }
+
+    System *getSystemPtr() override { return system; }
+
+    Process *getProcessPtr() override { return ThreadState::getProcessPtr(); }
+    void setProcessPtr(Process *p) override { ThreadState::setProcessPtr(p); }
+
+    Status status() const override { return _status; }
+
+    void setStatus(Status newStatus) override { _status = newStatus; }
 
     /// Set the status to Active.
-    void activate();
+    void activate() override;
 
     /// Set the status to Suspended.
-    void suspend();
+    void suspend() override;
 
     /// Set the status to Halted.
-    void halt();
+    void halt() override;
 
-    void copyArchRegs(ThreadContext *tc);
-
-    void clearArchRegs()
+    Tick
+    readLastActivate() override
     {
-        _pcState = 0;
-        memset(intRegs, 0, sizeof(intRegs));
-        memset(floatRegs.i, 0, sizeof(floatRegs.i));
-#ifdef ISA_HAS_CC_REGS
-        memset(ccRegs, 0, sizeof(ccRegs));
-#endif
+        return ThreadState::readLastActivate();
+    }
+    Tick
+    readLastSuspend() override
+    {
+        return ThreadState::readLastSuspend();
+    }
+
+    void copyArchRegs(ThreadContext *tc) override;
+
+    void
+    clearArchRegs() override
+    {
+        set(_pcState, isa->newPCState());
+        for (auto &rf: regFiles)
+            rf.clear();
         isa->clear();
     }
 
     //
     // New accessors for new decoder.
     //
-    uint64_t readIntReg(int reg_idx)
-    {
-        int flatIndex = isa->flattenIntIndex(reg_idx);
-        assert(flatIndex < TheISA::NumIntRegs);
-        uint64_t regVal(readIntRegFlat(flatIndex));
-        DPRINTF(IntRegs, "Reading int reg %d (%d) as %#x.\n",
-                reg_idx, flatIndex, regVal);
-        return regVal;
-    }
-
-    FloatReg readFloatReg(int reg_idx)
-    {
-        int flatIndex = isa->flattenFloatIndex(reg_idx);
-        assert(flatIndex < TheISA::NumFloatRegs);
-        FloatReg regVal(readFloatRegFlat(flatIndex));
-        DPRINTF(FloatRegs, "Reading float reg %d (%d) as %f, %#x.\n",
-                reg_idx, flatIndex, regVal, floatRegs.i[flatIndex]);
-        return regVal;
-    }
-
-    FloatRegBits readFloatRegBits(int reg_idx)
-    {
-        int flatIndex = isa->flattenFloatIndex(reg_idx);
-        assert(flatIndex < TheISA::NumFloatRegs);
-        FloatRegBits regVal(readFloatRegBitsFlat(flatIndex));
-        DPRINTF(FloatRegs, "Reading float reg %d (%d) bits as %#x, %f.\n",
-                reg_idx, flatIndex, regVal, floatRegs.f[flatIndex]);
-        return regVal;
-    }
-
-    CCReg readCCReg(int reg_idx)
-    {
-#ifdef ISA_HAS_CC_REGS
-        int flatIndex = isa->flattenCCIndex(reg_idx);
-        assert(0 <= flatIndex);
-        assert(flatIndex < TheISA::NumCCRegs);
-        uint64_t regVal(readCCRegFlat(flatIndex));
-        DPRINTF(CCRegs, "Reading CC reg %d (%d) as %#x.\n",
-                reg_idx, flatIndex, regVal);
-        return regVal;
-#else
-        panic("Tried to read a CC register.");
-        return 0;
-#endif
-    }
-
-    void setIntReg(int reg_idx, uint64_t val)
-    {
-        int flatIndex = isa->flattenIntIndex(reg_idx);
-        assert(flatIndex < TheISA::NumIntRegs);
-        DPRINTF(IntRegs, "Setting int reg %d (%d) to %#x.\n",
-                reg_idx, flatIndex, val);
-        setIntRegFlat(flatIndex, val);
-    }
-
-    void setFloatReg(int reg_idx, FloatReg val)
-    {
-        int flatIndex = isa->flattenFloatIndex(reg_idx);
-        assert(flatIndex < TheISA::NumFloatRegs);
-        setFloatRegFlat(flatIndex, val);
-        DPRINTF(FloatRegs, "Setting float reg %d (%d) to %f, %#x.\n",
-                reg_idx, flatIndex, val, floatRegs.i[flatIndex]);
-    }
-
-    void setFloatRegBits(int reg_idx, FloatRegBits val)
-    {
-        int flatIndex = isa->flattenFloatIndex(reg_idx);
-        assert(flatIndex < TheISA::NumFloatRegs);
-        // XXX: Fix array out of bounds compiler error for gem5.fast
-        // when checkercpu enabled
-        if (flatIndex < TheISA::NumFloatRegs)
-            setFloatRegBitsFlat(flatIndex, val);
-        DPRINTF(FloatRegs, "Setting float reg %d (%d) bits to %#x, %#f.\n",
-                reg_idx, flatIndex, val, floatRegs.f[flatIndex]);
-    }
-
-    void setCCReg(int reg_idx, CCReg val)
-    {
-#ifdef ISA_HAS_CC_REGS
-        int flatIndex = isa->flattenCCIndex(reg_idx);
-        assert(flatIndex < TheISA::NumCCRegs);
-        DPRINTF(CCRegs, "Setting CC reg %d (%d) to %#x.\n",
-                reg_idx, flatIndex, val);
-        setCCRegFlat(flatIndex, val);
-#else
-        panic("Tried to set a CC register.");
-#endif
-    }
-
-    TheISA::PCState
-    pcState()
-    {
-        return _pcState;
-    }
+    const PCStateBase &pcState() const override { return *_pcState; }
+    void pcState(const PCStateBase &val) override { set(_pcState, val); }
 
     void
-    pcState(const TheISA::PCState &val)
+    pcStateNoRecord(const PCStateBase &val) override
     {
-        _pcState = val;
+        set(_pcState, val);
     }
 
-    void
-    pcStateNoRecord(const TheISA::PCState &val)
-    {
-        _pcState = val;
-    }
+    bool readPredicate() const { return predicate; }
+    void setPredicate(bool val) { predicate = val; }
 
-    Addr
-    instAddr()
-    {
-        return _pcState.instAddr();
-    }
-
-    Addr
-    nextInstAddr()
-    {
-        return _pcState.nextInstAddr();
-    }
-
-    MicroPC
-    microPC()
-    {
-        return _pcState.microPC();
-    }
-
-    bool readPredicate()
-    {
-        return predicate;
-    }
-
-    void setPredicate(bool val)
-    {
-        predicate = val;
-    }
-
-    MiscReg
-    readMiscRegNoEffect(int misc_reg, ThreadID tid = 0) const
+    RegVal
+    readMiscRegNoEffect(RegIndex misc_reg) const override
     {
         return isa->readMiscRegNoEffect(misc_reg);
     }
 
-    MiscReg
-    readMiscReg(int misc_reg, ThreadID tid = 0)
+    RegVal
+    readMiscReg(RegIndex misc_reg) override
     {
-        return isa->readMiscReg(misc_reg, tc);
+        return isa->readMiscReg(misc_reg);
     }
 
     void
-    setMiscRegNoEffect(int misc_reg, const MiscReg &val, ThreadID tid = 0)
+    setMiscRegNoEffect(RegIndex misc_reg, RegVal val) override
     {
         return isa->setMiscRegNoEffect(misc_reg, val);
     }
 
     void
-    setMiscReg(int misc_reg, const MiscReg &val, ThreadID tid = 0)
+    setMiscReg(RegIndex misc_reg, RegVal val) override
     {
-        return isa->setMiscReg(misc_reg, val, tc);
+        return isa->setMiscReg(misc_reg, val);
     }
 
-    int
-    flattenIntIndex(int reg)
+    unsigned readStCondFailures() const override { return storeCondFailures; }
+
+    bool
+    readMemAccPredicate()
     {
-        return isa->flattenIntIndex(reg);
+        return memAccPredicate;
     }
 
-    int
-    flattenFloatIndex(int reg)
+    void
+    setMemAccPredicate(bool val)
     {
-        return isa->flattenFloatIndex(reg);
+        memAccPredicate = val;
     }
 
-    int
-    flattenCCIndex(int reg)
+    void
+    setStCondFailures(unsigned sc_failures) override
     {
-        return isa->flattenCCIndex(reg);
+        storeCondFailures = sc_failures;
     }
 
-    int
-    flattenMiscIndex(int reg)
+    RegVal
+    getReg(const RegId &arch_reg) const override
     {
-        return isa->flattenMiscIndex(reg);
+        const RegId reg = arch_reg.flatten(*isa);
+
+        const RegIndex idx = reg.index();
+
+        const auto &reg_file = regFiles[reg.classValue()];
+        const auto &reg_class = reg_file.regClass;
+
+        RegVal val = reg_file.reg(idx);
+        DPRINTFV(reg_class.debug(), "Reading %s reg %s (%d) as %#x.\n",
+                reg.className(), reg_class.regName(arch_reg), idx, val);
+        return val;
     }
 
-    unsigned readStCondFailures() { return storeCondFailures; }
-
-    void setStCondFailures(unsigned sc_failures)
-    { storeCondFailures = sc_failures; }
-
-    void syscall(int64_t callnum)
+    void
+    getReg(const RegId &arch_reg, void *val) const override
     {
-        process->syscall(callnum, tc);
+        const RegId reg = arch_reg.flatten(*isa);
+
+        const RegIndex idx = reg.index();
+
+        const auto &reg_file = regFiles[reg.classValue()];
+        const auto &reg_class = reg_file.regClass;
+
+        reg_file.get(idx, val);
+        DPRINTFV(reg_class.debug(), "Reading %s register %s (%d) as %s.\n",
+                reg.className(), reg_class.regName(arch_reg), idx,
+                reg_class.valString(val));
     }
 
-    uint64_t readIntRegFlat(int idx) { return intRegs[idx]; }
-    void setIntRegFlat(int idx, uint64_t val) { intRegs[idx] = val; }
+    void *
+    getWritableReg(const RegId &arch_reg) override
+    {
+        const RegId reg = arch_reg.flatten(*isa);
+        const RegIndex idx = reg.index();
+        auto &reg_file = regFiles[reg.classValue()];
 
-    FloatReg readFloatRegFlat(int idx) { return floatRegs.f[idx]; }
-    void setFloatRegFlat(int idx, FloatReg val) { floatRegs.f[idx] = val; }
-
-    FloatRegBits readFloatRegBitsFlat(int idx) { return floatRegs.i[idx]; }
-    void setFloatRegBitsFlat(int idx, FloatRegBits val) {
-        floatRegs.i[idx] = val;
+        return reg_file.ptr(idx);
     }
 
-#ifdef ISA_HAS_CC_REGS
-    CCReg readCCRegFlat(int idx) { return ccRegs[idx]; }
-    void setCCRegFlat(int idx, CCReg val) { ccRegs[idx] = val; }
-#else
-    CCReg readCCRegFlat(int idx)
-    { panic("readCCRegFlat w/no CC regs!\n"); }
+    void
+    setReg(const RegId &arch_reg, RegVal val) override
+    {
+        const RegId reg = arch_reg.flatten(*isa);
 
-    void setCCRegFlat(int idx, CCReg val)
-    { panic("setCCRegFlat w/no CC regs!\n"); }
-#endif
+        if (reg.is(InvalidRegClass))
+            return;
+
+        const RegIndex idx = reg.index();
+
+        auto &reg_file = regFiles[reg.classValue()];
+        const auto &reg_class = reg_file.regClass;
+
+        DPRINTFV(reg_class.debug(), "Setting %s register %s (%d) to %#x.\n",
+                reg.className(), reg_class.regName(arch_reg), idx, val);
+        reg_file.reg(idx) = val;
+    }
+
+    void
+    setReg(const RegId &arch_reg, const void *val) override
+    {
+        const RegId reg = arch_reg.flatten(*isa);
+
+        const RegIndex idx = reg.index();
+
+        auto &reg_file = regFiles[reg.classValue()];
+        const auto &reg_class = reg_file.regClass;
+
+        DPRINTFV(reg_class.debug(), "Setting %s register %s (%d) to %s.\n",
+                reg.className(), reg_class.regName(arch_reg), idx,
+                reg_class.valString(val));
+        reg_file.set(idx, val);
+    }
+
+    // hardware transactional memory
+    void htmAbortTransaction(uint64_t htm_uid,
+                             HtmFailureFaultCause cause) override;
+
+    BaseHTMCheckpointPtr& getHtmCheckpointPtr() override;
+    void setHtmCheckpointPtr(BaseHTMCheckpointPtr new_cpt) override;
 };
 
+} // namespace gem5
 
-#endif // __CPU_CPU_EXEC_CONTEXT_HH__
+#endif // __CPU_SIMPLE_THREAD_HH__

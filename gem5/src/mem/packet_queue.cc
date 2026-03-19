@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012,2015 ARM Limited
+ * Copyright (c) 2012,2015,2018-2020 ARM Limited
  * All rights reserved.
  *
  * The license below extends only to copyright in the software and shall
@@ -36,21 +36,25 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Ali Saidi
- *          Andreas Hansson
  */
+
+#include "mem/packet_queue.hh"
 
 #include "base/trace.hh"
 #include "debug/Drain.hh"
 #include "debug/PacketQueue.hh"
-#include "mem/packet_queue.hh"
 
-using namespace std;
+namespace gem5
+{
 
-PacketQueue::PacketQueue(EventManager& _em, const std::string& _label)
-    : em(_em), sendEvent(this), label(_label),
-      waitingOnRetry(false)
+PacketQueue::PacketQueue(EventManager& _em, const std::string& _label,
+                         const std::string& _sendEventName,
+                         bool force_order,
+                         bool disable_sanity_check)
+    : em(_em), sendEvent([this]{ processSendEvent(); }, _sendEventName),
+      _disableSanityCheck(disable_sanity_check),
+      forceOrder(force_order),
+      label(_label), waitingOnRetry(false)
 {
 }
 
@@ -68,19 +72,19 @@ PacketQueue::retry()
 }
 
 bool
-PacketQueue::hasAddr(Addr addr) const
+PacketQueue::checkConflict(const PacketPtr pkt, const int blk_size) const
 {
     // caller is responsible for ensuring that all packets have the
     // same alignment
     for (const auto& p : transmitList) {
-        if (p.pkt->getAddr() == addr)
+        if (p.pkt->matchBlockAddr(pkt, blk_size))
             return true;
     }
     return false;
 }
 
 bool
-PacketQueue::checkFunctional(PacketPtr pkt)
+PacketQueue::trySatisfyFunctional(PacketPtr pkt)
 {
     pkt->pushLabel(label);
 
@@ -90,7 +94,7 @@ PacketQueue::checkFunctional(PacketPtr pkt)
     while (!found && i != transmitList.end()) {
         // If the buffered packet contains data, and it overlaps the
         // current packet, then update data
-        found = pkt->checkFunctional(i->pkt);
+        found = pkt->trySatisfyFunctional(i->pkt);
         ++i;
     }
 
@@ -100,11 +104,11 @@ PacketQueue::checkFunctional(PacketPtr pkt)
 }
 
 void
-PacketQueue::schedSendTiming(PacketPtr pkt, Tick when, bool force_order)
+PacketQueue::schedSendTiming(PacketPtr pkt, Tick when)
 {
     DPRINTF(PacketQueue, "%s for %s address %x size %d when %lu ord: %i\n",
             __func__, pkt->cmdString(), pkt->getAddr(), pkt->getSize(), when,
-            force_order);
+            forceOrder);
 
     // we can still send a packet before the end of this tick
     assert(when >= curTick());
@@ -114,37 +118,9 @@ PacketQueue::schedSendTiming(PacketPtr pkt, Tick when, bool force_order)
 
     // add a very basic sanity check on the port to ensure the
     // invisible buffer is not growing beyond reasonable limits
-    if (transmitList.size() > 100) {
-        panic("Packet queue %s has grown beyond 100 packets\n",
+    if (!_disableSanityCheck && transmitList.size() > 1024) {
+        panic("Packet queue %s has grown beyond 1024 packets\n",
               name());
-    }
-
-    // if requested, force the timing to be in-order by changing the when
-    // parameter
-    if (force_order && !transmitList.empty()) {
-        Tick back = transmitList.back().tick;
-
-        // fudge timing if required; relies on the code below to do the right
-        // thing (push_back) with the updated time-stamp
-        if (when < back) {
-            DPRINTF(PacketQueue, "%s force_order shifted packet %s address "\
-                    "%x from %lu to %lu\n", __func__, pkt->cmdString(),
-                    pkt->getAddr(), when, back);
-            when = back;
-        }
-    }
-
-    // nothing on the list, or earlier than current front element,
-    // schedule an event
-    if (transmitList.empty() || when < transmitList.front().tick) {
-        // force_order-ed in here only when list is empty
-        assert(!force_order || transmitList.empty());
-        // note that currently we ignore a potentially outstanding retry
-        // and could in theory put a new packet at the head of the
-        // transmit list before retrying the existing packet
-        transmitList.emplace_front(when, pkt);
-        schedSendEvent(when);
-        return;
     }
 
     // we should either have an outstanding retry, or a send event
@@ -155,21 +131,24 @@ PacketQueue::schedSendTiming(PacketPtr pkt, Tick when, bool force_order)
     // ourselves again before we had a chance to update waitingOnRetry
     // assert(waitingOnRetry || sendEvent.scheduled());
 
-    // list is non-empty and this belongs at the end
-    if (when >= transmitList.back().tick) {
-        transmitList.emplace_back(when, pkt);
-        return;
+    // this belongs in the middle somewhere, so search from the end to
+    // order by tick; however, if forceOrder is set, also make sure
+    // not to re-order in front of some existing packet with the same
+    // address
+    auto it = transmitList.end();
+    while (it != transmitList.begin()) {
+        --it;
+        if ((forceOrder && it->pkt->matchAddr(pkt)) || it->tick <= when) {
+            // emplace inserts the element before the position pointed to by
+            // the iterator, so advance it one step
+            transmitList.emplace(++it, when, pkt);
+            return;
+        }
     }
-
-    // forced orders never need insertion in the middle
-    assert(!force_order);
-
-    // this belongs in the middle somewhere, insertion sort
-    auto i = transmitList.begin();
-    ++i; // already checked for insertion at front
-    while (i != transmitList.end() && when >= i->tick)
-        ++i;
-    transmitList.emplace(i, when, pkt);
+    // either the packet list is empty or this has to be inserted
+    // before every other packet
+    transmitList.emplace_front(when, pkt);
+    schedSendEvent(when);
 }
 
 void
@@ -256,39 +235,47 @@ PacketQueue::drain()
     }
 }
 
-ReqPacketQueue::ReqPacketQueue(EventManager& _em, MasterPort& _masterPort,
+ReqPacketQueue::ReqPacketQueue(EventManager& _em, RequestPort& _mem_side_port,
                                const std::string _label)
-    : PacketQueue(_em, _label), masterPort(_masterPort)
+    : PacketQueue(_em, _label, name(_mem_side_port, _label)),
+      memSidePort(_mem_side_port)
 {
 }
 
 bool
 ReqPacketQueue::sendTiming(PacketPtr pkt)
 {
-    return masterPort.sendTimingReq(pkt);
+    return memSidePort.sendTimingReq(pkt);
 }
 
 SnoopRespPacketQueue::SnoopRespPacketQueue(EventManager& _em,
-                                           MasterPort& _masterPort,
+                                           RequestPort& _mem_side_port,
+                                           bool force_order,
                                            const std::string _label)
-    : PacketQueue(_em, _label), masterPort(_masterPort)
+    : PacketQueue(_em, _label, name(_mem_side_port, _label), force_order),
+      memSidePort(_mem_side_port)
 {
 }
 
 bool
 SnoopRespPacketQueue::sendTiming(PacketPtr pkt)
 {
-    return masterPort.sendTimingSnoopResp(pkt);
+    return memSidePort.sendTimingSnoopResp(pkt);
 }
 
-RespPacketQueue::RespPacketQueue(EventManager& _em, SlavePort& _slavePort,
+RespPacketQueue::RespPacketQueue(EventManager& _em,
+                                 ResponsePort& _cpu_side_port,
+                                 bool force_order,
                                  const std::string _label)
-    : PacketQueue(_em, _label), slavePort(_slavePort)
+    : PacketQueue(_em, _label, name(_cpu_side_port, _label), force_order),
+      cpuSidePort(_cpu_side_port)
 {
 }
 
 bool
 RespPacketQueue::sendTiming(PacketPtr pkt)
 {
-    return slavePort.sendTimingResp(pkt);
+    return cpuSidePort.sendTimingResp(pkt);
 }
+
+} // namespace gem5

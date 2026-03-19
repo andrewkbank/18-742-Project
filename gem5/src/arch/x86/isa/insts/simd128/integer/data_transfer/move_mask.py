@@ -32,13 +32,11 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Gabe Black
 
-microcode = '''
+microcode = """
 def macroop PMOVMSKB_R_XMM {
     limm reg, 0
     movsign reg, xmmlm, size=1, ext=0
     movsign reg, xmmhm, size=1, ext=1
 };
-'''
+"""

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2014 ARM Limited
+ * Copyright (c) 2012-2014, 2023-2024 ARM Limited
  * All rights reserved.
  *
  * The license below extends only to copyright in the software and shall
@@ -36,163 +36,85 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Erik Hallnor
  */
 
 /**
  * @file
- * Definitions of a base set associative tag store.
+ * Definitions of a conventional tag store.
  */
+
+#include "mem/cache/tags/base_set_assoc.hh"
 
 #include <string>
 
 #include "base/intmath.hh"
-#include "mem/cache/tags/base_set_assoc.hh"
-#include "sim/core.hh"
 
-using namespace std;
-
-BaseSetAssoc::BaseSetAssoc(const Params *p)
-    :BaseTags(p), assoc(p->assoc), allocAssoc(p->assoc),
-     numSets(p->size / (p->block_size * p->assoc)),
-     sequentialAccess(p->sequential_access)
+namespace gem5
 {
+
+BaseSetAssoc::BaseSetAssoc(const Params &p)
+    :BaseTags(p), allocAssoc(p.assoc), blks(p.size / p.block_size),
+     sequentialAccess(p.sequential_access),
+     replacementPolicy(p.replacement_policy)
+{
+    // There must be a indexing policy
+    fatal_if(!p.indexing_policy, "An indexing policy is required");
+
     // Check parameters
     if (blkSize < 4 || !isPowerOf2(blkSize)) {
         fatal("Block size must be at least 4 and a power of 2");
     }
-    if (numSets <= 0 || !isPowerOf2(numSets)) {
-        fatal("# of sets must be non-zero and a power of 2");
-    }
-    if (assoc <= 0) {
-        fatal("associativity must be greater than zero");
-    }
-
-    blkMask = blkSize - 1;
-    setShift = floorLog2(blkSize);
-    setMask = numSets - 1;
-    tagShift = setShift + floorLog2(numSets);
-    /** @todo Make warmup percentage a parameter. */
-    warmupBound = numSets * assoc;
-
-    sets = new SetType[numSets];
-    blks = new BlkType[numSets * assoc];
-    // allocate data storage in one big chunk
-    numBlocks = numSets * assoc;
-    dataBlks = new uint8_t[numBlocks * blkSize];
-
-    unsigned blkIndex = 0;       // index into blks array
-    for (unsigned i = 0; i < numSets; ++i) {
-        sets[i].assoc = assoc;
-
-        sets[i].blks = new BlkType*[assoc];
-
-        // link in the data blocks
-        for (unsigned j = 0; j < assoc; ++j) {
-            // locate next cache block
-            BlkType *blk = &blks[blkIndex];
-            blk->data = &dataBlks[blkSize*blkIndex];
-            ++blkIndex;
-
-            // invalidate new cache block
-            blk->invalidate();
-
-            //EGH Fix Me : do we need to initialize blk?
-
-            // Setting the tag to j is just to prevent long chains in the hash
-            // table; won't matter because the block is invalid
-            blk->tag = j;
-            blk->whenReady = 0;
-            blk->isTouched = false;
-            blk->size = blkSize;
-            sets[i].blks[j]=blk;
-            blk->set = i;
-            blk->way = j;
-        }
-    }
-}
-
-BaseSetAssoc::~BaseSetAssoc()
-{
-    delete [] dataBlks;
-    delete [] blks;
-    delete [] sets;
-}
-
-CacheBlk*
-BaseSetAssoc::findBlock(Addr addr, bool is_secure) const
-{
-    Addr tag = extractTag(addr);
-    unsigned set = extractSet(addr);
-    BlkType *blk = sets[set].findBlk(tag, is_secure);
-    return blk;
-}
-
-CacheBlk*
-BaseSetAssoc::findBlockBySetAndWay(int set, int way) const
-{
-    return sets[set].blks[way];
-}
-
-std::string
-BaseSetAssoc::print() const {
-    std::string cache_state;
-    for (unsigned i = 0; i < numSets; ++i) {
-        // link in the data blocks
-        for (unsigned j = 0; j < assoc; ++j) {
-            BlkType *blk = sets[i].blks[j];
-            if (blk->isValid())
-                cache_state += csprintf("\tset: %d block: %d %s\n", i, j,
-                        blk->print());
-        }
-    }
-    if (cache_state.empty())
-        cache_state = "no valid tags\n";
-    return cache_state;
 }
 
 void
-BaseSetAssoc::cleanupRefs()
+BaseSetAssoc::tagsInit()
 {
-    for (unsigned i = 0; i < numSets*assoc; ++i) {
-        if (blks[i].isValid()) {
-            totalRefs += blks[i].refCount;
-            ++sampledRefs;
-        }
+    // Initialize all blocks
+    for (unsigned blk_index = 0; blk_index < numBlocks; blk_index++) {
+        // Locate next cache block
+        CacheBlk* blk = &blks[blk_index];
+
+        // Link block to indexing policy
+        indexingPolicy->setEntry(blk, blk_index);
+
+        // Associate a data chunk to the block
+        blk->data = &dataBlks[blkSize*blk_index];
+
+        // Associate a replacement data entry to the block
+        blk->replacementData = replacementPolicy->instantiateEntry();
+
+        // This is not used as of now but we set it for security
+        blk->registerTagExtractor(genTagExtractor(indexingPolicy));
     }
 }
 
 void
-BaseSetAssoc::computeStats()
+BaseSetAssoc::invalidate(CacheBlk *blk)
 {
-    for (unsigned i = 0; i < ContextSwitchTaskId::NumTaskId; ++i) {
-        occupanciesTaskId[i] = 0;
-        for (unsigned j = 0; j < 5; ++j) {
-            ageTaskId[i][j] = 0;
-        }
+    // Notify partitioning policies of release of ownership
+    if (partitionManager) {
+        partitionManager->notifyRelease(blk->getPartitionId());
     }
 
-    for (unsigned i = 0; i < numSets * assoc; ++i) {
-        if (blks[i].isValid()) {
-            assert(blks[i].task_id < ContextSwitchTaskId::NumTaskId);
-            occupanciesTaskId[blks[i].task_id]++;
-            assert(blks[i].tickInserted <= curTick());
-            Tick age = curTick() - blks[i].tickInserted;
+    BaseTags::invalidate(blk);
 
-            int age_index;
-            if (age / SimClock::Int::us < 10) { // <10us
-                age_index = 0;
-            } else if (age / SimClock::Int::us < 100) { // <100us
-                age_index = 1;
-            } else if (age / SimClock::Int::ms < 1) { // <1ms
-                age_index = 2;
-            } else if (age / SimClock::Int::ms < 10) { // <10ms
-                age_index = 3;
-            } else
-                age_index = 4; // >10ms
+    // Decrease the number of tags in use
+    stats.tagsInUse--;
 
-            ageTaskId[blks[i].task_id][age_index]++;
-        }
-    }
+    // Invalidate replacement data
+    replacementPolicy->invalidate(blk->replacementData);
 }
+
+void
+BaseSetAssoc::moveBlock(CacheBlk *src_blk, CacheBlk *dest_blk)
+{
+    BaseTags::moveBlock(src_blk, dest_blk);
+
+    // Since the blocks were using different replacement data pointers,
+    // we must touch the replacement data of the new entry, and invalidate
+    // the one that is being moved.
+    replacementPolicy->invalidate(src_blk->replacementData);
+    replacementPolicy->reset(dest_blk->replacementData);
+}
+
+} // namespace gem5

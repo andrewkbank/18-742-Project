@@ -24,10 +24,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Ali Saidi
- *          Miguel Serrano
- *          Nathan Binkert
  */
 
 static const int RTC_SEC = 0x00;
@@ -56,4 +52,3 @@ static const int RTC_STAT_REGB = 0x0B;
 
 static const int RTC_STAT_REGC = 0x0C;
 static const int RTC_STAT_REGD = 0x0D;
-

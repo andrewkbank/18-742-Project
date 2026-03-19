@@ -1,4 +1,16 @@
 /*
+ * Copyright (c) 2017 ARM Limited
+ * All rights reserved
+ *
+ * The license below extends only to copyright in the software and shall
+ * not be construed as granting a license to any other intellectual
+ * property including but not limited to intellectual property relating
+ * to a hardware implementation of the functionality of the software
+ * licensed hereunder.  You may use the software subject to the license
+ * terms below provided that you ensure that this notice is replicated
+ * unmodified and in its entirety in all distributions of the software,
+ * modified or unmodified, in source code or in binary form.
+ *
  * Copyright (c) 2008 The Hewlett-Packard Development Company
  * All rights reserved.
  *
@@ -24,60 +36,53 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nathan Binkert
  */
 
 #ifndef __SIM_INIT_HH__
 #define __SIM_INIT_HH__
 
-#include <Python.h>
+#include "pybind11/pybind11.h"
 
-/*
- * Data structure describing an embedded python file.
- */
 #include <list>
+#include <map>
+#include <string>
 
-#include <inttypes.h>
-
-#ifndef PyObject_HEAD
-struct _object;
-typedef _object PyObject;
-#endif
-
-struct EmbeddedPython
+namespace gem5
 {
-    const char *filename;
-    const char *abspath;
-    const char *modpath;
-    const uint8_t *code;
-    int zlen;
-    int len;
 
-    EmbeddedPython(const char *filename, const char *abspath,
-                   const char *modpath, const uint8_t *code, int zlen, int len);
+class EmbeddedPyBind
+{
+  public:
+    EmbeddedPyBind(const char *_name,
+                   void (*init_func)(pybind11::module_ &),
+                   const char *_base);
 
-    PyObject *getCode() const;
-    bool addModule() const;
+    EmbeddedPyBind(const char *_name,
+                   void (*init_func)(pybind11::module_ &));
 
-    static EmbeddedPython *importer;
-    static PyObject *importerModule;
-    static std::list<EmbeddedPython *> &getList();
-    static int initAll();
+    static void initAll(pybind11::module_ &_m5);
+
+  private:
+    void (*initFunc)(pybind11::module_ &);
+
+    void init();
+
+    bool registered = false;
+    const std::string name;
+    const std::string base;
+
+    // The _m5 module.
+    static pybind11::module_ *mod;
+
+    // A map from initialized module names to their descriptors.
+    static std::map<std::string, EmbeddedPyBind *> &getReady();
+    // A map to pending modules from the name of what they're waiting on.
+    static std::multimap<std::string, EmbeddedPyBind *> &getPending();
+
+    // Initialize all modules waiting on "finished".
+    static void initPending(const std::string &finished);
 };
 
-struct EmbeddedSwig
-{
-    void (*initFunc)();
-
-    EmbeddedSwig(void (*init_func)());
-
-    static std::list<EmbeddedSwig *> &getList();
-    static void initAll();
-};
-
-int initM5Python();
-int m5Main(int argc, char **argv);
-PyMODINIT_FUNC initm5(void);
+} // namespace gem5
 
 #endif // __SIM_INIT_HH__

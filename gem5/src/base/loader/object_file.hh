@@ -1,4 +1,16 @@
 /*
+ * Copyright (c) 2022 Arm Limited
+ * All rights reserved
+ *
+ * The license below extends only to copyright in the software and shall
+ * not be construed as granting a license to any other intellectual
+ * property including but not limited to intellectual property relating
+ * to a hardware implementation of the functionality of the software
+ * licensed hereunder.  You may use the software subject to the license
+ * terms below provided that you ensure that this notice is replicated
+ * unmodified and in its entirety in all distributions of the software,
+ * modified or unmodified, in source code or in binary form.
+ *
  * Copyright (c) 2002-2004 The Regents of The University of Michigan
  * All rights reserved.
  *
@@ -24,123 +36,126 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nathan Binkert
- *          Steve Reinhardt
  */
 
-#ifndef __OBJECT_FILE_HH__
-#define __OBJECT_FILE_HH__
+#ifndef __BASE_LOADER_OBJECT_FILE_HH__
+#define __BASE_LOADER_OBJECT_FILE_HH__
 
-#include <limits>
 #include <string>
 
+#include "base/compiler.hh"
+#include "base/loader/image_file.hh"
+#include "base/loader/image_file_data.hh"
+#include "base/loader/memory_image.hh"
+#include "base/loader/symtab.hh"
+#include "base/logging.hh"
 #include "base/types.hh"
+#include "enums/ByteOrder.hh"
 
-class PortProxy;
+namespace gem5
+{
+
+namespace loader
+{
+
+enum Arch
+{
+    UnknownArch,
+    SPARC64,
+    SPARC32,
+    Mips,
+    X86_64,
+    I386,
+    Arm64,
+    Arm,
+    Thumb,
+    Power,
+    Power64,
+    Riscv64,
+    Riscv32
+};
+
+const char *archToString(Arch arch);
+
+enum OpSys
+{
+    UnknownOpSys,
+    Tru64,
+    Linux,
+    Solaris,
+    LinuxArmOABI,
+    LinuxPower64ABIv1,
+    LinuxPower64ABIv2,
+    FreeBSD
+};
+
+const char *opSysToString(OpSys op_sys);
+
 class SymbolTable;
 
-class ObjectFile
+class ObjectFile : public ImageFile
 {
-  public:
-
-    enum Arch {
-        UnknownArch,
-        Alpha,
-        SPARC64,
-        SPARC32,
-        Mips,
-        X86_64,
-        I386,
-        Arm64,
-        Arm,
-        Thumb,
-        Power
-    };
-
-    enum OpSys {
-        UnknownOpSys,
-        Tru64,
-        Linux,
-        Solaris,
-        LinuxArmOABI,
-        FreeBSD
-    };
-
   protected:
-    const std::string filename;
-    uint8_t *fileData;
-    size_t len;
+    Arch arch = UnknownArch;
+    OpSys opSys = UnknownOpSys;
+    ByteOrder byteOrder = ByteOrder::little;
 
-    Arch  arch;
-    OpSys opSys;
+    SymbolTable _symtab;
 
-    ObjectFile(const std::string &_filename, size_t _len, uint8_t *_data,
-               Arch _arch, OpSys _opSys);
+    ObjectFile(ImageFileDataPtr ifd);
 
   public:
-    virtual ~ObjectFile();
+    virtual ~ObjectFile() {};
 
-    void close();
+    virtual ObjectFile *getInterpreter() const { return nullptr; }
+    virtual bool relocatable() const { return false; }
+    virtual Addr
+    mapSize() const
+    {
+        panic("mapSize() should only be called on relocatable objects\n");
+    }
+    virtual void
+    updateBias(Addr bias_addr)
+    {
+        panic("updateBias() should only be called on relocatable objects\n");
+    }
+    virtual Addr bias() const { return 0; }
 
-    virtual bool loadSections(PortProxy& memProxy, Addr addrMask =
-                              std::numeric_limits<Addr>::max(),
-                              Addr offset = 0);
-    virtual bool loadGlobalSymbols(SymbolTable *symtab, Addr addrMask =
-            std::numeric_limits<Addr>::max()) = 0;
-    virtual bool loadLocalSymbols(SymbolTable *symtab, Addr addrMask =
-            std::numeric_limits<Addr>::max()) = 0;
-    virtual bool loadWeakSymbols(SymbolTable *symtab, Addr addrMask =
-            std::numeric_limits<Addr>::max())
-    { return false; }
-
-    virtual bool isDynamic() { return false; }
     virtual bool hasTLS() { return false; }
 
     Arch  getArch()  const { return arch; }
     OpSys getOpSys() const { return opSys; }
+    ByteOrder getByteOrder() const { return byteOrder; }
+
+    const SymbolTable &symtab() const { return _symtab; }
 
   protected:
-
-    struct Section {
-        Addr     baseAddr;
-        uint8_t *fileImage;
-        size_t   size;
-    };
-
-    Addr entry;
-    Addr globalPtr;
-
-    Section text;
-    Section data;
-    Section bss;
-
-    bool loadSection(Section *sec, PortProxy& memProxy, Addr addrMask,
-                     Addr offset = 0);
-    void setGlobalPointer(Addr global_ptr) { globalPtr = global_ptr; }
+    Addr entry = 0;
 
   public:
     Addr entryPoint() const { return entry; }
-
-    Addr globalPointer() const { return globalPtr; }
-
-    Addr textBase() const { return text.baseAddr; }
-    Addr dataBase() const { return data.baseAddr; }
-    Addr bssBase() const { return bss.baseAddr; }
-
-    size_t textSize() const { return text.size; }
-    size_t dataSize() const { return data.size; }
-    size_t bssSize() const { return bss.size; }
-
-    /* This function allows you to override the base address where
-     * a binary is going to be loaded or set it if the binary is just a
-     * blob that doesn't include an object header.
-     * @param a address to load the binary/text section at
-     */
-    void setTextBase(Addr a) { text.baseAddr = a; }
 };
 
-ObjectFile *createObjectFile(const std::string &fname, bool raw = false);
+class ObjectFileFormat
+{
+  protected:
+    ObjectFileFormat();
+    virtual ~ObjectFileFormat() = default;
 
+  public:
+    ObjectFileFormat(const ObjectFileFormat &) = delete;
+    void operator=(const ObjectFileFormat &) = delete;
 
-#endif // __OBJECT_FILE_HH__
+    virtual ObjectFile *load(ImageFileDataPtr data) = 0;
+};
+
+ObjectFile *createObjectFile(const std::string &fname, bool raw=false);
+
+/** Determine whether the loader::Arch is 64-bit or 32-bit. */
+bool
+archIs64Bit(const Arch arch);
+
+} // namespace loader
+} // namespace gem5
+
+#endif // __BASE_LOADER_OBJECT_FILE_HH__

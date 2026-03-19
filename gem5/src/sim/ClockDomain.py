@@ -32,26 +32,26 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Vasileios Spiliopoulos
-#          Akash Bagdia
-#          Stephan Diestelhorst
 
 from m5.params import *
-from m5.SimObject import SimObject
 from m5.proxy import *
+from m5.SimObject import SimObject
+
 
 # Abstract clock domain
 class ClockDomain(SimObject):
-    type = 'ClockDomain'
+    type = "ClockDomain"
     cxx_header = "sim/clock_domain.hh"
+    cxx_class = "gem5::ClockDomain"
     abstract = True
+
 
 # Source clock domain with an actual clock, and a list of voltage and frequency
 # op points
 class SrcClockDomain(ClockDomain):
-    type = 'SrcClockDomain'
+    type = "SrcClockDomain"
     cxx_header = "sim/clock_domain.hh"
+    cxx_class = "gem5::SrcClockDomain"
 
     # Single clock frequency value, or list of frequencies for DVFS
     # Frequencies must be ordered in descending order
@@ -72,10 +72,13 @@ class SrcClockDomain(ClockDomain):
     # Defaults to maximum performance
     init_perf_level = Param.UInt32(0, "Initial performance level")
 
+
 # Derived clock domain with a parent clock domain and a frequency
 # divider
 class DerivedClockDomain(ClockDomain):
-    type = 'DerivedClockDomain'
+    type = "DerivedClockDomain"
     cxx_header = "sim/clock_domain.hh"
+    cxx_class = "gem5::DerivedClockDomain"
+
     clk_domain = Param.ClockDomain("Parent clock domain")
     clk_divider = Param.Unsigned(1, "Frequency divider")

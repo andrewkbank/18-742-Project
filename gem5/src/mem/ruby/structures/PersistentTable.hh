@@ -30,12 +30,19 @@
 #define __MEM_RUBY_STRUCTURES_PERSISTENTTABLE_HH__
 
 #include <iostream>
+#include <unordered_map>
 
-#include "base/hashmap.hh"
-#include "mem/protocol/AccessType.hh"
+#include "base/intmath.hh"
 #include "mem/ruby/common/Address.hh"
 #include "mem/ruby/common/MachineID.hh"
 #include "mem/ruby/common/NetDest.hh"
+#include "mem/ruby/protocol/AccessType.hh"
+
+namespace gem5
+{
+
+namespace ruby
+{
 
 class PersistentTableEntry
 {
@@ -57,6 +64,12 @@ class PersistentTable
     // Destructor
     ~PersistentTable();
 
+    void
+    setBlockSize(int block_size)
+    {
+        m_block_size_bits = floorLog2(block_size);
+    }
+
     // Public Methods
     void persistentRequestLock(Addr address, MachineID locker,
                                AccessType type);
@@ -76,9 +89,17 @@ class PersistentTable
     PersistentTable(const PersistentTable& obj);
     PersistentTable& operator=(const PersistentTable& obj);
 
+    int m_block_size_bits = 0;
+
     // Data Members (m_prefix)
-    typedef m5::hash_map<Addr, PersistentTableEntry> AddressMap;
+    typedef std::unordered_map<Addr, PersistentTableEntry> AddressMap;
     AddressMap m_map;
+
+    Addr
+    makeLineAddress(Addr addr) const
+    {
+        return ruby::makeLineAddress(addr, m_block_size_bits);
+    }
 };
 
 inline std::ostream&
@@ -96,5 +117,8 @@ operator<<(std::ostream& out, const PersistentTableEntry& obj)
     out << std::flush;
     return out;
 }
+
+} // namespace ruby
+} // namespace gem5
 
 #endif // __MEM_RUBY_STRUCTURES_PERSISTENTTABLE_HH__

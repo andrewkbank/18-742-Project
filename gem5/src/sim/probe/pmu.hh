@@ -33,9 +33,8 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andreas Sandberg
  */
+
 #ifndef __SIM_PROBE_PMU_HH__
 #define __SIM_PROBE_PMU_HH__
 
@@ -43,7 +42,11 @@
 
 #include "sim/probe/probe.hh"
 
-namespace ProbePoints {
+namespace gem5
+{
+
+namespace probing
+{
 
 /**
  * PMU probe point
@@ -57,5 +60,7 @@ typedef ProbePointArg<uint64_t> PMU;
 typedef std::unique_ptr<PMU> PMUUPtr;
 
 }
+
+} // namespace gem5
 
 #endif

@@ -32,10 +32,8 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Gabe Black
 
-microcode = '''
+microcode = """
 def macroop PSADBW_MMX_MMX {
     msad mmx, mmx, mmxm, srcSize=1, destSize=2
 };
@@ -50,4 +48,4 @@ def macroop PSADBW_MMX_P {
     ldfp ufp1, seg, riprel, disp, dataSize=8
     msad mmx, mmx, ufp1, srcSize=1, destSize=2
 };
-'''
+"""

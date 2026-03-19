@@ -33,19 +33,24 @@
 #ifndef __ARCH_ARM_FREEBSD_FREEBSD_HH__
 #define __ARCH_ARM_FREEBSD_FREEBSD_HH__
 
-#include "kern/freebsd/freebsd.hh"
+#include <map>
 
-class ArmFreebsd32 : public FreeBSD
+#include "kern/freebsd/freebsd.hh"
+#include "kern/linux/flag_tables.hh"
+#include "sim/byteswap.hh"
+
+namespace gem5
+{
+
+class ArmFreebsd : public FreeBSD
 {
   public:
+    static const ByteOrder byteOrder = ByteOrder::little;
+};
 
-    /// This table maps the target open() flags to the corresponding
-    /// host open() flags.
-    static OpenFlagTransTable openFlagTable[];
-
-    /// Number of entries in openFlagTable[].
-    static const int NUM_OPEN_FLAGS;
-
+class ArmFreebsd32 : public ArmFreebsd, public OpenFlagTable<ArmFreebsd32>
+{
+  public:
     //@{
     /// Basic ARM FreeBSD types
     typedef uint32_t size_t;
@@ -56,41 +61,46 @@ class ArmFreebsd32 : public FreeBSD
 
     //@{
     /// open(2) flag values.
-    static const int TGT_O_RDONLY    = 0x00000000; //!< O_RDONLY
-    static const int TGT_O_WRONLY    = 0x00000001; //!< O_WRONLY
-    static const int TGT_O_RDWR      = 0x00000002; //!< O_RDWR
-    static const int TGT_O_CREAT     = 0x00000200; //!< O_CREAT
-    static const int TGT_O_EXCL      = 0x00000800; //!< O_EXCL
-    static const int TGT_O_NOCTTY    = 0x00008000; //!< O_NOCTTY
-    static const int TGT_O_TRUNC     = 0x00000400; //!< O_TRUNC
-    static const int TGT_O_APPEND    = 0x00000008; //!< O_APPEND
-    static const int TGT_O_NONBLOCK  = 0x00000004; //!< O_NONBLOCK
-    static const int TGT_O_SYNC      = 0x00000080; //!< O_SYNC
-    static const int TGT_FASYNC      = 0x00000040; //!< FASYNC
-    static const int TGT_O_DIRECT    = 0x00010000; //!< O_DIRECT
-    static const int TGT_O_DIRECTORY = 0x00020000; //!< O_DIRECTORY
-    static const int TGT_O_NOFOLLOW  = 0x00000100; //!< O_NOFOLLOW
-    static const int TGT_O_CLOEXEC   = 0x00100000; //!< O_CLOEXEC
+    static constexpr int TGT_O_RDONLY    = 0x00000000; //!< O_RDONLY
+    static constexpr int TGT_O_WRONLY    = 0x00000001; //!< O_WRONLY
+    static constexpr int TGT_O_RDWR      = 0x00000002; //!< O_RDWR
+    static constexpr int TGT_O_CREAT     = 0x00000200; //!< O_CREAT
+    static constexpr int TGT_O_EXCL      = 0x00000800; //!< O_EXCL
+    static constexpr int TGT_O_NOCTTY    = 0x00008000; //!< O_NOCTTY
+    static constexpr int TGT_O_TRUNC     = 0x00000400; //!< O_TRUNC
+    static constexpr int TGT_O_APPEND    = 0x00000008; //!< O_APPEND
+    static constexpr int TGT_O_NONBLOCK  = 0x00000004; //!< O_NONBLOCK
+    static constexpr int TGT_O_SYNC      = 0x00000080; //!< O_SYNC
+    static constexpr int TGT_FASYNC      = 0x00000040; //!< FASYNC
+    static constexpr int TGT_O_DIRECT    = 0x00010000; //!< O_DIRECT
+    static constexpr int TGT_O_DIRECTORY = 0x00020000; //!< O_DIRECTORY
+    static constexpr int TGT_O_NOFOLLOW  = 0x00000100; //!< O_NOFOLLOW
+    static constexpr int TGT_O_CLOEXEC   = 0x00100000; //!< O_CLOEXEC
     //@}
 
     /// For mmap().
-    static const unsigned TGT_MAP_ANONYMOUS = 0x1000;
-    static const unsigned TGT_MAP_FIXED     = 0x0010;
+    static constexpr unsigned TGT_MAP_SHARED    = 0x0001;
+    static constexpr unsigned TGT_MAP_PRIVATE   = 0x0002;
+    static constexpr unsigned TGT_MAP_ANONYMOUS = 0x1000;
+    static constexpr unsigned TGT_MAP_FIXED     = 0x0010;
 
     /// Limit struct for getrlimit/setrlimit.
-    struct rlimit {
+    struct rlimit
+    {
         uint32_t  rlim_cur;     //!< soft limit
         uint32_t  rlim_max;     //!< hard limit
     };
 
     /// For gettimeofday().
-    struct timeval {
+    struct timeval
+    {
         int32_t tv_sec;         //!< seconds
         int32_t tv_usec;        //!< microseconds
     };
 
     // For writev/readv
-    struct tgt_iovec {
+    struct tgt_iovec
+    {
         uint32_t iov_base; // void *
         uint32_t iov_len;
     };
@@ -113,7 +123,8 @@ class ArmFreebsd32 : public FreeBSD
      * sizeof st_lspare 4
      */
 
-    typedef struct {
+    struct tgt_stat
+    {
         uint32_t   st_dev;
         uint32_t   st_ino;
         uint16_t   st_mode;
@@ -135,9 +146,10 @@ class ArmFreebsd32 : public FreeBSD
         uint32_t   st_lspare;
         uint64_t   st_birthtimX;
         uint64_t   st_birthtim;
-    } tgt_stat;
+    };
 
-    typedef struct {
+    struct tgt_stat64
+    {
         uint32_t   st_dev;
         uint32_t   st_ino;
         uint16_t   st_mode;
@@ -159,10 +171,11 @@ class ArmFreebsd32 : public FreeBSD
         uint32_t   st_lspare;
         uint64_t   st_birthtimX;
         uint64_t   st_birthtim;
-    } tgt_stat64;
+    };
 
     /// For getrusage().
-    struct rusage {
+    struct rusage
+    {
         struct timeval ru_utime;        //!< user time used
         struct timeval ru_stime;        //!< system time used
         int32_t ru_maxrss;              //!< max rss
@@ -182,7 +195,8 @@ class ArmFreebsd32 : public FreeBSD
     };
 
     /// For times().
-    struct tms {
+    struct tms
+    {
         int32_t tms_utime;      //!< user time
         int32_t tms_stime;      //!< system time
         int32_t tms_cutime;     //!< user time of children
@@ -190,16 +204,9 @@ class ArmFreebsd32 : public FreeBSD
     };
 };
 
-class ArmFreebsd64 : public FreeBSD
+class ArmFreebsd64 : public ArmFreebsd, public OpenFlagTable<ArmFreebsd64>
 {
   public:
-
-    /// This table maps the target open() flags to the corresponding
-    /// host open() flags.
-    static OpenFlagTransTable openFlagTable[];
-
-    /// Number of entries in openFlagTable[].
-    static const int NUM_OPEN_FLAGS;
 
     //@{
     /// Basic ARM FreeBSD types
@@ -211,26 +218,28 @@ class ArmFreebsd64 : public FreeBSD
 
     //@{
     /// open(2) flag values.
-    static const int TGT_O_RDONLY    = 0x00000000; //!< O_RDONLY
-    static const int TGT_O_WRONLY    = 0x00000001; //!< O_WRONLY
-    static const int TGT_O_RDWR      = 0x00000002; //!< O_RDWR
-    static const int TGT_O_CREAT     = 0x00000200; //!< O_CREAT
-    static const int TGT_O_EXCL      = 0x00000800; //!< O_EXCL
-    static const int TGT_O_NOCTTY    = 0x00008000; //!< O_NOCTTY
-    static const int TGT_O_TRUNC     = 0x00000400; //!< O_TRUNC
-    static const int TGT_O_APPEND    = 0x00000008; //!< O_APPEND
-    static const int TGT_O_NONBLOCK  = 0x00000004; //!< O_NONBLOCK
-    static const int TGT_O_SYNC      = 0x00000080; //!< O_SYNC
-    static const int TGT_FASYNC      = 0x00000040; //!< FASYNC
-    static const int TGT_O_DIRECT    = 0x00010000; //!< O_DIRECT
-    static const int TGT_O_DIRECTORY = 0x00020000; //!< O_DIRECTORY
-    static const int TGT_O_NOFOLLOW  = 0x00000100; //!< O_NOFOLLOW
-    static const int TGT_O_CLOEXEC   = 0x00100000; //!< O_CLOEXEC
+    static constexpr int TGT_O_RDONLY    = 0x00000000; //!< O_RDONLY
+    static constexpr int TGT_O_WRONLY    = 0x00000001; //!< O_WRONLY
+    static constexpr int TGT_O_RDWR      = 0x00000002; //!< O_RDWR
+    static constexpr int TGT_O_CREAT     = 0x00000200; //!< O_CREAT
+    static constexpr int TGT_O_EXCL      = 0x00000800; //!< O_EXCL
+    static constexpr int TGT_O_NOCTTY    = 0x00008000; //!< O_NOCTTY
+    static constexpr int TGT_O_TRUNC     = 0x00000400; //!< O_TRUNC
+    static constexpr int TGT_O_APPEND    = 0x00000008; //!< O_APPEND
+    static constexpr int TGT_O_NONBLOCK  = 0x00000004; //!< O_NONBLOCK
+    static constexpr int TGT_O_SYNC      = 0x00000080; //!< O_SYNC
+    static constexpr int TGT_FASYNC      = 0x00000040; //!< FASYNC
+    static constexpr int TGT_O_DIRECT    = 0x00010000; //!< O_DIRECT
+    static constexpr int TGT_O_DIRECTORY = 0x00020000; //!< O_DIRECTORY
+    static constexpr int TGT_O_NOFOLLOW  = 0x00000100; //!< O_NOFOLLOW
+    static constexpr int TGT_O_CLOEXEC   = 0x00100000; //!< O_CLOEXEC
     //@}
 
     /// For mmap().
-    static const unsigned TGT_MAP_ANONYMOUS = 0x1000;
-    static const unsigned TGT_MAP_FIXED     = 0x0010;
+    static constexpr unsigned TGT_MAP_SHARED    = 0x0001;
+    static constexpr unsigned TGT_MAP_PRIVATE   = 0x0002;
+    static constexpr unsigned TGT_MAP_ANONYMOUS = 0x1000;
+    static constexpr unsigned TGT_MAP_FIXED     = 0x0010;
 
     //@{
     /// For getrusage().
@@ -240,7 +249,8 @@ class ArmFreebsd64 : public FreeBSD
     //@}
 
     /// Resource enumeration for getrlimit().
-    enum rlimit_resources {
+    enum rlimit_resources
+    {
         TGT_RLIMIT_CPU = 0,
         TGT_RLIMIT_FSIZE = 1,
         TGT_RLIMIT_DATA = 2,
@@ -259,24 +269,28 @@ class ArmFreebsd64 : public FreeBSD
     };
 
     /// Limit struct for getrlimit/setrlimit.
-    struct rlimit {
+    struct rlimit
+    {
         uint64_t  rlim_cur;     //!< soft limit
         uint64_t  rlim_max;     //!< hard limit
     };
 
     /// For gettimeofday().
-    struct timeval {
+    struct timeval
+    {
         int64_t tv_sec;         //!< seconds
         int64_t tv_usec;        //!< microseconds
     };
 
     // For writev/readv
-    struct tgt_iovec {
+    struct tgt_iovec
+    {
         uint64_t iov_base; // void *
         uint64_t iov_len;
     };
 
-    typedef struct {
+    struct tgt_stat
+    {
         uint32_t   st_dev;
         uint32_t   st_ino;
         uint16_t   st_mode;
@@ -298,9 +312,10 @@ class ArmFreebsd64 : public FreeBSD
         uint32_t   st_lspare;
         uint64_t   st_birthtimX;
         uint64_t   st_birthtim;
-    } tgt_stat;
+    };
 
-    typedef struct {
+    struct tgt_stat64
+    {
         uint32_t   st_dev;
         uint32_t   st_ino;
         uint16_t   st_mode;
@@ -322,10 +337,11 @@ class ArmFreebsd64 : public FreeBSD
         uint32_t   st_lspare;
         uint64_t   st_birthtimX;
         uint64_t   st_birthtim;
-    } tgt_stat64;
+    };
 
     /// For getrusage().
-    struct rusage {
+    struct rusage
+    {
         struct timeval ru_utime;        //!< user time used
         struct timeval ru_stime;        //!< system time used
         int64_t ru_maxrss;              //!< max rss
@@ -345,12 +361,15 @@ class ArmFreebsd64 : public FreeBSD
     };
 
     /// For times().
-    struct tms {
+    struct tms
+    {
         int64_t tms_utime;      //!< user time
         int64_t tms_stime;      //!< system time
         int64_t tms_cutime;     //!< user time of children
         int64_t tms_cstime;     //!< system time of children
     };
 };
+
+} // namespace gem5
 
 #endif

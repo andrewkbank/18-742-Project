@@ -1,4 +1,16 @@
 /*
+ * Copyright (c) 2019 ARM Limited
+ * All rights reserved.
+ *
+ * The license below extends only to copyright in the software and shall
+ * not be construed as granting a license to any other intellectual
+ * property including but not limited to intellectual property relating
+ * to a hardware implementation of the functionality of the software
+ * licensed hereunder.  You may use the software subject to the license
+ * terms below provided that you ensure that this notice is replicated
+ * unmodified and in its entirety in all distributions of the software,
+ * modified or unmodified, in source code or in binary form.
+ *
  * Copyright (c) 1999-2008 Mark D. Hill and David A. Wood
  * All rights reserved.
  *
@@ -29,9 +41,19 @@
 #ifndef __MEM_RUBY_STRUCTURES_PERFECTCACHEMEMORY_HH__
 #define __MEM_RUBY_STRUCTURES_PERFECTCACHEMEMORY_HH__
 
-#include "base/hashmap.hh"
-#include "mem/protocol/AccessPermission.hh"
+#include <type_traits>
+#include <unordered_map>
+
+#include "base/compiler.hh"
 #include "mem/ruby/common/Address.hh"
+#include "mem/ruby/protocol/AccessPermission.hh"
+#include "mem/ruby/system/RubySystem.hh"
+
+namespace gem5
+{
+
+namespace ruby
+{
 
 template<class ENTRY>
 struct PerfectCacheLineState
@@ -53,6 +75,8 @@ class PerfectCacheMemory
 {
   public:
     PerfectCacheMemory();
+
+    void setRubySystem(RubySystem *rs);
 
     // tests to see if an address is present in the cache
     bool isTagPresent(Addr address) const;
@@ -87,7 +111,13 @@ class PerfectCacheMemory
     PerfectCacheMemory& operator=(const PerfectCacheMemory& obj);
 
     // Data Members (m_prefix)
-    m5::hash_map<Addr, PerfectCacheLineState<ENTRY> > m_map;
+    std::unordered_map<Addr, PerfectCacheLineState<ENTRY> > m_map;
+
+    RubySystem *m_ruby_system = nullptr;
+    int m_block_size = 0;
+
+    static constexpr bool entryRequiresRubySystem =
+        std::is_member_function_pointer_v<decltype(&ENTRY::setRubySystem)>;
 };
 
 template<class ENTRY>
@@ -105,12 +135,20 @@ PerfectCacheMemory<ENTRY>::PerfectCacheMemory()
 {
 }
 
+template<class ENTRY>
+inline
+void PerfectCacheMemory<ENTRY>::setRubySystem(RubySystem *rs)
+{
+    m_ruby_system = rs;
+    m_block_size = rs->getBlockSizeBytes();
+}
+
 // tests to see if an address is present in the cache
 template<class ENTRY>
 inline bool
 PerfectCacheMemory<ENTRY>::isTagPresent(Addr address) const
 {
-    return m_map.count(makeLineAddress(address)) > 0;
+    return m_map.count(makeLineAddress(address, floorLog2(m_block_size))) > 0;
 }
 
 template<class ENTRY>
@@ -129,7 +167,11 @@ PerfectCacheMemory<ENTRY>::allocate(Addr address)
     PerfectCacheLineState<ENTRY> line_state;
     line_state.m_permission = AccessPermission_Invalid;
     line_state.m_entry = ENTRY();
-    m_map[makeLineAddress(address)] = line_state;
+    if constexpr (entryRequiresRubySystem) {
+        line_state.m_entry.setRubySystem(m_ruby_system);
+    }
+    Addr line_addr = makeLineAddress(address, floorLog2(m_block_size));
+    m_map.emplace(line_addr, line_state);
 }
 
 // deallocate entry
@@ -137,7 +179,9 @@ template<class ENTRY>
 inline void
 PerfectCacheMemory<ENTRY>::deallocate(Addr address)
 {
-    m_map.erase(makeLineAddress(address));
+    Addr line_addr = makeLineAddress(address, floorLog2(m_block_size));
+    [[maybe_unused]] auto num_erased = m_map.erase(line_addr);
+    assert(num_erased == 1);
 }
 
 // Returns with the physical address of the conflicting cache line
@@ -154,7 +198,8 @@ template<class ENTRY>
 inline ENTRY*
 PerfectCacheMemory<ENTRY>::lookup(Addr address)
 {
-    return &m_map[makeLineAddress(address)].m_entry;
+    Addr line_addr = makeLineAddress(address, floorLog2(m_block_size));
+    return &m_map[line_addr].m_entry;
 }
 
 // looks an address up in the cache
@@ -162,14 +207,16 @@ template<class ENTRY>
 inline const ENTRY*
 PerfectCacheMemory<ENTRY>::lookup(Addr address) const
 {
-    return &m_map[makeLineAddress(address)].m_entry;
+    Addr line_addr = makeLineAddress(address, floorLog2(m_block_size));
+    return &m_map[line_addr].m_entry;
 }
 
 template<class ENTRY>
 inline AccessPermission
 PerfectCacheMemory<ENTRY>::getPermission(Addr address) const
 {
-    return m_map[makeLineAddress(address)].m_permission;
+    Addr line_addr = makeLineAddress(address, floorLog2(m_block_size));
+    return m_map[line_addr].m_permission;
 }
 
 template<class ENTRY>
@@ -177,8 +224,8 @@ inline void
 PerfectCacheMemory<ENTRY>::changePermission(Addr address,
                                             AccessPermission new_perm)
 {
-    Addr line_address = makeLineAddress(address);
-    PerfectCacheLineState<ENTRY>& line_state = m_map[line_address];
+    Addr line_addr = makeLineAddress(address, floorLog2(m_block_size));
+    PerfectCacheLineState<ENTRY>& line_state = m_map[line_addr];
     line_state.m_permission = new_perm;
 }
 
@@ -187,5 +234,8 @@ inline void
 PerfectCacheMemory<ENTRY>::print(std::ostream& out) const
 {
 }
+
+} // namespace ruby
+} // namespace gem5
 
 #endif // __MEM_RUBY_STRUCTURES_PERFECTCACHEMEMORY_HH__

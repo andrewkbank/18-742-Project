@@ -1,6 +1,7 @@
 /*
- * Copyright (c) 2011 ARM Limited
+ * Copyright (c) 2011, 2016-2017 ARM Limited
  * Copyright (c) 2013 Advanced Micro Devices, Inc.
+ * Copyright (c) 2022-2023 The University of Edinburgh
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -37,8 +38,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Kevin Lim
  */
 
 #ifndef __CPU_O3_COMM_HH__
@@ -46,121 +45,125 @@
 
 #include <vector>
 
-#include "arch/types.hh"
+#include "arch/generic/pcstate.hh"
 #include "base/types.hh"
 #include "cpu/inst_seq.hh"
+#include "cpu/o3/dyn_inst_ptr.hh"
+#include "cpu/o3/limits.hh"
 #include "sim/faults.hh"
 
-// Typedef for physical register index type. Although the Impl would be the
-// most likely location for this, there are a few classes that need this
-// typedef yet are not templated on the Impl. For now it will be defined here.
-typedef short int PhysRegIndex;
+namespace gem5
+{
+
+namespace o3
+{
 
 /** Struct that defines the information passed from fetch to decode. */
-template<class Impl>
-struct DefaultFetchDefaultDecode {
-    typedef typename Impl::DynInstPtr DynInstPtr;
-
+struct FetchStruct
+{
     int size;
 
-    DynInstPtr insts[Impl::MaxWidth];
+    DynInstPtr insts[MaxWidth];
     Fault fetchFault;
     InstSeqNum fetchFaultSN;
     bool clearFetchFault;
 };
 
 /** Struct that defines the information passed from decode to rename. */
-template<class Impl>
-struct DefaultDecodeDefaultRename {
-    typedef typename Impl::DynInstPtr DynInstPtr;
-
+struct DecodeStruct
+{
     int size;
 
-    DynInstPtr insts[Impl::MaxWidth];
+    DynInstPtr insts[MaxWidth];
 };
 
 /** Struct that defines the information passed from rename to IEW. */
-template<class Impl>
-struct DefaultRenameDefaultIEW {
-    typedef typename Impl::DynInstPtr DynInstPtr;
-
+struct RenameStruct
+{
     int size;
 
-    DynInstPtr insts[Impl::MaxWidth];
+    DynInstPtr insts[MaxWidth];
 };
 
 /** Struct that defines the information passed from IEW to commit. */
-template<class Impl>
-struct DefaultIEWDefaultCommit {
-    typedef typename Impl::DynInstPtr DynInstPtr;
-
+struct IEWStruct
+{
     int size;
 
-    DynInstPtr insts[Impl::MaxWidth];
-    DynInstPtr mispredictInst[Impl::MaxThreads];
-    Addr mispredPC[Impl::MaxThreads];
-    InstSeqNum squashedSeqNum[Impl::MaxThreads];
-    TheISA::PCState pc[Impl::MaxThreads];
+    DynInstPtr insts[MaxWidth];
+    DynInstPtr mispredictInst[MaxThreads];
+    Addr mispredPC[MaxThreads];
+    InstSeqNum squashedSeqNum[MaxThreads];
+    std::unique_ptr<PCStateBase> pc[MaxThreads];
 
-    bool squash[Impl::MaxThreads];
-    bool branchMispredict[Impl::MaxThreads];
-    bool branchTaken[Impl::MaxThreads];
-    bool includeSquashInst[Impl::MaxThreads];
+    bool squash[MaxThreads];
+    bool branchMispredict[MaxThreads];
+    bool branchTaken[MaxThreads];
+    bool includeSquashInst[MaxThreads];
 };
 
-template<class Impl>
-struct IssueStruct {
-    typedef typename Impl::DynInstPtr DynInstPtr;
-
+struct IssueStruct
+{
     int size;
 
-    DynInstPtr insts[Impl::MaxWidth];
+    DynInstPtr insts[MaxWidth];
 };
 
 /** Struct that defines all backwards communication. */
-template<class Impl>
-struct TimeBufStruct {
-    typedef typename Impl::DynInstPtr DynInstPtr;
-    struct decodeComm {
-        TheISA::PCState nextPC;
+struct TimeStruct
+{
+    struct FetchComm
+    {
+        bool block;
+        /** Signals to redirect BAC if something goes wrong. */
+        bool squash;
+        std::unique_ptr<PCStateBase> nextPC;
+    };
+
+    FetchComm fetchInfo[MaxThreads];
+
+    struct DecodeComm
+    {
+        std::unique_ptr<PCStateBase> nextPC;
         DynInstPtr mispredictInst;
         DynInstPtr squashInst;
-        InstSeqNum doneSeqNum;
-        Addr mispredPC;
-        uint64_t branchAddr;
-        unsigned branchCount;
-        bool squash;
-        bool predIncorrect;
-        bool branchMispredict;
-        bool branchTaken;
+        InstSeqNum doneSeqNum = 0;
+        Addr mispredPC = 0;
+        uint64_t branchAddr = 0;
+        unsigned branchCount = 0;
+        bool squash = false;
+        bool controlMispredict = false;
+        bool branchMispredict = false;
+        bool branchTaken = false;
     };
 
-    decodeComm decodeInfo[Impl::MaxThreads];
+    DecodeComm decodeInfo[MaxThreads];
 
-    struct renameComm {
-    };
+    struct RenameComm {};
 
-    renameComm renameInfo[Impl::MaxThreads];
+    RenameComm renameInfo[MaxThreads];
 
-    struct iewComm {
+    struct IewComm
+    {
         // Also eventually include skid buffer space.
-        unsigned freeIQEntries;
-        unsigned freeLQEntries;
-        unsigned freeSQEntries;
-        unsigned dispatchedToLQ;
-        unsigned dispatchedToSQ;
+        unsigned freeIQEntries = 0;
+        unsigned freeLQEntries = 0;
+        unsigned freeSQEntries = 0;
+        unsigned dispatchedToLQ = 0;
+        unsigned dispatchedToSQ = 0;
 
-        unsigned iqCount;
-        unsigned ldstqCount;
+        unsigned iqCount = 0;
+        unsigned ldstqCount = 0;
 
-        unsigned dispatched;
-        bool usedIQ;
-        bool usedLSQ;
+        unsigned dispatched = 0;
+        bool usedIQ = false;
+        bool usedLSQ = false;
     };
 
-    iewComm iewInfo[Impl::MaxThreads];
+    IewComm iewInfo[MaxThreads];
 
-    struct commitComm {
+    struct CommitComm
+    {
         /////////////////////////////////////////////////////////////////////
         // This code has been re-structured for better packing of variables
         // instead of by stage which is the more logical way to arrange the
@@ -176,7 +179,7 @@ struct TimeBufStruct {
         /// The pc of the next instruction to execute. This is the next
         /// instruction for a branch mispredict, but the same instruction for
         /// order violation and the like
-        TheISA::PCState pc; // *F
+        std::unique_ptr<PCStateBase> pc; // *F
 
         /// Provide fetch the instruction that mispredicted, if this
         /// pointer is not-null a misprediction occured
@@ -191,46 +194,70 @@ struct TimeBufStruct {
 
         /// Communication specifically to the IQ to tell the IQ that it can
         /// schedule a non-speculative instruction.
-        InstSeqNum nonSpecSeqNum; // *I
+        InstSeqNum nonSpecSeqNum = 0; // *I
 
         /// Represents the instruction that has either been retired or
         /// squashed.  Similar to having a single bus that broadcasts the
         /// retired or squashed sequence number.
-        InstSeqNum doneSeqNum; // *F, I
+        InstSeqNum doneSeqNum = 0; // *F, I
 
         /// Tell Rename how many free entries it has in the ROB
-        unsigned freeROBEntries; // *R
+        unsigned freeROBEntries = 0; // *R
 
-        bool squash; // *F, D, R, I
-        bool robSquashing; // *F, D, R, I
+        bool squash = false; // *F, D, R, I
+        bool robSquashing = false; // *F, D, R, I
 
         /// Rename should re-read number of free rob entries
-        bool usedROB; // *R
+        bool usedROB = false; // *R
 
         /// Notify Rename that the ROB is empty
-        bool emptyROB; // *R
+        bool emptyROB = false; // *R
 
         /// Was the branch taken or not
-        bool branchTaken; // *F
+        bool branchTaken = false; // *F
         /// If an interrupt is pending and fetch should stall
-        bool interruptPending; // *F
+        bool interruptPending = false; // *F
         /// If the interrupt ended up being cleared before being handled
-        bool clearInterrupt; // *F
+        bool clearInterrupt = false; // *F
+        /// If a trap is pending
+        bool trapPending = false; // *F
 
         /// Hack for now to send back an strictly ordered access to
         /// the IEW stage.
-        bool strictlyOrdered; // *I
+        bool strictlyOrdered = false; // *I
 
     };
 
-    commitComm commitInfo[Impl::MaxThreads];
+    CommitComm commitInfo[MaxThreads];
 
-    bool decodeBlock[Impl::MaxThreads];
-    bool decodeUnblock[Impl::MaxThreads];
-    bool renameBlock[Impl::MaxThreads];
-    bool renameUnblock[Impl::MaxThreads];
-    bool iewBlock[Impl::MaxThreads];
-    bool iewUnblock[Impl::MaxThreads];
+    bool decodeBlock[MaxThreads];
+    bool decodeUnblock[MaxThreads];
+    bool renameBlock[MaxThreads];
+    bool renameUnblock[MaxThreads];
+    bool iewBlock[MaxThreads];
+    bool iewUnblock[MaxThreads];
 };
+
+/**
+ * Remove instructions belonging to given thread from the
+ * given comm struct's instruction array. Automatically
+ * updates the array size.
+ */
+template <class CommStruct>
+void
+removeCommThreadInsts(ThreadID tid, CommStruct& comm_struct)
+{
+    auto has_tid = [tid] (const auto &inst) -> bool {
+        return inst && inst->threadNumber == tid;
+    };
+    DynInstPtr *last = std::remove_if(comm_struct.insts,
+                                      comm_struct.insts + comm_struct.size,
+                                      has_tid);
+    std::fill(last, comm_struct.insts + comm_struct.size, nullptr);
+    comm_struct.size = last - comm_struct.insts;
+}
+
+} // namespace o3
+} // namespace gem5
 
 #endif //__CPU_O3_COMM_HH__

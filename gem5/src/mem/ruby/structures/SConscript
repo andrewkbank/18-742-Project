@@ -1,5 +1,17 @@
 # -*- mode:python -*-
 
+# Copyright (c) 2021,2023 ARM Limited
+# All rights reserved.
+#
+# The license below extends only to copyright in the software and shall
+# not be construed as granting a license to any other intellectual
+# property including but not limited to intellectual property relating
+# to a hardware implementation of the functionality of the software
+# licensed hereunder.  You may use the software subject to the license
+# terms below provided that you ensure that this notice is replicated
+# unmodified and in its entirety in all distributions of the software,
+# modified or unmodified, in source code or in binary form.
+#
 # Copyright (c) 2012 Mark D. Hill and David A. Wood
 # All rights reserved.
 #
@@ -25,32 +37,26 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Nilay Vaish
 
 Import('*')
 
-if env['PROTOCOL'] == 'None':
+if not env['CONF']['RUBY']:
     Return()
 
-SimObject('RubyCache.py')
-SimObject('DirectoryMemory.py')
-SimObject('LRUReplacementPolicy.py')
-SimObject('PseudoLRUReplacementPolicy.py')
-SimObject('ReplacementPolicy.py')
-SimObject('RubyMemoryControl.py')
-SimObject('RubyPrefetcher.py')
-SimObject('WireBuffer.py')
+SimObject('RubyCache.py', sim_objects=['RubyCache'])
+SimObject('DirectoryMemory.py', sim_objects=['RubyDirectoryMemory'])
+SimObject('RubyPrefetcher.py', sim_objects=['RubyPrefetcher'])
+SimObject('WireBuffer.py', sim_objects=['RubyWireBuffer'])
 
-Source('AbstractReplacementPolicy.cc')
 Source('DirectoryMemory.cc')
 Source('CacheMemory.cc')
-Source('LRUPolicy.cc')
-Source('PseudoLRUPolicy.cc')
 Source('WireBuffer.cc')
-Source('RubyMemoryControl.cc')
-Source('MemoryNode.cc')
 Source('PersistentTable.cc')
-Source('Prefetcher.cc')
+Source('RubyPrefetcher.cc')
+Source('RubyPrefetcherProxy.cc')
 Source('TimerTable.cc')
 Source('BankedArray.cc')
+Source('ALUFreeListArray.cc')
+Source('TBEStorage.cc')
+if env['CONF']['RUBY_PROTOCOL_CHI']:
+    Source('MN_TBETable.cc')

@@ -24,80 +24,83 @@
  * ARISING OUT OF OR IN CONNECTION WITH THE USE OF THE SOFTWARE, EVEN
  * IF IT HAS BEEN OR IS HEREAFTER ADVISED OF THE POSSIBILITY OF SUCH
  * DAMAGES.
- *
- * Authors: Ali G. Saidi
- *          Andrew L. Schultz
- *          Miguel J. Serrano
  */
 
-#include "base/misc.hh"
-#include "debug/Intel8254Timer.hh"
 #include "dev/intel_8254_timer.hh"
 
-using namespace std;
+#include "base/logging.hh"
+#include "debug/Intel8254Timer.hh"
+#include "sim/core.hh"
+#include "sim/cur_tick.hh"
 
-Intel8254Timer::Intel8254Timer(EventManager *em, const string &name,
-    Counter *counter0, Counter *counter1, Counter *counter2) :
-    EventManager(em), _name(name)
+namespace gem5
 {
-    counter[0] = counter0;
-    counter[1] = counter1;
-    counter[2] = counter2;
-}
 
-Intel8254Timer::Intel8254Timer(EventManager *em, const string &name) :
-    EventManager(em), _name(name)
-{
-    counter[0] = new Counter(this, name + ".counter0", 0);
-    counter[1] = new Counter(this, name + ".counter1", 1);
-    counter[2] = new Counter(this, name + ".counter2", 2);
-}
+Intel8254Timer::Intel8254Timer(EventManager *em, const std::string &name) :
+    EventManager(em), _name(name), counters{{
+            {this, name + ".counter0", 0},
+            {this, name + ".counter1", 1},
+            {this, name + ".counter2", 2}
+        }}
+{}
 
 void
 Intel8254Timer::writeControl(const CtrlReg data)
 {
     int sel = data.sel;
 
-    if (sel == ReadBackCommand)
-       panic("PITimer Read-Back Command is not implemented.\n");
+    if (sel == ReadBackCommand) {
+        ReadBackCommandVal rb_val = static_cast<uint8_t>(data);
 
-    if (data.rw == LatchCommand)
-        counter[sel]->latchCount();
-    else {
-        counter[sel]->setRW(data.rw);
-        counter[sel]->setMode(data.mode);
-        counter[sel]->setBCD(data.bcd);
+        panic_if(!rb_val.status,
+                "Latching the PIT status byte is not implemented.");
+
+        if (!rb_val.count) {
+            for (auto &counter: counters) {
+                if (bits((uint8_t)rb_val.select, counter.index()))
+                    counter.latchCount();
+            }
+        }
+        return;
+    }
+
+    if (data.rw == LatchCommand) {
+        counters[sel].latchCount();
+    } else {
+        counters[sel].setRW(data.rw);
+        counters[sel].setMode(data.mode);
+        counters[sel].setBCD(data.bcd);
     }
 }
 
 void
-Intel8254Timer::serialize(const string &base, CheckpointOut &cp) const
+Intel8254Timer::serialize(const std::string &base, CheckpointOut &cp) const
 {
     // serialize the counters
-    counter[0]->serialize(base + ".counter0", cp);
-    counter[1]->serialize(base + ".counter1", cp);
-    counter[2]->serialize(base + ".counter2", cp);
+    counters[0].serialize(base + ".counter0", cp);
+    counters[1].serialize(base + ".counter1", cp);
+    counters[2].serialize(base + ".counter2", cp);
 }
 
 void
-Intel8254Timer::unserialize(const string &base, CheckpointIn &cp)
+Intel8254Timer::unserialize(const std::string &base, CheckpointIn &cp)
 {
     // unserialze the counters
-    counter[0]->unserialize(base + ".counter0", cp);
-    counter[1]->unserialize(base + ".counter1", cp);
-    counter[2]->unserialize(base + ".counter2", cp);
+    counters[0].unserialize(base + ".counter0", cp);
+    counters[1].unserialize(base + ".counter1", cp);
+    counters[2].unserialize(base + ".counter2", cp);
 }
 
 void
 Intel8254Timer::startup()
 {
-    counter[0]->startup();
-    counter[1]->startup();
-    counter[2]->startup();
+    counters[0].startup();
+    counters[1].startup();
+    counters[2].startup();
 }
 
 Intel8254Timer::Counter::Counter(Intel8254Timer *p,
-        const string &name, unsigned int _num)
+        const std::string &name, unsigned int _num)
     : _name(name), num(_num), event(this), running(false),
       initial_count(0), latched_count(0), period(0), mode(0),
       output_high(false), latch_on(false), read_byte(LSB),
@@ -110,7 +113,7 @@ void
 Intel8254Timer::Counter::latchCount()
 {
     // behave like a real latch
-    if(!latch_on) {
+    if (!latch_on) {
         latch_on = true;
         read_byte = LSB;
         latched_count = currentCount();
@@ -207,8 +210,10 @@ Intel8254Timer::Counter::setRW(int rw_val)
 void
 Intel8254Timer::Counter::setMode(int mode_val)
 {
-    if(mode_val != InitTc && mode_val != RateGen &&
-       mode_val != SquareWave)
+    if (mode_val == SoftwareStrobe)
+        warn_once("SoftwareStrobe mode is used and it is not well tested\n");
+    if (mode_val != InitTc && mode_val != RateGen &&
+       mode_val != SquareWave && mode_val != SoftwareStrobe)
         panic("PIT mode %#x is not implemented: \n", mode_val);
 
     mode = mode_val;
@@ -228,7 +233,8 @@ Intel8254Timer::Counter::outputHigh()
 }
 
 void
-Intel8254Timer::Counter::serialize(const string &base, CheckpointOut &cp) const
+Intel8254Timer::Counter::serialize(
+        const std::string &base, CheckpointOut &cp) const
 {
     paramOut(cp, base + ".initial_count", initial_count);
     paramOut(cp, base + ".latched_count", latched_count);
@@ -246,7 +252,7 @@ Intel8254Timer::Counter::serialize(const string &base, CheckpointOut &cp) const
 }
 
 void
-Intel8254Timer::Counter::unserialize(const string &base, CheckpointIn &cp)
+Intel8254Timer::Counter::unserialize(const std::string &base, CheckpointIn &cp)
 {
     paramIn(cp, base + ".initial_count", initial_count);
     paramIn(cp, base + ".latched_count", latched_count);
@@ -275,7 +281,7 @@ Intel8254Timer::Counter::startup()
 
 Intel8254Timer::Counter::CounterEvent::CounterEvent(Counter* c_ptr)
 {
-    interval = (Tick)(SimClock::Float::s / 1193180.0);
+    interval = (Tick)(sim_clock::as_float::s / 1193180.0);
     counter = c_ptr;
 }
 
@@ -288,6 +294,7 @@ Intel8254Timer::Counter::CounterEvent::process()
         break;
       case RateGen:
       case SquareWave:
+      case SoftwareStrobe:
         setTo(counter->period);
         break;
       default:
@@ -326,3 +333,4 @@ Intel8254Timer::Counter::CounterEvent::getInterval()
     return interval;
 }
 
+} // namespace gem5

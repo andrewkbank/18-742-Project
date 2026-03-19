@@ -1,4 +1,17 @@
+# Copyright (c) 2020 ARM Limited
+# All rights reserved.
+#
+# The license below extends only to copyright in the software and shall
+# not be construed as granting a license to any other intellectual
+# property including but not limited to intellectual property relating
+# to a hardware implementation of the functionality of the software
+# licensed hereunder.  You may use the software subject to the license
+# terms below provided that you ensure that this notice is replicated
+# unmodified and in its entirety in all distributions of the software,
+# modified or unmodified, in source code or in binary form.
+#
 # Copyright (c) 2009 Advanced Micro Devices, Inc.
+# Copyright (c) 2020 ARM Limited
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -23,62 +36,113 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Steve Reinhardt
-#          Brad Beckmann
 
+from m5.objects.ClockedObject import ClockedObject
+from m5.objects.RubyCache import RubyCache
+from m5.objects.RubySystem import RubySystem
+from m5.objects.System import System
 from m5.params import *
 from m5.proxy import *
-from MemObject import MemObject
 
-class RubyPort(MemObject):
-    type = 'RubyPort'
+
+class RubyPort(ClockedObject):
+    type = "RubyPort"
     abstract = True
     cxx_header = "mem/ruby/system/RubyPort.hh"
+    cxx_class = "gem5::ruby::RubyPort"
+
     version = Param.Int(0, "")
 
-    slave = VectorSlavePort("CPU slave port")
-    master = VectorMasterPort("CPU master port")
-    pio_master_port = MasterPort("Ruby mem master port")
-    mem_master_port = MasterPort("Ruby mem master port")
-    pio_slave_port = SlavePort("Ruby pio slave port")
-    mem_slave_port = SlavePort("Ruby memory port")
+    in_ports = VectorResponsePort(
+        "CPU side of this RubyPort/Sequencer. "
+        "The CPU request ports should be connected to this. If a CPU "
+        "has multiple ports (e.g., I/D ports) all of the ports for a "
+        "single CPU can connect to one RubyPort."
+    )
+
+    interrupt_out_port = VectorRequestPort(
+        "Port to connect to x86 interrupt "
+        "controller to send the CPU requests from outside."
+    )
+
+    pio_request_port = RequestPort("Ruby pio request port")
+
+    mem_request_port = RequestPort("Ruby mem request port")
+
+    pio_response_port = ResponsePort("Ruby pio response port")
 
     using_ruby_tester = Param.Bool(False, "")
-    ruby_system = Param.RubySystem(Parent.any, "")
+    no_retry_on_stall = Param.Bool(False, "")
+    ruby_system = Param.RubySystem("Parent RubySystem object")
     system = Param.System(Parent.any, "system object")
     support_data_reqs = Param.Bool(True, "data cache requests supported")
     support_inst_reqs = Param.Bool(True, "inst cache requests supported")
+    is_cpu_sequencer = Param.Bool(True, "connected to a cpu")
+
 
 class RubyPortProxy(RubyPort):
-    type = 'RubyPortProxy'
+    type = "RubyPortProxy"
     cxx_header = "mem/ruby/system/RubyPortProxy.hh"
+    cxx_class = "gem5::ruby::RubyPortProxy"
+
 
 class RubySequencer(RubyPort):
-    type = 'RubySequencer'
-    cxx_class = 'Sequencer'
+    type = "RubySequencer"
+    cxx_class = "gem5::ruby::Sequencer"
     cxx_header = "mem/ruby/system/Sequencer.hh"
 
-    icache = Param.RubyCache("")
     dcache = Param.RubyCache("")
-    # Cache latencies currently assessed at the beginning of each access
-    # NOTE: Setting these values to a value greater than one will result in
-    # O3 CPU pipeline bubbles and negatively impact performance
-    # TODO: Latencies should be migrated into each top-level cache controller
-    icache_hit_latency = Param.Cycles(1, "Inst cache hit latency")
-    dcache_hit_latency = Param.Cycles(1, "Data cache hit latency")
-    max_outstanding_requests = Param.Int(16,
-        "max requests (incl. prefetches) outstanding")
-    deadlock_threshold = Param.Cycles(500000,
-        "max outstanding cycles for a request before deadlock/livelock declared")
-    using_network_tester = Param.Bool(False, "")
 
-class DMASequencer(MemObject):
-    type = 'DMASequencer'
+    max_outstanding_requests = Param.Int(
+        16, "max requests (incl. prefetches) outstanding"
+    )
+    deadlock_threshold = Param.Cycles(
+        500000,
+        "max outstanding cycles for a request "
+        "before deadlock/livelock declared",
+    )
+    garnet_standalone = Param.Bool(False, "")
+    # id used by protocols that support multiple sequencers per controller
+    # 99 is the dummy default value
+    coreid = Param.Int(99, "CorePair core id")
+
+    def connectCpuPorts(self, cpu):
+        """
+        Helper for connecting all cpu memory request output ports to this
+        object's in_ports.
+        This assumes the provided cpu object is an instance of BaseCPU. Non-cpu
+        objects should use connectInstPort and connectDataPort.
+        """
+        import m5.objects
+
+        assert isinstance(cpu, m5.objects.BaseCPU)
+        # this connects all cpu mem-side ports to self.in_ports
+        cpu.connectAllPorts(
+            self.in_ports, self.in_ports, self.interrupt_out_port
+        )
+
+    def connectIOPorts(self, piobus):
+        """
+        Helper for connecting this object's IO request and response ports to
+        the provided bus object. Usually a iobus object is used to wireup IO
+        components in a full system simulation. Incoming/Outgoing IO requests
+        do not go though the SLICC protocol so the iobus must be connected to
+        the sequencer directly.
+        """
+        self.pio_request_port = piobus.cpu_side_ports
+        self.mem_request_port = piobus.cpu_side_ports
+        self.pio_response_port = piobus.mem_side_ports
+
+
+class RubyHTMSequencer(RubySequencer):
+    type = "RubyHTMSequencer"
+    cxx_class = "gem5::ruby::HTMSequencer"
+    cxx_header = "mem/ruby/system/HTMSequencer.hh"
+
+
+class DMASequencer(RubyPort):
+    type = "DMASequencer"
     cxx_header = "mem/ruby/system/DMASequencer.hh"
+    cxx_class = "gem5::ruby::DMASequencer"
 
-    version = Param.Int(0, "")
-    slave = SlavePort("Device slave port")
-    using_ruby_tester = Param.Bool(False, "")
-    ruby_system = Param.RubySystem(Parent.any, "")
-    system = Param.System(Parent.any, "system object")
+    max_outstanding_requests = Param.Int(64, "max outstanding requests")

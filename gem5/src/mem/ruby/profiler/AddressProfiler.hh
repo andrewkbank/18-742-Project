@@ -30,21 +30,27 @@
 #define __MEM_RUBY_PROFILER_ADDRESSPROFILER_HH__
 
 #include <iostream>
+#include <unordered_map>
 
-#include "base/hashmap.hh"
-#include "mem/protocol/AccessType.hh"
-#include "mem/protocol/RubyRequest.hh"
 #include "mem/ruby/common/Address.hh"
 #include "mem/ruby/common/Histogram.hh"
 #include "mem/ruby/profiler/AccessTraceForAddress.hh"
 #include "mem/ruby/profiler/Profiler.hh"
+#include "mem/ruby/protocol/AccessType.hh"
+#include "mem/ruby/slicc_interface/RubyRequest.hh"
+
+namespace gem5
+{
+
+namespace ruby
+{
 
 class Set;
 
 class AddressProfiler
 {
   public:
-    typedef m5::hash_map<Addr, AccessTraceForAddress> AddressMap;
+    typedef std::unordered_map<Addr, AccessTraceForAddress> AddressMap;
 
   public:
     AddressProfiler(int num_of_sequencers, Profiler *profiler);
@@ -111,5 +117,8 @@ operator<<(std::ostream& out, const AddressProfiler& obj)
     out << std::flush;
     return out;
 }
+
+} // namespace ruby
+} // namespace gem5
 
 #endif // __MEM_RUBY_PROFILER_ADDRESSPROFILER_HH__

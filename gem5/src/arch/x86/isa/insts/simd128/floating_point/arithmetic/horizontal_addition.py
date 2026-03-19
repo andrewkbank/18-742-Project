@@ -32,10 +32,8 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Gabe Black
 
-microcode = '''
+microcode = """
 def macroop HADDPS_XMM_XMM {
     shuffle ufp1, xmml, xmmh, ext=((0 << 0) | (2 << 2)), size=4
     shuffle ufp2, xmml, xmmh, ext=((1 << 0) | (3 << 2)), size=4
@@ -93,4 +91,4 @@ def macroop HADDPD_XMM_P {
     maddf xmml, xmmh, xmml, size=8, ext=Scalar
     maddf xmmh, ufp1, ufp2, size=8, ext=Scalar
 };
-'''
+"""

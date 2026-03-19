@@ -32,10 +32,8 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Gabe Black
 
-microcode = '''
+microcode = """
 def macroop PREFETCH_M
 {
     ld t0, seg, sib, disp, dataSize=1, prefetch=True
@@ -58,9 +56,44 @@ def macroop PREFETCH_T0_P
     ld t0, seg, riprel, disp, dataSize=1, prefetch=True
 };
 
-'''
+def macroop CLFLUSH_M
+{
+    clflushopt seg, sib, disp, dataSize=1
+    mfence
+};
 
-#let {{
+def macroop CLFLUSH_P
+{
+    rdip t7
+    clflushopt seg, riprel, disp, dataSize=1
+    mfence
+};
+
+def macroop CLFLUSHOPT_M
+{
+    clflushopt seg, sib, disp, dataSize=1
+};
+
+def macroop CLFLUSHOPT_P
+{
+    rdip t7
+    clflushopt seg, riprel, disp, dataSize=1
+};
+
+def macroop CLWB_M
+{
+    clwb seg, sib, disp, dataSize=1
+};
+
+def macroop CLWB_P
+{
+    rdip t7
+    clwb seg, riprel, disp, dataSize=1
+};
+
+"""
+
+# let {{
 #    class LFENCE(Inst):
 #       "GenFault ${new UnimpInstFault}"
 #    class SFENCE(Inst):
@@ -71,6 +104,4 @@ def macroop PREFETCH_T0_P
 #       "GenFault ${new UnimpInstFault}"
 #    class PREFETCHW(Inst):
 #       "GenFault ${new UnimpInstFault}"
-#    class CLFLUSH(Inst):
-#       "GenFault ${new UnimpInstFault}"
-#}};
+# }};

@@ -32,10 +32,8 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Gabe Black
 
-microcode = '''
+microcode = """
 def macroop PSHUFW_MMX_MMX_I {
     shuffle mmx, mmxm, mmxm, size=2, ext=imm
 };
@@ -51,5 +49,5 @@ def macroop PSHUFW_MMX_P_I {
     shuffle mmx, ufp1, ufp1, size=2, ext=imm
 };
 
-'''
+"""
 # PSWAPD

@@ -23,16 +23,12 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Nathan Binkert
 
-import internal
-import util
-
-from internal.trace import output, ignore
-
-def disable():
-    internal.trace.cvar.enabled = False
-
-def enable():
-    internal.trace.cvar.enabled = True
+# Export native methods to Python
+from _m5.trace import (
+    activate,
+    disable,
+    enable,
+    ignore,
+    output,
+)

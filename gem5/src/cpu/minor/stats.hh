@@ -33,8 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andrew Bardsley
  */
 
 /**
@@ -50,39 +48,23 @@
 #include "cpu/base.hh"
 #include "sim/ticked_object.hh"
 
-namespace Minor
+namespace gem5
+{
+
+namespace minor
 {
 
 /** Currently unused stats class. */
-class MinorStats
+struct MinorStats : public statistics::Group
 {
-  public:
-    /** Number of simulated instructions */
-    Stats::Scalar numInsts;
-
-    /** Number of simulated insts and microops */
-    Stats::Scalar numOps;
-
-    /** Number of ops discarded before committing */
-    Stats::Scalar numDiscardedOps;
-
-    /** Number of times fetch was asked to suspend by Execute */
-    Stats::Scalar numFetchSuspends;
+    MinorStats(BaseCPU *parent);
 
     /** Number of cycles in quiescent state */
-    Stats::Scalar quiesceCycles;
+    statistics::Scalar quiesceCycles;
 
-    /** CPI/IPC for total cycle counts and macro insts */
-    Stats::Formula cpi;
-    Stats::Formula ipc;
-
-  public:
-    MinorStats();
-
-  public:
-    void regStats(const std::string &name, BaseCPU &baseCpu);
 };
 
-}
+} // namespace minor
+} // namespace gem5
 
 #endif /* __CPU_MINOR_STATS_HH__ */

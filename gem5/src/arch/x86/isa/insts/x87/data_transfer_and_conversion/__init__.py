@@ -32,19 +32,19 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Gabe Black
 
-categories = ["load_or_store_floating_point",
-              "convert_and_load_or_store_integer",
-              "convert_and_load_or_store_bcd",
-              "conditional_move",
-              "exchange",
-              "extract"]
+categories = [
+    "load_or_store_floating_point",
+    "convert_and_load_or_store_integer",
+    "convert_and_load_or_store_bcd",
+    "conditional_move",
+    "exchange",
+    "extract",
+]
 
-microcode = '''
+microcode = """
 # X86 microcode
-'''
+"""
 for category in categories:
-    exec "import %s as cat" % category
+    exec(f"from . import {category} as cat")
     microcode += cat.microcode

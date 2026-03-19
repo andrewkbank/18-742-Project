@@ -26,18 +26,26 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "base/stl_helpers.hh"
 #include "mem/ruby/common/SubBlock.hh"
 
-using m5::stl_helpers::operator<<;
+#include "base/stl_helpers.hh"
 
-SubBlock::SubBlock(Addr addr, int size)
+namespace gem5
+{
+
+namespace ruby
+{
+
+using stl_helpers::operator<<;
+
+SubBlock::SubBlock(Addr addr, int size, int cl_bits)
 {
     m_address = addr;
     resize(size);
     for (int i = 0; i < size; i++) {
         setByte(i, 0);
     }
+    m_cache_line_bits = cl_bits;
 }
 
 void
@@ -45,7 +53,7 @@ SubBlock::internalMergeFrom(const DataBlock& data)
 {
     int size = getSize();
     assert(size > 0);
-    int offset = getOffset(m_address);
+    int offset = getOffset(m_address, m_cache_line_bits);
     for (int i = 0; i < size; i++) {
         this->setByte(i, data.getByte(offset + i));
     }
@@ -56,7 +64,7 @@ SubBlock::internalMergeTo(DataBlock& data) const
 {
     int size = getSize();
     assert(size > 0);
-    int offset = getOffset(m_address);
+    int offset = getOffset(m_address, m_cache_line_bits);
     for (int i = 0; i < size; i++) {
         // This will detect crossing a cache line boundary
         data.setByte(offset + i, this->getByte(i));
@@ -69,5 +77,5 @@ SubBlock::print(std::ostream& out) const
     out << "[" << m_address << ", " << getSize() << ", " << m_data << "]";
 }
 
-
-
+} // namespace ruby
+} // namespace gem5

@@ -1,5 +1,19 @@
 /*
+ * Copyright (c) 2020 Inria
+ * Copyright (c) 2019,2021 ARM Limited
+ * All rights reserved.
+ *
+ * The license below extends only to copyright in the software and shall
+ * not be construed as granting a license to any other intellectual
+ * property including but not limited to intellectual property relating
+ * to a hardware implementation of the functionality of the software
+ * licensed hereunder.  You may use the software subject to the license
+ * terms below provided that you ensure that this notice is replicated
+ * unmodified and in its entirety in all distributions of the software,
+ * modified or unmodified, in source code or in binary form.
+ *
  * Copyright (c) 1999-2008 Mark D. Hill and David A. Wood
+ * Copyright (c) 2025 Google
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,139 +40,97 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <numeric>
-
-#include "base/cast.hh"
-#include "base/stl_helpers.hh"
-#include "mem/ruby/network/MessageBuffer.hh"
-#include "mem/ruby/network/simple/PerfectSwitch.hh"
-#include "mem/ruby/network/simple/SimpleNetwork.hh"
 #include "mem/ruby/network/simple/Switch.hh"
-#include "mem/ruby/network/simple/Throttle.hh"
 
-using namespace std;
-using m5::stl_helpers::deletePointers;
-using m5::stl_helpers::operator<<;
+#include "base/cprintf.hh"
+#include "mem/ruby/network/MessageBuffer.hh"
+#include "mem/ruby/network/simple/SimpleNetwork.hh"
 
-Switch::Switch(const Params *p) : BasicRouter(p)
+namespace gem5
 {
-    m_perfect_switch = new PerfectSwitch(m_id, this, p->virt_nets);
-    m_port_buffers = p->port_buffers;
-    m_num_connected_buffers = 0;
-}
 
-Switch::~Switch()
+namespace ruby
 {
-    delete m_perfect_switch;
 
-    // Delete throttles (one per output port)
-    deletePointers(m_throttles);
+using stl_helpers::operator<<;
 
-    // Delete MessageBuffers
-    deletePointers(m_port_buffers);
+Switch::Switch(const Params &p)
+  : BasicRouter(p),
+    perfectSwitch(m_id, this, p.virt_nets),
+    m_int_routing_latency(p.int_routing_latency),
+    m_ext_routing_latency(p.ext_routing_latency),
+    m_routing_unit(*p.routing_unit), m_num_connected_buffers(0),
+    switchStats(this)
+{
+    m_port_buffers.reserve(p.port_buffers.size());
+    for (auto& buffer : p.port_buffers) {
+        m_port_buffers.emplace_back(buffer);
+    }
 }
 
 void
 Switch::init()
 {
     BasicRouter::init();
-    m_perfect_switch->init(m_network_ptr);
+    perfectSwitch.init(m_network_ptr);
+    m_routing_unit.init_parent(this);
 }
 
 void
-Switch::addInPort(const vector<MessageBuffer*>& in)
+Switch::addInPort(const std::vector<MessageBuffer*>& in)
 {
-    m_perfect_switch->addInPort(in);
+    perfectSwitch.addInPort(in);
 }
 
 void
-Switch::addOutPort(const vector<MessageBuffer*>& out,
+Switch::addOutPort(std::string link_name,
+                   const std::vector<MessageBuffer*>& out,
                    const NetDest& routing_table_entry,
-                   Cycles link_latency, int bw_multiplier)
+                   Cycles link_latency, int link_weight,
+                   int bw_multiplier,
+                   bool is_external,
+                   PortDirection dst_inport)
 {
-    // Create a throttle
-    RubySystem *rs = m_network_ptr->params()->ruby_system;
-    Throttle* throttle_ptr = new Throttle(m_id, rs, m_throttles.size(),
-                                          link_latency, bw_multiplier,
-                                          m_network_ptr->getEndpointBandwidth(),
-                                          this);
+    const std::vector<int> &physical_vnets_channels =
+        m_network_ptr->params().physical_vnets_channels;
 
-    m_throttles.push_back(throttle_ptr);
+    // Create a throttle
+    if (physical_vnets_channels.size() > 0 && !out.empty()) {
+        // Assign a different bandwith for each vnet channel if specified by
+        // physical_vnets_bandwidth, otherwise all channels use bw_multiplier
+        std::vector<int> physical_vnets_bandwidth =
+            m_network_ptr->params().physical_vnets_bandwidth;
+        physical_vnets_bandwidth.resize(out.size(), bw_multiplier);
+
+        throttles.emplace_back(m_id, m_network_ptr->params().ruby_system,
+            throttles.size(), link_latency,
+            physical_vnets_channels, physical_vnets_bandwidth,
+            m_network_ptr->getEndpointBandwidth(), this, link_name);
+    } else {
+        throttles.emplace_back(m_id, m_network_ptr->params().ruby_system,
+            throttles.size(), link_latency, bw_multiplier,
+            m_network_ptr->getEndpointBandwidth(), this, link_name);
+    }
 
     // Create one buffer per vnet (these are intermediaryQueues)
-    vector<MessageBuffer*> intermediateBuffers;
+    std::vector<MessageBuffer*> intermediateBuffers;
 
     for (int i = 0; i < out.size(); ++i) {
         assert(m_num_connected_buffers < m_port_buffers.size());
-        MessageBuffer* buffer_ptr = m_port_buffers[m_num_connected_buffers];
+        MessageBuffer* buffer_ptr =
+            m_port_buffers[m_num_connected_buffers];
         m_num_connected_buffers++;
         intermediateBuffers.push_back(buffer_ptr);
     }
 
+    Tick routing_latency = is_external ? cyclesToTicks(m_ext_routing_latency) :
+                                         cyclesToTicks(m_int_routing_latency);
     // Hook the queues to the PerfectSwitch
-    m_perfect_switch->addOutPort(intermediateBuffers, routing_table_entry);
+    perfectSwitch.addOutPort(intermediateBuffers, routing_table_entry,
+                             dst_inport, routing_latency, link_weight);
 
     // Hook the queues to the Throttle
-    throttle_ptr->addLinks(intermediateBuffers, out);
-}
-
-const Throttle*
-Switch::getThrottle(LinkID link_number) const
-{
-    assert(m_throttles[link_number] != NULL);
-    return m_throttles[link_number];
-}
-
-void
-Switch::regStats()
-{
-    for (int link = 0; link < m_throttles.size(); link++) {
-        m_throttles[link]->regStats(name());
-    }
-
-    m_avg_utilization.name(name() + ".percent_links_utilized");
-    for (unsigned int i = 0; i < m_throttles.size(); i++) {
-        m_avg_utilization += m_throttles[i]->getUtilization();
-    }
-    m_avg_utilization /= Stats::constant(m_throttles.size());
-
-    for (unsigned int type = MessageSizeType_FIRST;
-         type < MessageSizeType_NUM; ++type) {
-        m_msg_counts[type]
-            .name(name() + ".msg_count." +
-                MessageSizeType_to_string(MessageSizeType(type)))
-            .flags(Stats::nozero)
-            ;
-        m_msg_bytes[type]
-            .name(name() + ".msg_bytes." +
-                MessageSizeType_to_string(MessageSizeType(type)))
-            .flags(Stats::nozero)
-            ;
-
-        for (unsigned int i = 0; i < m_throttles.size(); i++) {
-            m_msg_counts[type] += m_throttles[i]->getMsgCount(type);
-        }
-        m_msg_bytes[type] = m_msg_counts[type] * Stats::constant(
-                Network::MessageSizeType_to_int(MessageSizeType(type)));
-    }
-}
-
-void
-Switch::resetStats()
-{
-    m_perfect_switch->clearStats();
-    for (int i = 0; i < m_throttles.size(); i++) {
-        m_throttles[i]->clearStats();
-    }
-}
-
-void
-Switch::collateStats()
-{
-    m_perfect_switch->collateStats();
-    for (int i = 0; i < m_throttles.size(); i++) {
-        m_throttles[i]->collateStats();
-    }
+    throttles.back().addLinks(intermediateBuffers, out);
 }
 
 void
@@ -171,13 +143,22 @@ Switch::print(std::ostream& out) const
 bool
 Switch::functionalRead(Packet *pkt)
 {
-    // Access the buffers in the switch for performing a functional read
     for (unsigned int i = 0; i < m_port_buffers.size(); ++i) {
-        if (m_port_buffers[i]->functionalRead(pkt)) {
+        if (m_port_buffers[i]->functionalRead(pkt))
             return true;
-        }
     }
     return false;
+}
+
+bool
+Switch::functionalRead(Packet *pkt, WriteMask &mask)
+{
+    bool read = false;
+    for (unsigned int i = 0; i < m_port_buffers.size(); ++i) {
+        if (m_port_buffers[i]->functionalRead(pkt, mask))
+            read = true;
+    }
+    return read;
 }
 
 uint32_t
@@ -191,8 +172,55 @@ Switch::functionalWrite(Packet *pkt)
     return num_functional_writes;
 }
 
-Switch *
-SwitchParams::create()
+Switch::SwitchStats::SwitchStats(Switch *parent)
+    : statistics::Group(parent),
+      parent(parent),
+      ADD_STAT(percent_links_utilized, statistics::units::Ratio::get(),
+               "Percent utilization of all links (out of 100)")
 {
-    return new Switch(this);
+    for (unsigned int type = MessageSizeType_FIRST; type < MessageSizeType_NUM;
+         ++type) {
+        std::string name_count = csprintf(
+            "msg_count.%s", MessageSizeType_to_string(MessageSizeType(type)));
+        auto msg_count = new statistics::Formula(
+            parent, name_count.c_str(), statistics::units::Count::get(),
+            "Total messages through switch");
+        msg_count->flags(statistics::nozero);
+
+        std::string name_bytes = csprintf(
+            "msg_bytes.%s", MessageSizeType_to_string(MessageSizeType(type)));
+        auto msg_bytes = new statistics::Formula(
+            parent, name_bytes.c_str(), statistics::units::Byte::get(),
+            "Total bytes through switch");
+        msg_bytes->flags(statistics::nozero);
+
+        m_msg_counts.push_back(msg_count);
+        m_msg_bytes.push_back(msg_bytes);
+    }
 }
+
+void
+Switch::SwitchStats::regStats()
+{
+    // Note: Throttles are not available at construction time only at regStats
+    for (const auto &throttle : parent->throttles) {
+        percent_links_utilized += throttle.getUtilization();
+    }
+    percent_links_utilized /= statistics::constant(parent->throttles.size());
+
+    for (unsigned int type = MessageSizeType_FIRST; type < MessageSizeType_NUM;
+         ++type) {
+        for (const auto &throttle : parent->throttles) {
+            *(m_msg_counts[type]) += throttle.getMsgCount(type);
+        }
+        *(m_msg_bytes[type]) =
+            *(m_msg_counts[type]) *
+            statistics::constant(
+                Network::MessageSizeType_to_int(MessageSizeType(type)));
+    }
+
+    statistics::Group::regStats();
+}
+
+} // namespace ruby
+} // namespace gem5

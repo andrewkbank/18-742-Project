@@ -1,4 +1,16 @@
 /*
+ * Copyright (c) 2017-2018 ARM Limited
+ * All rights reserved.
+ *
+ * The license below extends only to copyright in the software and shall
+ * not be construed as granting a license to any other intellectual
+ * property including but not limited to intellectual property relating
+ * to a hardware implementation of the functionality of the software
+ * licensed hereunder.  You may use the software subject to the license
+ * terms below provided that you ensure that this notice is replicated
+ * unmodified and in its entirety in all distributions of the software,
+ * modified or unmodified, in source code or in binary form.
+ *
  * Copyright (c) 2002-2005 The Regents of The University of Michigan
  * All rights reserved.
  *
@@ -24,18 +36,23 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nathan Binkert
  */
 
 #ifndef __BASE_REFCNT_HH__
 #define __BASE_REFCNT_HH__
+
+#include <type_traits>
+
+#include "base/compiler.hh"
 
 /**
  * @file base/refcnt.hh
  *
  * Classes for managing reference counted objects.
  */
+
+namespace gem5
+{
 
 /**
  * Derive from RefCounted if you want to enable reference counting of
@@ -80,11 +97,15 @@ class RefCounted
     virtual ~RefCounted() {}
 
     /// Increment the reference count
-    void incref() { ++count; }
+    void incref() const { ++count; }
 
-    /// Decrement the reference count and destroy the object if all
-    /// references are gone.
-    void decref() { if (--count <= 0) delete this; }
+    /// Decrement the reference count and return true if all references
+    /// are gone.
+    bool
+    decref() const
+    {
+        return --count <= 0;
+    }
 };
 
 /**
@@ -105,7 +126,22 @@ class RefCounted
 template <class T>
 class RefCountingPtr
 {
+  public:
+    using PtrType = T*;
+
   protected:
+    /** Convenience aliases for const/non-const versions of T w/ friendship. */
+    /** @{ */
+    static constexpr auto TisConst = std::is_const_v<T>;
+    using ConstT = typename std::conditional_t<TisConst,
+            RefCountingPtr<T>,
+            RefCountingPtr<typename std::add_const<T>::type>>;
+    friend ConstT;
+    using NonConstT = typename std::conditional_t<TisConst,
+            RefCountingPtr<typename std::remove_const<T>::type>,
+            RefCountingPtr<T>>;
+    friend NonConstT;
+    /** @} */
     /// The stored pointer.
     /// Arguably this should be private.
     T *data;
@@ -129,11 +165,12 @@ class RefCountingPtr
      * @attention this doesn't clear the pointer value, so a double
      * decref could happen if not careful.
      */
-    void
+    GEM5_NO_INLINE void
     del()
     {
-        if (data)
-            data->decref();
+        if (data && data->decref()) {
+            delete data;
+        }
     }
 
     /**
@@ -163,6 +200,18 @@ class RefCountingPtr
     /// one.  Adds a reference.
     RefCountingPtr(const RefCountingPtr &r) { copy(r.data); }
 
+    /** Move-constructor.
+     * Does not add a reference.
+     */
+    RefCountingPtr(RefCountingPtr&& r)
+    {
+        data = r.data;
+        r.data = nullptr;
+    }
+
+    template <bool B = TisConst>
+    RefCountingPtr(const NonConstT &r) { copy(r.data); }
+
     /// Destroy the pointer and any reference it may hold.
     ~RefCountingPtr() { del(); }
 
@@ -179,52 +228,98 @@ class RefCountingPtr
     /// Directly access the pointer itself without taking a reference.
     T *get() const { return data; }
 
+    template <bool B = TisConst>
+    operator RefCountingPtr<typename std::enable_if_t<!B, ConstT>>()
+    {
+        return RefCountingPtr<const T>(*this);
+    }
+
     /// Assign a new value to the pointer
     const RefCountingPtr &operator=(T *p) { set(p); return *this; }
 
     /// Copy the pointer from another RefCountingPtr
-    const RefCountingPtr &operator=(const RefCountingPtr &r)
-    { return operator=(r.data); }
+    const RefCountingPtr &
+    operator=(const RefCountingPtr &r)
+    {
+        return operator=(r.data);
+    }
+
+    /// Move-assign the pointer from another RefCountingPtr
+    const RefCountingPtr &
+    operator=(RefCountingPtr&& r)
+    {
+        /* This happens regardless of whether the pointer is the same or not,
+         * because of the move semantics, the rvalue needs to be 'destroyed'.
+         */
+        del();
+        data = r.data;
+        r.data = nullptr;
+        return *this;
+    }
 
     /// Check if the pointer is empty
     bool operator!() const { return data == 0; }
 
     /// Check if the pointer is non-empty
-    operator bool() const { return data != 0; }
+    explicit
+    operator bool() const
+    {
+        return data != 0;
+    }
 };
 
 /// Check for equality of two reference counting pointers.
 template<class T>
-inline bool operator==(const RefCountingPtr<T> &l, const RefCountingPtr<T> &r)
-{ return l.get() == r.get(); }
+inline bool
+operator==(const RefCountingPtr<T> &l, const RefCountingPtr<T> &r)
+{
+    return l.get() == r.get();
+}
 
 /// Check for equality of of a reference counting pointers and a
 /// regular pointer
 template<class T>
-inline bool operator==(const RefCountingPtr<T> &l, const T *r)
-{ return l.get() == r; }
+inline bool
+operator==(const RefCountingPtr<T> &l, const T *r)
+{
+    return l.get() == r;
+}
 
 /// Check for equality of of a reference counting pointers and a
 /// regular pointer
 template<class T>
-inline bool operator==(const T *l, const RefCountingPtr<T> &r)
-{ return l == r.get(); }
+inline bool
+operator==(const T *l, const RefCountingPtr<T> &r)
+{
+    return l == r.get();
+}
 
 /// Check for inequality of two reference counting pointers.
 template<class T>
-inline bool operator!=(const RefCountingPtr<T> &l, const RefCountingPtr<T> &r)
-{ return l.get() != r.get(); }
+inline bool
+operator!=(const RefCountingPtr<T> &l, const RefCountingPtr<T> &r)
+{
+    return l.get() != r.get();
+}
 
 /// Check for inequality of of a reference counting pointers and a
 /// regular pointer
 template<class T>
-inline bool operator!=(const RefCountingPtr<T> &l, const T *r)
-{ return l.get() != r; }
+inline bool
+operator!=(const RefCountingPtr<T> &l, const T *r)
+{
+    return l.get() != r;
+}
 
 /// Check for inequality of of a reference counting pointers and a
 /// regular pointer
 template<class T>
-inline bool operator!=(const T *l, const RefCountingPtr<T> &r)
-{ return l != r.get(); }
+inline bool
+operator!=(const T *l, const RefCountingPtr<T> &r)
+{
+    return l != r.get();
+}
+
+} // namespace gem5
 
 #endif // __BASE_REFCNT_HH__

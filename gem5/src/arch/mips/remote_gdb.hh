@@ -1,4 +1,5 @@
 /*
+ * Copyright 2015-2020 LabWare
  * Copyright 2014 Google, Inc.
  * Copyright (c) 2007 The Regents of The University of Michigan
  * All rights reserved.
@@ -25,16 +26,16 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nathan Binkert
  */
 
 #ifndef __ARCH_MIPS_REMOTE_GDB_HH__
 #define __ARCH_MIPS_REMOTE_GDB_HH__
 
-#include "arch/mips/registers.hh"
 #include "base/bitfield.hh"
 #include "base/remote_gdb.hh"
+
+namespace gem5
+{
 
 class System;
 class ThreadContext;
@@ -42,27 +43,54 @@ class ThreadContext;
 namespace MipsISA
 {
 
-    // The number of special regs depends on gdb.
-    const int GdbIntArchRegs = NumIntArchRegs;
-    const int GdbIntSpecialRegs = 6;
-    const int GdbFloatArchRegs = NumFloatArchRegs;
-    const int GdbFloatSpecialRegs = 2;
+class RemoteGDB : public BaseRemoteGDB
+{
+  protected:
+    bool acc(Addr addr, size_t len);
 
-    const int GdbIntRegs = GdbIntArchRegs + GdbIntSpecialRegs;
-    const int GdbFloatRegs = GdbFloatArchRegs + GdbFloatSpecialRegs;
-    const int GdbNumRegs = GdbIntRegs + GdbFloatRegs;
-
-    class RemoteGDB : public BaseRemoteGDB
+    class MipsGdbRegCache : public BaseGdbRegCache
     {
+      using BaseGdbRegCache::BaseGdbRegCache;
+      private:
+        struct
+        {
+            uint32_t gpr[32];
+            uint32_t sr;
+            uint32_t lo;
+            uint32_t hi;
+            uint32_t badvaddr;
+            uint32_t cause;
+            uint32_t pc;
+            uint32_t fpr[32];
+            uint32_t fsr;
+            uint32_t fir;
+        } r;
       public:
-        RemoteGDB(System *_system, ThreadContext *tc);
-
-      protected:
-        bool acc(Addr addr, size_t len);
-
-        void getregs();
-        void setregs();
+        char *data() { return (char *)&r; }
+        size_t size() const { return sizeof(r); }
+        void getRegs(ThreadContext*);
+        void setRegs(ThreadContext*) const;
+        const std::string
+        name() const
+        {
+            return gdb->name() + ".MipsGdbRegCache";
+        }
     };
-}
+
+    MipsGdbRegCache regCache;
+
+  public:
+    RemoteGDB(System *_system, ListenSocketConfig _listen_config);
+    BaseGdbRegCache *gdbRegs();
+    std::vector<std::string>
+    availableFeatures() const
+    {
+        return {"qXfer:features:read+"};
+    };
+    bool getXferFeaturesRead(const std::string &annex, std::string &output);
+};
+
+} // namespace MipsISA
+} // namespace gem5
 
 #endif /* __ARCH_MIPS_REMOTE_GDB_H__ */

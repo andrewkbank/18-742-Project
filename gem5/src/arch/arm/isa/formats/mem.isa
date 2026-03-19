@@ -1,6 +1,6 @@
 // -*- mode:c++ -*-
 
-// Copyright (c) 2010 ARM Limited
+// Copyright (c) 2010,2019 ARM Limited
 // All rights reserved
 //
 // The license below extends only to copyright in the software and shall
@@ -37,8 +37,6 @@
 // THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// Authors: Gabe Black
 
 def format AddrMode2(imm) {{
     if eval(imm):
@@ -222,28 +220,57 @@ def format AddrMode3() {{
 def format ArmSyncMem() {{
     decode_block = '''
     {
-        const IntRegIndex rn = (IntRegIndex)(uint32_t)bits(machInst, 19, 16);
-        const IntRegIndex rt = (IntRegIndex)(uint32_t)bits(machInst, 15, 12);
-        const IntRegIndex rt2 = (IntRegIndex)(uint32_t)bits(machInst, 3, 0);
-        switch (PUBWL) {
-          case 0x10:
-            return new Swp(machInst, rt, rt2, rn);
-          case 0x14:
-            return new Swpb(machInst, rt, rt2, rn);
-          case 0x18:
+        const RegIndex rn = (RegIndex)(uint32_t)bits(machInst, 19, 16);
+        const RegIndex rt = (RegIndex)(uint32_t)bits(machInst, 15, 12);
+        const RegIndex rt2 = (RegIndex)(uint32_t)bits(machInst, 3, 0);
+
+        const auto type_L = bits(machInst, 22, 20);
+        const auto ex_ord = bits(machInst, 9, 8);
+        const auto dec_fields = (type_L << 2) | ex_ord;
+
+        switch (dec_fields) {
+          case 0x00:
+            return new %(stl)s(machInst, rt, rn, true, 0);
+          case 0x02:
+            return new %(stlex)s(machInst, rt, rt2, rn, true, 0);
+          case 0x03:
             return new %(strex)s(machInst, rt, rt2, rn, true, 0);
-          case 0x19:
+          case 0x04:
+            return new %(lda)s(machInst, rt, rn, true, 0);
+          case 0x06:
+            return new %(ldaex)s(machInst, rt, rn, true, 0);
+          case 0x07:
             return new %(ldrex)s(machInst, rt, rn, true, 0);
-          case 0x1a:
+          case 0x0a:
+            return new %(stlexd)s(machInst, rt, rt2, rt2 + 1, rn, true, 0);
+          case 0x0b:
             return new %(strexd)s(machInst, rt, rt2, rt2 + 1, rn, true, 0);
-          case 0x1b:
+          case 0x0e:
+            return new %(ldaexd)s(machInst, rt, rt + 1, rn, true, 0);
+          case 0x0f:
             return new %(ldrexd)s(machInst, rt, rt + 1, rn, true, 0);
-          case 0x1c:
+          case 0x10:
+            return new %(stlb)s(machInst, rt, rn, true, 0);
+          case 0x12:
+            return new %(stlexb)s(machInst, rt, rt2, rn, true, 0);
+          case 0x13:
             return new %(strexb)s(machInst, rt, rt2, rn, true, 0);
-          case 0x1d:
+          case 0x14:
+            return new %(ldab)s(machInst, rt, rn, true, 0);
+          case 0x16:
+            return new %(ldaexb)s(machInst, rt, rn, true, 0);
+          case 0x17:
             return new %(ldrexb)s(machInst, rt, rn, true, 0);
-          case 0x1e:
+          case 0x18:
+            return new %(stlh)s(machInst, rt, rn, true, 0);
+          case 0x1a:
+            return new %(stlexh)s(machInst, rt, rt2, rn, true, 0);
+          case 0x1b:
             return new %(strexh)s(machInst, rt, rt2, rn, true, 0);
+          case 0x1c:
+            return new %(ldah)s(machInst, rt, rn, true, 0);
+          case 0x1e:
+            return new %(ldaexh)s(machInst, rt, rn, true, 0);
           case 0x1f:
             return new %(ldrexh)s(machInst, rt, rn, true, 0);
           default:
@@ -258,7 +285,23 @@ def format ArmSyncMem() {{
         "strex" : "STREX_" + storeImmClassName(False, True, False, size=4),
         "strexb" : "STREXB_" + storeImmClassName(False, True, False, size=1),
         "strexh" : "STREXH_" + storeImmClassName(False, True, False, size=2),
-        "strexd" : "STREXD_" + storeDoubleImmClassName(False, True, False)
+        "strexd" : "STREXD_" + storeDoubleImmClassName(False, True, False),
+
+        "lda" : "LDA_" + loadImmClassName(False, True, False, size=4),
+        "ldab" : "LDAB_" + loadImmClassName(False, True, False, size=1),
+        "ldah" : "LDAH_" + loadImmClassName(False, True, False, size=2),
+        "ldaex" : "LDAEX_" + loadImmClassName(False, True, False, size=4),
+        "ldaexb" : "LDAEXB_" + loadImmClassName(False, True, False, size=1),
+        "ldaexh" : "LDAEXH_" + loadImmClassName(False, True, False, size=2),
+        "ldaexd" : "LDAEXD_" + loadDoubleImmClassName(False, True, False),
+
+        "stl" : "STL_" + storeImmClassName(False, True, False, size=4),
+        "stlb" : "STLB_" + storeImmClassName(False, True, False, size=1),
+        "stlh" : "STLH_" + storeImmClassName(False, True, False, size=2),
+        "stlex" : "STLEX_" + storeImmClassName(False, True, False, size=4),
+        "stlexb" : "STLEXB_" + storeImmClassName(False, True, False, size=1),
+        "stlexh" : "STLEXH_" + storeImmClassName(False, True, False, size=2),
+        "stlexd" : "STLEXD_" + storeDoubleImmClassName(False, True, False)
     }
 }};
 
@@ -269,8 +312,8 @@ def format Thumb32SrsRfe() {{
         const bool add = (bits(machInst, 24, 23) == 0x3);
         if (bits(machInst, 20) == 1) {
             // post == add
-            const IntRegIndex rn =
-                (IntRegIndex)(uint32_t)bits(machInst, 19, 16);
+            const RegIndex rn =
+                (RegIndex)(uint32_t)bits(machInst, 19, 16);
             if (!add && !wb) {
                 return new %(rfe)s(machInst, rn, RfeOp::DecrementBefore, wb);
             } else if (add && !wb) {
@@ -282,7 +325,12 @@ def format Thumb32SrsRfe() {{
             }
         } else {
             const uint32_t mode = bits(machInst, 4, 0);
-            if (badMode32((OperatingMode)mode))
+            // We check at decode stage if the mode exists even
+            // if the checking is re-done by Srs::execute.
+            // This is done because we will otherwise panic if
+            // trying to read the banked stack pointer of an
+            // unrecognized mode.
+            if (unknownMode32((OperatingMode)mode))
                 return new Unknown(machInst);
             if (!add && !wb) {
                 return new %(srs)s(machInst, mode,
@@ -317,10 +365,10 @@ def format Thumb32LdrStrDExTbh() {{
         const uint32_t op1 = bits(machInst, 24, 23);
         const uint32_t op2 = bits(machInst, 21, 20);
         const uint32_t op3 = bits(machInst, 7, 4);
-        const IntRegIndex rn = (IntRegIndex)(uint32_t)bits(machInst, 19, 16);
-        const IntRegIndex rt = (IntRegIndex)(uint32_t)bits(machInst, 15, 12);
-        const IntRegIndex rt2 = (IntRegIndex)(uint32_t)bits(machInst, 11, 8);
-        const IntRegIndex rd = (IntRegIndex)(uint32_t)bits(machInst, 3, 0);
+        const RegIndex rn = (RegIndex)(uint32_t)bits(machInst, 19, 16);
+        const RegIndex rt = (RegIndex)(uint32_t)bits(machInst, 15, 12);
+        const RegIndex rt2 = (RegIndex)(uint32_t)bits(machInst, 11, 8);
+        const RegIndex rd = (RegIndex)(uint32_t)bits(machInst, 3, 0);
         const uint32_t imm8 = bits(machInst, 7, 0);
         if (bits(op1, 1) == 0 && bits(op2, 1) == 0) {
             if (op1 == 0) {
@@ -340,6 +388,21 @@ def format Thumb32LdrStrDExTbh() {{
                       case 0x7:
                         return new %(strexd)s(machInst, rd, rt,
                                               rt2, rn, true, 0);
+                      case 0x8:
+                        return new %(stlb)s(machInst, rt, rn, true, 0);
+                      case 0x9:
+                        return new %(stlh)s(machInst, rt, rn, true, 0);
+                      case 0xa:
+                        return new %(stl)s(machInst, rt, rn, true, 0);
+                      case 0xc:
+                        return new %(stlexb)s(machInst, rd, rt, rn, true, 0);
+                      case 0xd:
+                        return new %(stlexh)s(machInst, rd, rt, rn, true, 0);
+                      case 0xe:
+                        return new %(stlex)s(machInst, rd, rt, rn, true, 0);
+                      case 0xf:
+                        return new %(stlexd)s(machInst, rd, rt,
+                                              rt2, rn, true, 0);
                       default:
                         return new Unknown(machInst);
                     }
@@ -355,6 +418,20 @@ def format Thumb32LdrStrDExTbh() {{
                         return new %(ldrexh)s(machInst, rt, rn, true, 0);
                       case 0x7:
                         return new %(ldrexd)s(machInst, rt, rt2, rn, true, 0);
+                      case 0x8:
+                        return new %(ldab)s(machInst, rt, rn, true, 0);
+                      case 0x9:
+                        return new %(ldah)s(machInst, rt, rn, true, 0);
+                      case 0xa:
+                        return new %(lda)s(machInst, rt, rn, true, 0);
+                      case 0xc:
+                        return new %(ldaexb)s(machInst, rt, rn, true, 0);
+                      case 0xd:
+                        return new %(ldaexh)s(machInst, rt, rn, true, 0);
+                      case 0xe:
+                        return new %(ldaex)s(machInst, rt, rn, true, 0);
+                      case 0xf:
+                        return new %(ldaexd)s(machInst, rt, rt2, rn, true, 0);
                       default:
                         return new Unknown(machInst);
                     }
@@ -421,7 +498,22 @@ def format Thumb32LdrStrDExTbh() {{
         "strd_p" : storeDoubleImmClassName(False, False, False),
         "strd_pw" : storeDoubleImmClassName(False, False, True),
         "strd_pu" : storeDoubleImmClassName(False, True, False),
-        "strd_puw" : storeDoubleImmClassName(False, True, True)
+        "strd_puw" : storeDoubleImmClassName(False, True, True),
+
+        "stl" : "STL_" + storeImmClassName(False, True, False, size=4),
+        "stlh" : "STLH_" + storeImmClassName(False, True, False, size=2),
+        "stlb" : "STLB_" + storeImmClassName(False, True, False, size=1),
+        "stlex" : "STLEX_" + storeImmClassName(False, True, False, size=4),
+        "stlexh" : "STLEXH_" + storeImmClassName(False, True, False, size=2),
+        "stlexb" : "STLEXB_" + storeImmClassName(False, True, False, size=1),
+        "stlexd" : "STLEXD_" + storeDoubleImmClassName(False, True, False),
+        "lda" : "LDA_" + loadImmClassName(False, True, False, size=4),
+        "ldah" : "LDAH_" + loadImmClassName(False, True, False, size=2),
+        "ldab" : "LDAB_" + loadImmClassName(False, True, False, size=1),
+        "ldaex" : "LDAEX_" + loadImmClassName(False, True, False, size=4),
+        "ldaexh" : "LDAEXH_" + loadImmClassName(False, True, False, size=2),
+        "ldaexb" : "LDAEXB_" + loadImmClassName(False, True, False, size=1),
+        "ldaexd" : "LDAEXD_" + loadDoubleImmClassName(False, True, False)
     }
 }};
 
@@ -433,10 +525,10 @@ def format Thumb32LoadWord() {{
             uint32_t op2 = bits(machInst, 11, 6);
             if (HTRN == 0xF) {
                 if (UP) {
-                    return new %(literal_u)s(machInst, RT, INTREG_PC,
+                    return new %(literal_u)s(machInst, RT, int_reg::Pc,
                                              true, IMMED_11_0);
                 } else {
-                    return new %(literal)s(machInst, RT, INTREG_PC,
+                    return new %(literal)s(machInst, RT, int_reg::Pc,
                                            false, IMMED_11_0);
                 }
             } else if (op1 == 0x1) {
@@ -470,6 +562,7 @@ def format Thumb32LoadWord() {{
                     return new %(imm_puw)s(machInst, RT, RN, true, imm);
                 }
             }
+          return new Unknown(machInst);
         } else {
             return new Unknown(machInst);
         }
@@ -514,6 +607,8 @@ def format Thumb32StoreSingle() {{
                         return new %(imm_pu)s(machInst, RT, RN, true, imm);
                       case 7:
                         return new %(imm_puw)s(machInst, RT, RN, true, imm);
+                      default:
+                        GEM5_UNREACHABLE;
                     }
                 }
         '''
@@ -588,9 +683,9 @@ def format LoadByteMemoryHints() {{
     {
         const uint32_t op1 = bits(machInst, 24, 23);
         const uint32_t op2 = bits(machInst, 11, 6);
-        const IntRegIndex rn = (IntRegIndex)(uint32_t)bits(machInst, 19, 16);
-        const IntRegIndex rt = (IntRegIndex)(uint32_t)bits(machInst, 15, 12);
-        const IntRegIndex rm = (IntRegIndex)(uint32_t)bits(machInst, 3, 0);
+        const RegIndex rn = (RegIndex)(uint32_t)bits(machInst, 19, 16);
+        const RegIndex rt = (RegIndex)(uint32_t)bits(machInst, 15, 12);
+        const RegIndex rm = (RegIndex)(uint32_t)bits(machInst, 3, 0);
         const uint32_t imm12 = bits(machInst, 11, 0);
         const uint32_t imm8 = bits(machInst, 7, 0);
         bool pldw = bits(machInst, 21);
@@ -600,36 +695,36 @@ def format LoadByteMemoryHints() {{
                 const bool add = bits(machInst, 23);
                 if (bits(op1, 1) == 1) {
                     if (add) {
-                        return new %(pli_iulit)s(machInst, INTREG_ZERO,
-                                                 INTREG_PC, true, imm12);
+                        return new %(pli_iulit)s(machInst, int_reg::Zero,
+                                                 int_reg::Pc, true, imm12);
                     } else {
-                        return new %(pli_ilit)s(machInst, INTREG_ZERO,
-                                                INTREG_PC, false, imm12);
+                        return new %(pli_ilit)s(machInst, int_reg::Zero,
+                                                int_reg::Pc, false, imm12);
                     }
                 } else {
                     if (add) {
-                        return new %(pld_iulit)s(machInst, INTREG_ZERO,
-                                                 INTREG_PC, true, imm12);
+                        return new %(pld_iulit)s(machInst, int_reg::Zero,
+                                                 int_reg::Pc, true, imm12);
                     } else {
-                        return new %(pld_ilit)s(machInst, INTREG_ZERO,
-                                                INTREG_PC, false, imm12);
+                        return new %(pld_ilit)s(machInst, int_reg::Zero,
+                                                int_reg::Pc, false, imm12);
                     }
                 }
             } else {
                 if (bits(op1, 1) == 1) {
                     if (bits(machInst, 23)) {
-                        return new %(ldrsb_lit_u)s(machInst, rt, INTREG_PC,
+                        return new %(ldrsb_lit_u)s(machInst, rt, int_reg::Pc,
                                                    true, imm12);
                     } else {
-                        return new %(ldrsb_lit)s(machInst, rt, INTREG_PC,
+                        return new %(ldrsb_lit)s(machInst, rt, int_reg::Pc,
                                                  false, imm12);
                     }
                 } else {
                     if (bits(machInst, 23)) {
-                        return new %(ldrb_lit_u)s(machInst, rt, INTREG_PC,
+                        return new %(ldrb_lit_u)s(machInst, rt, int_reg::Pc,
                                                   true, imm12);
                     } else {
-                        return new %(ldrb_lit)s(machInst, rt, INTREG_PC,
+                        return new %(ldrb_lit)s(machInst, rt, int_reg::Pc,
                                                 false, imm12);
                     }
                 }
@@ -639,42 +734,42 @@ def format LoadByteMemoryHints() {{
               case 0x0:
                 if (op2 == 0x0) {
                     if (pldw) {
-                        return new %(pldw_radd)s(machInst, INTREG_ZERO,
+                        return new %(pldw_radd)s(machInst, int_reg::Zero,
                                                  rn, true, imm2, LSL, rm);
                     } else {
-                        return new %(pld_radd)s(machInst, INTREG_ZERO,
+                        return new %(pld_radd)s(machInst, int_reg::Zero,
                                                 rn, true, imm2, LSL, rm);
                     }
                 } else if (bits(op2, 5, 2) == 0xc) {
                     if (pldw) {
-                        return new %(pldw_isub)s(machInst, INTREG_ZERO,
+                        return new %(pldw_isub)s(machInst, int_reg::Zero,
                                                  rn, false, imm8);
                     } else {
-                        return new %(pld_isub)s(machInst, INTREG_ZERO,
+                        return new %(pld_isub)s(machInst, int_reg::Zero,
                                                 rn, false, imm8);
                     }
                 }
                 break;
               case 0x1:
                 if (pldw) {
-                    return new %(pldw_iadd)s(machInst, INTREG_ZERO,
+                    return new %(pldw_iadd)s(machInst, int_reg::Zero,
                                              rn, true, imm12);
                 } else {
-                    return new %(pld_iadd)s(machInst, INTREG_ZERO,
+                    return new %(pld_iadd)s(machInst, int_reg::Zero,
                                             rn, true, imm12);
                 }
               case 0x2:
                 if (op2 == 0x0) {
-                    return new %(pli_radd)s(machInst, INTREG_ZERO, rn,
+                    return new %(pli_radd)s(machInst, int_reg::Zero, rn,
                                             true, imm2, LSL, rm);
                 } else if (bits(op2, 5, 2) == 0xc) {
-                    return new %(pli_ilit)s(machInst, INTREG_ZERO,
-                                            INTREG_PC, false, imm8);
+                    return new %(pli_ilit)s(machInst, int_reg::Zero,
+                                            int_reg::Pc, false, imm8);
                 }
                 break;
               case 0x3:
-                return new %(pli_iulit)s(machInst, INTREG_ZERO,
-                                        INTREG_PC, true, imm12);
+                return new %(pli_iulit)s(machInst, int_reg::Zero,
+                                        int_reg::Pc, true, imm12);
             }
             return new Unknown(machInst);
         } else {
@@ -785,9 +880,9 @@ def format LoadHalfwordMemoryHints() {{
     {
         const uint32_t op1 = bits(machInst, 24, 23);
         const uint32_t op2 = bits(machInst, 11, 6);
-        const IntRegIndex rn = (IntRegIndex)(uint32_t)bits(machInst, 19, 16);
-        const IntRegIndex rt = (IntRegIndex)(uint32_t)bits(machInst, 15, 12);
-        const IntRegIndex rm = (IntRegIndex)(uint32_t)bits(machInst, 3, 0);
+        const RegIndex rn = (RegIndex)(uint32_t)bits(machInst, 19, 16);
+        const RegIndex rt = (RegIndex)(uint32_t)bits(machInst, 15, 12);
+        const RegIndex rm = (RegIndex)(uint32_t)bits(machInst, 3, 0);
         const uint32_t imm12 = bits(machInst, 11, 0);
         const uint32_t imm8 = bits(machInst, 7, 0);
         bool pldw = bits(machInst, 21);
@@ -803,18 +898,18 @@ def format LoadHalfwordMemoryHints() {{
             } else {
                 if (bits(op1, 1) == 1) {
                     if (bits(machInst, 23)) {
-                        return new %(ldrsh_lit_u)s(machInst, rt, INTREG_PC,
+                        return new %(ldrsh_lit_u)s(machInst, rt, int_reg::Pc,
                                                    true, imm12);
                     } else {
-                        return new %(ldrsh_lit)s(machInst, rt, INTREG_PC,
+                        return new %(ldrsh_lit)s(machInst, rt, int_reg::Pc,
                                                  false, imm12);
                     }
                 } else {
                     if (bits(machInst, 23)) {
-                        return new %(ldrh_lit_u)s(machInst, rt, INTREG_PC,
+                        return new %(ldrh_lit_u)s(machInst, rt, int_reg::Pc,
                                                   true, imm12);
                     } else {
-                        return new %(ldrh_lit)s(machInst, rt, INTREG_PC,
+                        return new %(ldrh_lit)s(machInst, rt, int_reg::Pc,
                                                 false, imm12);
                     }
                 }
@@ -824,28 +919,28 @@ def format LoadHalfwordMemoryHints() {{
               case 0x0:
                 if (op2 == 0x0) {
                     if (pldw) {
-                        return new %(pldw_radd)s(machInst, INTREG_ZERO,
+                        return new %(pldw_radd)s(machInst, int_reg::Zero,
                                                  rn, true, imm2, LSL, rm);
                     } else {
-                        return new %(pld_radd)s(machInst, INTREG_ZERO,
+                        return new %(pld_radd)s(machInst, int_reg::Zero,
                                                 rn, true, imm2, LSL, rm);
                     }
                 } else if (bits(op2, 5, 2) == 0xc) {
                     if (pldw) {
-                        return new %(pldw_isub)s(machInst, INTREG_ZERO,
+                        return new %(pldw_isub)s(machInst, int_reg::Zero,
                                                  rn, false, imm8);
                     } else {
-                        return new %(pld_isub)s(machInst, INTREG_ZERO,
+                        return new %(pld_isub)s(machInst, int_reg::Zero,
                                                 rn, false, imm8);
                     }
                 }
                 break;
               case 0x1:
                 if (pldw) {
-                    return new %(pldw_iadd)s(machInst, INTREG_ZERO,
+                    return new %(pldw_iadd)s(machInst, int_reg::Zero,
                                              rn, true, imm12);
                 } else {
-                    return new %(pld_iadd)s(machInst, INTREG_ZERO,
+                    return new %(pld_iadd)s(machInst, int_reg::Zero,
                                             rn, true, imm12);
                 }
               case 0x2:
@@ -978,6 +1073,8 @@ def format Thumb16MemReg() {{
             return new %(ldrb)s(machInst, rt, rn, true, 0, LSL, rm);
           case 0x7:
             return new %(ldrsh)s(machInst, rt, rn, true, 0, LSL, rm);
+          default:
+            GEM5_UNREACHABLE;
         }
     }
     '''
@@ -1026,9 +1123,11 @@ def format Thumb16MemImm() {{
             }
           case 0x9:
             if (load) {
-                return new %(ldr)s(machInst, hrt, INTREG_SP, true, imm8 << 2);
+                return new %(ldr)s(machInst, hrt, int_reg::Sp, true,
+                                   imm8 << 2);
             } else {
-                return new %(str)s(machInst, hrt, INTREG_SP, true, imm8 << 2);
+                return new %(str)s(machInst, hrt, int_reg::Sp, true,
+                                   imm8 << 2);
             }
           default:
             return new Unknown(machInst);
@@ -1051,8 +1150,7 @@ def format Thumb16MemLit() {{
     {
         const uint32_t rt = bits(machInst, 10, 8);
         const uint32_t imm8 = bits(machInst, 7, 0);
-        return new %s(machInst, rt, INTREG_PC, true, imm8 << 2);
+        return new %s(machInst, rt, int_reg::Pc, true, imm8 << 2);
     }
     ''' % loadImmClassName(False, True, False)
 }};
-

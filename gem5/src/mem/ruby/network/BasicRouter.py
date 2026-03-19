@@ -23,14 +23,17 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Steve Reinhardt
-#          Brad Beckmann
 
+from m5.objects.ClockedObject import ClockedObject
 from m5.params import *
-from ClockedObject import ClockedObject
+
 
 class BasicRouter(ClockedObject):
-    type = 'BasicRouter'
+    type = "BasicRouter"
     cxx_header = "mem/ruby/network/BasicRouter.hh"
+    cxx_class = "gem5::ruby::BasicRouter"
+
     router_id = Param.Int("ID in relation to other routers")
+
+    # only used by garnet
+    latency = Param.Cycles(1, "number of cycles inside router")

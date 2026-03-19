@@ -1,4 +1,16 @@
 /*
+ * Copyright (c) 2022-2023 The University of Edinburgh
+ * All rights reserved
+ *
+ * The license below extends only to copyright in the software and shall
+ * not be construed as granting a license to any other intellectual
+ * property including but not limited to intellectual property relating
+ * to a hardware implementation of the functionality of the software
+ * licensed hereunder.  You may use the software subject to the license
+ * terms below provided that you ensure that this notice is replicated
+ * unmodified and in its entirety in all distributions of the software,
+ * modified or unmodified, in source code or in binary form.
+ *
  * Copyright (c) 2014 The Regents of The University of Michigan
  * All rights reserved.
  *
@@ -24,8 +36,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Anthony Gutierrez
  */
 
 /* @file
@@ -35,9 +45,15 @@
 #ifndef __CPU_PRED_BI_MODE_PRED_HH__
 #define __CPU_PRED_BI_MODE_PRED_HH__
 
-#include "cpu/pred/bpred_unit.hh"
-#include "cpu/pred/sat_counter.hh"
+#include "base/sat_counter.hh"
+#include "cpu/pred/conditional.hh"
 #include "params/BiModeBP.hh"
+
+namespace gem5
+{
+
+namespace branch_prediction
+{
 
 /**
  * Implements a bi-mode branch predictor. The bi-mode predictor is a two-level
@@ -53,21 +69,25 @@
  * the branch's PC to choose between the two, destructive aliasing is reduced.
  */
 
-class BiModeBP : public BPredUnit
+class BiModeBP : public ConditionalPredictor
 {
   public:
-    BiModeBP(const BiModeBPParams *params);
-    void uncondBranch(Addr pc, void * &bp_history);
-    void squash(void *bp_history);
-    bool lookup(Addr branch_addr, void * &bp_history);
-    void btbUpdate(Addr branch_addr, void * &bp_history);
-    void update(Addr branch_addr, bool taken, void *bp_history, bool squashed);
-    void retireSquashed(void *bp_history);
+    BiModeBP(const BiModeBPParams &params);
+    bool lookup(ThreadID tid, Addr pc, void * &bp_history) override;
+    void updateHistories(ThreadID tid, Addr pc, bool uncond, bool taken,
+                         Addr target, const StaticInstPtr &inst,
+                         void * &bp_history) override;
+    void squash(ThreadID tid, void * &bp_history) override;
+    void update(ThreadID tid, Addr pc, bool taken,
+                void * &bp_history, bool squashed,
+                const StaticInstPtr & inst, Addr target) override;
 
   private:
-    void updateGlobalHistReg(bool taken);
+    void updateGlobalHistReg(ThreadID tid, bool taken);
+    void uncondBranch(ThreadID tid, Addr pc, void * &bp_history);
 
-    struct BPHistory {
+    struct BPHistory
+    {
         unsigned globalHistoryReg;
         // was the taken array's prediction used?
         // true: takenPred used
@@ -87,14 +107,7 @@ class BiModeBP : public BPredUnit
         bool finalPred;
     };
 
-    // choice predictors
-    std::vector<SatCounter> choiceCounters;
-    // taken direction predictors
-    std::vector<SatCounter> takenCounters;
-    // not-taken direction predictors
-    std::vector<SatCounter> notTakenCounters;
-
-    unsigned globalHistoryReg;
+    std::vector<unsigned> globalHistoryReg;
     unsigned globalHistoryBits;
     unsigned historyRegisterMask;
 
@@ -105,9 +118,19 @@ class BiModeBP : public BPredUnit
     unsigned globalCtrBits;
     unsigned globalHistoryMask;
 
+    // choice predictors
+    std::vector<SatCounter8> choiceCounters;
+    // taken direction predictors
+    std::vector<SatCounter8> takenCounters;
+    // not-taken direction predictors
+    std::vector<SatCounter8> notTakenCounters;
+
     unsigned choiceThreshold;
     unsigned takenThreshold;
     unsigned notTakenThreshold;
 };
+
+} // namespace branch_prediction
+} // namespace gem5
 
 #endif // __CPU_PRED_BI_MODE_PRED_HH__

@@ -33,8 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Rene de Jong
  */
 
 /** @file
@@ -54,40 +52,35 @@
 
 #include "dev/arm/flash_device.hh"
 
+#include "base/trace.hh"
 #include "debug/Drain.hh"
+#include "params/FlashDevice.hh"
 
-/**
- * Create this device
- */
-
-FlashDevice*
-FlashDeviceParams::create()
+namespace gem5
 {
-    return new FlashDevice(this);
-}
-
 
 /**
  * Flash Device constructor and destructor
  */
 
-FlashDevice::FlashDevice(const FlashDeviceParams* p):
+FlashDevice::FlashDevice(const FlashDeviceParams &p):
     AbstractNVM(p),
     diskSize(0),
-    blockSize(p->blk_size),
-    pageSize(p->page_size),
-    GCActivePercentage(p->GC_active),
-    readLatency(p->read_lat),
-    writeLatency(p->write_lat),
-    eraseLatency(p->erase_lat),
-    dataDistribution(p->data_distribution),
-    numPlanes(p->num_planes),
+    blockSize(p.blk_size),
+    pageSize(p.page_size),
+    GCActivePercentage(p.GC_active),
+    readLatency(p.read_lat),
+    writeLatency(p.write_lat),
+    eraseLatency(p.erase_lat),
+    dataDistribution(p.data_distribution),
+    numPlanes(p.num_planes),
+    stats(this),
     pagesPerBlock(0),
     pagesPerDisk(0),
     blocksPerDisk(0),
     planeMask(numPlanes - 1),
     planeEventQueue(numPlanes),
-    planeEvent(this)
+    planeEvent([this]{ actionComplete(); }, name())
 {
 
     /*
@@ -98,7 +91,7 @@ FlashDevice::FlashDevice(const FlashDeviceParams* p):
      * bitwise AND with those two numbers results in an integer with all bits
      * cleared.
      */
-    if(numPlanes & planeMask)
+    if (numPlanes & planeMask)
         fatal("Number of planes is not a power of 2 in flash device.\n");
 }
 
@@ -139,7 +132,7 @@ FlashDevice::initializeFlash(uint64_t disk_size, uint32_t sector_size)
     for (uint32_t count = 0; count < pagesPerDisk; count++) {
         //setup lookup table + physical aspects
 
-        if (dataDistribution == Enums::stripe) {
+        if (dataDistribution == enums::stripe) {
             locationTable[count].page = count / blocksPerDisk;
             locationTable[count].block = count % blocksPerDisk;
 
@@ -161,8 +154,8 @@ FlashDevice::~FlashDevice()
  * an event that uses the callback function on completion of the action.
  */
 void
-FlashDevice::accessDevice(uint64_t address, uint32_t amount, Callback *event,
-                          Actions action)
+FlashDevice::accessDevice(uint64_t address, uint32_t amount,
+                          const std::function<void()> &event, Actions action)
 {
     DPRINTF(FlashDevice, "Flash calculation for %d bytes in %d pages\n"
             , amount, pageSize);
@@ -245,7 +238,7 @@ FlashDevice::accessDevice(uint64_t address, uint32_t amount, Callback *event,
         DPRINTF(FlashDevice, "Plane %d is busy for %d ticks\n", count,
                 time[count]);
 
-        if  (time[count] != 0) {
+        if (time[count] != 0) {
 
             struct CallBackEntry cbe;
             /**
@@ -259,7 +252,6 @@ FlashDevice::accessDevice(uint64_t address, uint32_t amount, Callback *event,
             else
                 cbe.time = time[count] +
                            planeEventQueue[count].back().time;
-            cbe.function = NULL;
             planeEventQueue[count].push_back(cbe);
 
             DPRINTF(FlashDevice, "scheduled at: %ld\n", cbe.time);
@@ -309,14 +301,13 @@ FlashDevice::actionComplete()
                  * the callback entry first need to be cleared before it can
                  * be called.
                  */
-                Callback *temp = planeEventQueue[plane_address].front().
-                                 function;
+                auto temp = planeEventQueue[plane_address].front().function;
                 planeEventQueue[plane_address].pop_front();
 
                 /**Found a callback, lets make it happen*/
-                if (temp != NULL) {
+                if (temp) {
                     DPRINTF(FlashDevice, "Callback, %d\n", plane_address);
-                    temp->process();
+                    temp();
                 }
             }
         }
@@ -379,10 +370,10 @@ FlashDevice::remap(uint64_t logic_page_addr)
         block = locationTable[logic_page_addr].block * pagesPerBlock;
 
         //assumption: clean will improve locality
-        for (uint32_t count = 0; count < pageSize; count++) {
+        for (uint32_t count = 0; count < pagesPerBlock; count++) {
+            assert(block + count < pagesPerDisk);
             locationTable[block + count].page = (block + count) %
                 pagesPerBlock;
-            ++count;
         }
 
         blockEmptyEntries[locationTable[logic_page_addr].block] =
@@ -468,47 +459,44 @@ FlashDevice::getUnknownPages(uint32_t index)
     return unknownPages[index >> 5] & (0x01 << (index % 32));
 }
 
-void
-FlashDevice::regStats()
+FlashDevice::FlashDeviceStats::FlashDeviceStats(statistics::Group *parent)
+    : statistics::Group(parent, "FlashDevice"),
+    ADD_STAT(totalGCActivations, statistics::units::Count::get(),
+             "Number of Garbage collector activations"),
+    ADD_STAT(writeAccess, statistics::units::Count::get(),
+             "Histogram of write addresses"),
+    ADD_STAT(readAccess, statistics::units::Count::get(),
+             "Histogram of read addresses"),
+    ADD_STAT(fileSystemAccess, statistics::units::Count::get(),
+             "Histogram of file system accesses"),
+    ADD_STAT(writeLatency, statistics::units::Tick::get(),
+             "Histogram of write latency"),
+    ADD_STAT(readLatency, statistics::units::Tick::get(),
+             "Histogram of read latency")
 {
-    using namespace Stats;
+    using namespace statistics;
 
-    std::string fd_name = name() + ".FlashDevice";
-
-    // Register the stats
     /** Amount of GC activations*/
-    stats.totalGCActivations
-        .name(fd_name + ".totalGCActivations")
-        .desc("Number of Garbage collector activations")
+    totalGCActivations
         .flags(none);
 
     /** Histogram of address accesses*/
-    stats.writeAccess
+    writeAccess
         .init(2)
-        .name(fd_name + ".writeAccessHist")
-        .desc("Histogram of write addresses")
         .flags(pdf);
-    stats.readAccess
+    readAccess
         .init(2)
-        .name(fd_name + ".readAccessHist")
-        .desc("Histogram of read addresses")
         .flags(pdf);
-    stats.fileSystemAccess
+    fileSystemAccess
         .init(100)
-        .name(fd_name + ".fileSystemAccessHist")
-        .desc("Histogram of file system accesses")
         .flags(pdf);
 
     /** Histogram of access latencies*/
-    stats.writeLatency
+    writeLatency
         .init(100)
-        .name(fd_name + ".writeLatencyHist")
-        .desc("Histogram of write latency")
         .flags(pdf);
-    stats.readLatency
+    readLatency
         .init(100)
-        .name(fd_name + ".readLatencyHist")
-        .desc("Histogram of read latency")
         .flags(pdf);
 }
 
@@ -521,28 +509,18 @@ FlashDevice::serialize(CheckpointOut &cp) const
 {
     SERIALIZE_SCALAR(planeMask);
 
-    int unknown_pages_size = unknownPages.size();
-    SERIALIZE_SCALAR(unknown_pages_size);
-    for (uint32_t count = 0; count < unknownPages.size(); count++)
-        SERIALIZE_SCALAR(unknownPages[count]);
+    SERIALIZE_CONTAINER(unknownPages);
+    SERIALIZE_CONTAINER(blockValidEntries);
+    SERIALIZE_CONTAINER(blockEmptyEntries);
 
     int location_table_size = locationTable.size();
     SERIALIZE_SCALAR(location_table_size);
     for (uint32_t count = 0; count < location_table_size; count++) {
-        SERIALIZE_SCALAR(locationTable[count].page);
-        SERIALIZE_SCALAR(locationTable[count].block);
-        }
-
-    int block_valid_entries_size = blockValidEntries.size();
-    SERIALIZE_SCALAR(block_valid_entries_size);
-    for (uint32_t count = 0; count < blockValidEntries.size(); count++)
-        SERIALIZE_SCALAR(blockValidEntries[count]);
-
-    int block_empty_entries_size = blockEmptyEntries.size();
-    SERIALIZE_SCALAR(block_empty_entries_size);
-    for (uint32_t count = 0; count < blockEmptyEntries.size(); count++)
-        SERIALIZE_SCALAR(blockEmptyEntries[count]);
-
+        paramOut(cp, csprintf("locationTable[%d].page", count),
+                 locationTable[count].page);
+        paramOut(cp, csprintf("locationTable[%d].block", count),
+                 locationTable[count].block);
+    }
 };
 
 /**
@@ -554,32 +532,19 @@ FlashDevice::unserialize(CheckpointIn &cp)
 {
     UNSERIALIZE_SCALAR(planeMask);
 
-    int unknown_pages_size;
-    UNSERIALIZE_SCALAR(unknown_pages_size);
-    unknownPages.resize(unknown_pages_size);
-    for (uint32_t count = 0; count < unknown_pages_size; count++)
-        UNSERIALIZE_SCALAR(unknownPages[count]);
+    UNSERIALIZE_CONTAINER(unknownPages);
+    UNSERIALIZE_CONTAINER(blockValidEntries);
+    UNSERIALIZE_CONTAINER(blockEmptyEntries);
 
     int location_table_size;
     UNSERIALIZE_SCALAR(location_table_size);
     locationTable.resize(location_table_size);
     for (uint32_t count = 0; count < location_table_size; count++) {
-        UNSERIALIZE_SCALAR(locationTable[count].page);
-        UNSERIALIZE_SCALAR(locationTable[count].block);
-        }
-
-    int block_valid_entries_size;
-    UNSERIALIZE_SCALAR(block_valid_entries_size);
-    blockValidEntries.resize(block_valid_entries_size);
-    for (uint32_t count = 0; count < block_valid_entries_size; count++)
-        UNSERIALIZE_SCALAR(blockValidEntries[count]);
-
-    int block_empty_entries_size;
-    UNSERIALIZE_SCALAR(block_empty_entries_size);
-    blockEmptyEntries.resize(block_empty_entries_size);
-    for (uint32_t count = 0; count < block_empty_entries_size; count++)
-        UNSERIALIZE_SCALAR(blockEmptyEntries[count]);
-
+        paramIn(cp, csprintf("locationTable[%d].page", count),
+                locationTable[count].page);
+        paramIn(cp, csprintf("locationTable[%d].block", count),
+                locationTable[count].block);
+    }
 };
 
 /**
@@ -605,7 +570,7 @@ FlashDevice::drain()
 void
 FlashDevice::checkDrain()
 {
-    if (drainState() == DrainState::Draining)
+    if (drainState() != DrainState::Draining)
         return;
 
     if (planeEvent.when() > curTick()) {
@@ -615,3 +580,5 @@ FlashDevice::checkDrain()
         signalDrainDone();
     }
 }
+
+} // namespace gem5

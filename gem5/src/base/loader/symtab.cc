@@ -1,4 +1,16 @@
 /*
+ * Copyright (c) 2023 Arm Limited
+ * All rights reserved
+ *
+ * The license below extends only to copyright in the software and shall
+ * not be construed as granting a license to any other intellectual
+ * property including but not limited to intellectual property relating
+ * to a hardware implementation of the functionality of the software
+ * licensed hereunder.  You may use the software subject to the license
+ * terms below provided that you ensure that this notice is replicated
+ * unmodified and in its entirety in all distributions of the software,
+ * modified or unmodified, in source code or in binary form.
+ *
  * Copyright (c) 2002-2005 The Regents of The University of Michigan
  * All rights reserved.
  *
@@ -24,115 +36,124 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nathan Binkert
  */
+
+#include "base/loader/symtab.hh"
 
 #include <fstream>
 #include <iostream>
-#include <string>
-#include <vector>
 
-#include "base/loader/symtab.hh"
-#include "base/misc.hh"
+#include "base/logging.hh"
 #include "base/str.hh"
-#include "base/types.hh"
-#include "sim/serialize.hh"
 
-using namespace std;
+namespace gem5
+{
 
-SymbolTable *debugSymbolTable = NULL;
+namespace loader
+{
+
+SymbolTable debugSymbolTable;
 
 void
 SymbolTable::clear()
 {
-    addrTable.clear();
-    symbolTable.clear();
+    addrMap.clear();
+    nameMap.clear();
+    symbols.clear();
 }
 
 bool
-SymbolTable::insert(Addr address, string symbol)
+SymbolTable::insert(const Symbol &symbol)
 {
-    if (symbol.empty())
+    if (symbol.name().empty())
         return false;
 
-    if (!addrTable.insert(make_pair(address, symbol)).second)
+    int idx = symbols.size();
+
+    if (!nameMap.insert({ symbol.name(), idx }).second)
         return false;
 
-    if (!symbolTable.insert(make_pair(symbol, address)).second)
-        return false;
+    // There can be multiple symbols for the same address, so always
+    // update the addrTable multimap when we see a new symbol name.
+    addrMap.insert({ symbol.address(), idx });
+
+    symbols.emplace_back(symbol);
 
     return true;
 }
 
-
 bool
-SymbolTable::load(const string &filename)
+SymbolTable::insert(const SymbolTable &other)
 {
-    string buffer;
-    ifstream file(filename.c_str());
-
-    if (!file)
-        fatal("file error: Can't open symbol table file %s\n", filename);
-
-    while (!file.eof()) {
-        getline(file, buffer);
-        if (buffer.empty())
-            continue;
-
-        string::size_type idx = buffer.find(',');
-        if (idx == string::npos)
-            return false;
-
-        string address = buffer.substr(0, idx);
-        eat_white(address);
-        if (address.empty())
-            return false;
-
-        string symbol = buffer.substr(idx + 1);
-        eat_white(symbol);
-        if (symbol.empty())
-            return false;
-
-        Addr addr;
-        if (!to_number(address, addr))
-            return false;
-
-        if (!insert(addr, symbol))
-            return false;
+    // Check if any symbol in other already exists in our table.
+    NameMap intersection;
+    std::set_intersection(other.nameMap.begin(), other.nameMap.end(),
+                          nameMap.begin(), nameMap.end(),
+                          std::inserter(intersection, intersection.begin()),
+                          nameMap.value_comp());
+    if (!intersection.empty()) {
+        warn("Cannot insert a new symbol table due to name collisions. "
+             "Adding prefix to each symbol's name can resolve this issue.");
+        return false;
     }
 
-    file.close();
+    for (const Symbol &symbol: other)
+        insert(symbol);
 
     return true;
 }
 
 void
-SymbolTable::serialize(const string &base, CheckpointOut &cp) const
+SymbolTable::serialize(const std::string &base, CheckpointOut &cp) const
 {
-    paramOut(cp, base + ".size", addrTable.size());
+    paramOut(cp, base + ".size", symbols.size());
 
     int i = 0;
-    ATable::const_iterator p, end = addrTable.end();
-    for (p = addrTable.begin(); p != end; ++p) {
-        paramOut(cp, csprintf("%s.addr_%d", base, i), p->first);
-        paramOut(cp, csprintf("%s.symbol_%d", base, i), p->second);
-        ++i;
+    for (auto &symbol: symbols) {
+        paramOut(cp, csprintf("%s.addr_%d", base, i), symbol.address());
+        if (symbol.sizeIsValid()) {
+            paramOut(cp, csprintf("%s.size_%d", base, i),
+                     symbol.sizeOrDefault(0x0));
+        }
+        paramOut(cp, csprintf("%s.symbol_%d", base, i), symbol.name());
+        paramOut(cp, csprintf("%s.binding_%d", base, i),
+                 (int)symbol.binding());
+        paramOut(cp, csprintf("%s.type_%d", base, i), (int)symbol.type());
+        i++;
     }
 }
 
 void
-SymbolTable::unserialize(const string &base, CheckpointIn &cp)
+SymbolTable::unserialize(const std::string &base, CheckpointIn &cp,
+                         Symbol::Binding default_binding)
 {
     clear();
     int size;
     paramIn(cp, base + ".size", size);
     for (int i = 0; i < size; ++i) {
-        Addr addr;
-        std::string symbol;
+        Addr address;
+        size_t size;
+        std::string name;
+        Symbol::Binding binding = default_binding;
+        Symbol::SymbolType type = Symbol::SymbolType::Other;
 
-        paramIn(cp, csprintf("%s.addr_%d", base, i), addr);
-        paramIn(cp, csprintf("%s.symbol_%d", base, i), symbol);
-        insert(addr, symbol);
+        paramIn(cp, csprintf("%s.addr_%d", base, i), address);
+        bool size_present = optParamIn(
+            cp, csprintf("%s.size_%d", base, i), size, false);
+        paramIn(cp, csprintf("%s.symbol_%d", base, i), name);
+        if (!optParamIn(cp, csprintf("%s.binding_%d", base, i), binding))
+            binding = default_binding;
+        if (!optParamIn(cp, csprintf("%s.type_%d", base, i), type))
+            type = Symbol::SymbolType::Other;
+        if (size_present) {
+            insert(Symbol(binding, type, name, address, size));
+        } else {
+            warn_once(
+                "warning: one or more Symbols does not have a valid size.");
+            insert(Symbol(binding, type, name, address));
+        }
     }
 }
+
+} // namespace loader
+} // namespace gem5

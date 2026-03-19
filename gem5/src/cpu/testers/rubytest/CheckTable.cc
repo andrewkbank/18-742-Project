@@ -27,11 +27,15 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "base/intmath.hh"
-#include "base/random.hh"
-#include "cpu/testers/rubytest/Check.hh"
 #include "cpu/testers/rubytest/CheckTable.hh"
+
+#include "base/intmath.hh"
+#include "base/trace.hh"
+#include "cpu/testers/rubytest/Check.hh"
 #include "debug/RubyTest.hh"
+
+namespace gem5
+{
 
 CheckTable::CheckTable(int _num_writers, int _num_readers, RubyTester* _tester)
     : m_num_writers(_num_writers), m_num_readers(_num_readers),
@@ -42,6 +46,7 @@ CheckTable::CheckTable(int _num_writers, int _num_readers, RubyTester* _tester)
     const int size1 = 32;
     const int size2 = 100;
 
+    DPRINTF(RubyTest, "Adding false sharing checks\n");
     // The first set is to get some false sharing
     physical = 1000;
     for (int i = 0; i < size1; i++) {
@@ -50,6 +55,7 @@ CheckTable::CheckTable(int _num_writers, int _num_readers, RubyTester* _tester)
         physical += CHECK_SIZE;
     }
 
+    DPRINTF(RubyTest, "Adding cache conflict checks\n");
     // The next two sets are to get some limited false sharing and
     // cache conflicts
     physical = 1000;
@@ -59,6 +65,7 @@ CheckTable::CheckTable(int _num_writers, int _num_readers, RubyTester* _tester)
         physical += 256;
     }
 
+    DPRINTF(RubyTest, "Adding cache conflict checks2\n");
     physical = 1000 + CHECK_SIZE;
     for (int i = 0; i < size2; i++) {
         // Setup linear addresses
@@ -78,7 +85,7 @@ void
 CheckTable::addCheck(Addr address)
 {
     if (floorLog2(CHECK_SIZE) != 0) {
-        if (bitSelect(address, 0, CHECK_SIZE_BITS - 1) != 0) {
+        if (ruby::bitSelect(address, 0, CHECK_SIZE_BITS - 1) != 0) {
             panic("Check not aligned");
         }
     }
@@ -90,6 +97,8 @@ CheckTable::addCheck(Addr address)
             return;
         }
     }
+
+    DPRINTF(RubyTest, "Adding check for address: %s\n", address);
 
     Check* check_ptr = new Check(address, 100 + m_check_vector.size(),
                                  m_num_writers, m_num_readers, m_tester_ptr);
@@ -104,15 +113,15 @@ Check*
 CheckTable::getRandomCheck()
 {
     assert(m_check_vector.size() > 0);
-    return m_check_vector[random_mt.random<unsigned>(0, m_check_vector.size() - 1)];
+    return m_check_vector[rng->random<unsigned>(0, m_check_vector.size() - 1)];
 }
 
 Check*
 CheckTable::getCheck(const Addr address)
 {
-    DPRINTF(RubyTest, "Looking for check by address: %s", address);
+    DPRINTF(RubyTest, "Looking for check by address: %s\n", address);
 
-    m5::hash_map<Addr, Check*>::iterator i = m_lookup_map.find(address);
+    auto i = m_lookup_map.find(address);
 
     if (i == m_lookup_map.end())
         return NULL;
@@ -126,3 +135,5 @@ void
 CheckTable::print(std::ostream& out) const
 {
 }
+
+} // namespace gem5

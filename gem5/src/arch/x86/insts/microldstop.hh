@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2007 The Hewlett-Packard Development Company
+ * Copyright (c) 2015 Advanced Micro Devices, Inc.
  * All rights reserved.
  *
  * The license below extends only to copyright in the software and shall
@@ -33,64 +34,131 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Gabe Black
  */
 
 #ifndef __ARCH_X86_INSTS_MICROLDSTOP_HH__
 #define __ARCH_X86_INSTS_MICROLDSTOP_HH__
 
+#include <tuple>
+
 #include "arch/x86/insts/microop.hh"
+#include "arch/x86/insts/microop_args.hh"
 #include "arch/x86/ldstflags.hh"
 #include "mem/packet.hh"
 #include "mem/request.hh"
 #include "sim/faults.hh"
 
+namespace gem5
+{
+
 namespace X86ISA
 {
-    /**
-     * Base class for load and store ops
-     */
-    class LdStOp : public X86MicroopBase
-    {
-      protected:
-        const uint8_t scale;
-        const RegIndex index;
-        const RegIndex base;
-        const uint64_t disp;
-        const uint8_t segment;
-        const RegIndex data;
-        const uint8_t dataSize;
-        const uint8_t addressSize;
-        const Request::FlagsType memFlags;
-        RegIndex foldOBit, foldABit;
 
-        //Constructor
-        LdStOp(ExtMachInst _machInst,
-                const char * mnem, const char * _instMnem,
-                uint64_t setFlags,
-                uint8_t _scale, InstRegIndex _index, InstRegIndex _base,
-                uint64_t _disp, InstRegIndex _segment,
-                InstRegIndex _data,
-                uint8_t _dataSize, uint8_t _addressSize,
-                Request::FlagsType _memFlags,
-                OpClass __opClass) :
-        X86MicroopBase(_machInst, mnem, _instMnem, setFlags, __opClass),
-                scale(_scale), index(_index.idx), base(_base.idx),
-                disp(_disp), segment(_segment.idx),
-                data(_data.idx),
-                dataSize(_dataSize), addressSize(_addressSize),
-                memFlags(_memFlags | _segment.idx)
-        {
-            assert(_segment.idx < NUM_SEGMENTREGS);
-            foldOBit = (dataSize == 1 && !_machInst.rex.present) ? 1 << 6 : 0;
-            foldABit =
-                (addressSize == 1 && !_machInst.rex.present) ? 1 << 6 : 0;
-        }
+/**
+ * Base class for memory ops
+ */
+class MemOp : public X86MicroopBase
+{
+  protected:
+    const Request::FlagsType memFlags;
 
-        std::string generateDisassembly(Addr pc,
-            const SymbolTable *symtab) const;
-    };
-}
+    //Constructor
+    MemOp(ExtMachInst mach_inst, const char *mnem, const char *inst_mnem,
+            uint64_t set_flags, OpClass op_class,
+            uint8_t data_size, uint8_t address_size,
+            Request::FlagsType mem_flags) :
+    X86MicroopBase(mach_inst, mnem, inst_mnem, set_flags, op_class),
+            memFlags(mem_flags),
+            dataSize(data_size), addressSize(address_size),
+            foldOBit((dataSize == 1 && !mach_inst.rex.present) ? 1 << 6 : 0),
+            foldABit((addressSize == 1 && !mach_inst.rex.present) ? 1 << 6 : 0)
+    {}
+
+  public:
+    const uint8_t dataSize;
+    const uint8_t addressSize;
+    const RegIndex foldOBit, foldABit;
+};
+
+/**
+ * Base class for load ops using one integer register.
+ */
+class LdStOp : public InstOperands<MemOp, FoldedDataOp, AddrOp>
+{
+  protected:
+    LdStOp(ExtMachInst mach_inst, const char *mnem, const char *inst_mnem,
+            uint64_t set_flags, GpRegIndex _data,
+            uint8_t _scale, GpRegIndex _index, GpRegIndex _base,
+            uint64_t _disp, SegRegIndex _segment,
+            uint8_t data_size, uint8_t address_size,
+            Request::FlagsType mem_flags, OpClass op_class) :
+    InstOperands<MemOp, FoldedDataOp, AddrOp>(
+            mach_inst, mnem, inst_mnem, set_flags, op_class,
+            { _data, { _scale, _index, _base, _disp, _segment } },
+            data_size, address_size, mem_flags | _segment.index)
+    {}
+};
+
+/**
+ * Base class for load ops using one FP register.
+ */
+class LdStFpOp : public InstOperands<MemOp, FloatDataOp, AddrOp>
+{
+  protected:
+    LdStFpOp(ExtMachInst mach_inst, const char *mnem, const char *inst_mnem,
+            uint64_t set_flags, FpRegIndex _data,
+            uint8_t _scale, GpRegIndex _index, GpRegIndex _base,
+            uint64_t _disp, SegRegIndex _segment,
+            uint8_t data_size, uint8_t address_size,
+            Request::FlagsType mem_flags, OpClass op_class) :
+    InstOperands<MemOp, FloatDataOp, AddrOp>(
+            mach_inst, mnem, inst_mnem, set_flags, op_class,
+            { _data, { _scale, _index, _base, _disp, _segment } },
+            data_size, address_size, mem_flags | _segment.index)
+    {}
+};
+
+/**
+ * Base class for the tia microop which has no destination register.
+ */
+class MemNoDataOp : public InstOperands<MemOp, AddrOp>
+{
+  protected:
+    MemNoDataOp(ExtMachInst mach_inst, const char *mnem, const char *inst_mnem,
+            uint64_t set_flags, uint8_t _scale, GpRegIndex _index,
+            GpRegIndex _base, uint64_t _disp, SegRegIndex _segment,
+            uint8_t data_size, uint8_t address_size,
+            Request::FlagsType mem_flags, OpClass op_class) :
+    InstOperands<MemOp, AddrOp>(
+            mach_inst, mnem, inst_mnem, set_flags, op_class,
+            { { _scale, _index, _base, _disp, _segment } },
+            data_size, address_size, mem_flags | _segment.index)
+    {}
+};
+
+/**
+ * Base class for load and store ops using two registers, we will
+ * call them split ops for this reason. These are mainly  used to
+ * implement cmpxchg8b and cmpxchg16b.
+ */
+class LdStSplitOp :
+    public InstOperands<MemOp, FoldedDataLowOp, FoldedDataHiOp, AddrOp>
+{
+  protected:
+    LdStSplitOp(ExtMachInst mach_inst, const char *mnem, const char *inst_mnem,
+            uint64_t set_flags, GpRegIndex data_low, GpRegIndex data_hi,
+            uint8_t _scale, GpRegIndex _index, GpRegIndex _base,
+            uint64_t _disp, SegRegIndex _segment,
+            uint8_t data_size, uint8_t address_size,
+            Request::FlagsType mem_flags, OpClass op_class) :
+    InstOperands<MemOp, FoldedDataLowOp, FoldedDataHiOp, AddrOp>(
+            mach_inst, mnem, inst_mnem, set_flags, op_class,
+            { data_low, data_hi, { _scale, _index, _base, _disp, _segment } },
+            data_size, address_size, mem_flags | _segment.index)
+    {}
+};
+
+} // namespace X86ISA
+} // namespace gem5
 
 #endif //__ARCH_X86_INSTS_MICROLDSTOP_HH__

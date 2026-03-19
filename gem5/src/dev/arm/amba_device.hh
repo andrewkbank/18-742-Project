@@ -36,8 +36,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Ali Saidi
  */
 
 
@@ -54,10 +52,13 @@
 #include "dev/io_device.hh"
 #include "mem/packet.hh"
 #include "mem/packet_access.hh"
-#include "params/AmbaPioDevice.hh"
-#include "params/AmbaDmaDevice.hh"
-#include "params/AmbaIntDevice.hh"
 
+namespace gem5
+{
+
+struct AmbaPioDeviceParams;
+struct AmbaDmaDeviceParams;
+struct AmbaIntDeviceParams;
 
 class AmbaDevice
 {
@@ -82,19 +83,18 @@ class AmbaPioDevice : public BasicPioDevice, public AmbaDevice
 
   public:
     typedef AmbaPioDeviceParams Params;
-    AmbaPioDevice(const Params *p, Addr pio_size);
+    AmbaPioDevice(const Params &p, Addr pio_size);
 };
 
 class AmbaIntDevice : public AmbaPioDevice
 {
   protected:
-    int intNum;
-    BaseGic *gic;
+    ArmInterruptPin* const interrupt;
     Tick intDelay;
 
   public:
     typedef AmbaIntDeviceParams Params;
-    AmbaIntDevice(const Params *p, Addr pio_size);
+    AmbaIntDevice(const Params &p, Addr pio_size);
 };
 
 class AmbaDmaDevice : public DmaDevice, public AmbaDevice
@@ -104,13 +104,13 @@ class AmbaDmaDevice : public DmaDevice, public AmbaDevice
     Addr     pioAddr;
     Addr     pioSize;
     Tick     pioDelay;
-    int      intNum;
-    BaseGic  *gic;
+    ArmInterruptPin* const interrupt;
 
   public:
     typedef AmbaDmaDeviceParams Params;
-    AmbaDmaDevice(const Params *p, Addr pio_size = 0);
+    AmbaDmaDevice(const Params &p, Addr pio_size = 0);
 };
 
+} // namespace gem5
 
 #endif //__DEV_ARM_AMBA_DEVICE_HH__

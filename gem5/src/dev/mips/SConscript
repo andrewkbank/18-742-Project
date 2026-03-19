@@ -25,18 +25,20 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Steve Reinhardt
-#          Gabe Black
 
 Import('*')
 
-if env['TARGET_ISA'] == 'mips':
-    SimObject('Malta.py')
+if not env['CONF']['USE_MIPS_ISA']:
+    Return()
 
-    DebugFlag('Malta')
+SimObject(
+    'Malta.py',
+    sim_objects=['MaltaCChip', 'MaltaIO', 'Malta'],
+    tags=['mips isa']
+)
 
-    Source('malta.cc')
-    Source('malta_cchip.cc')
-    Source('malta_io.cc')
-    Source('malta_pchip.cc')
+DebugFlag('Malta', tags=['mips isa'])
+
+Source('malta.cc', tags=['mips isa'])
+Source('malta_cchip.cc', tags=['mips isa'])
+Source('malta_io.cc', tags=['mips isa'])

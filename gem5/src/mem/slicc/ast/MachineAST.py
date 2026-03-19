@@ -26,27 +26,36 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from slicc.ast.DeclAST import DeclAST
-from slicc.symbols import StateMachine, Type
+from slicc.symbols import (
+    StateMachine,
+    Type,
+)
+
 
 class MachineAST(DeclAST):
-    def __init__(self, slicc, idents, pairs_ast, config_parameters, decls):
-        super(MachineAST, self).__init__(slicc, pairs_ast)
+    def __init__(self, slicc, mtype, pairs_ast, config_parameters, decls):
+        super().__init__(slicc, pairs_ast)
 
-        self.ident = idents[0]
-        self.machine_types = idents
+        self.ident = mtype.value
         self.pairs_ast = pairs_ast
         self.config_parameters = config_parameters
         self.decls = decls
 
     def __repr__(self):
-        return "[Machine: %r]" % self.ident
+        return f"[Machine: {self.ident!r}]"
 
     def files(self, parent=None):
-        s = set(('%s_Controller.cc' % self.ident,
-                 '%s_Controller.hh' % self.ident,
-                 '%s_Controller.py' % self.ident,
-                 '%s_Transitions.cc' % self.ident,
-                 '%s_Wakeup.cc' % self.ident))
+        file_prefix = f"{self.slicc.protocol}/{self.ident}"
+        # Can't have multiple python simobject files with the same name
+        # So, we have to prepend the protocol name to the .py file
+        py_prefix = f"{self.slicc.protocol}/{self.slicc.protocol}_{self.ident}"
+        s = {
+            f"{file_prefix}_Controller.cc",
+            f"{file_prefix}_Controller.hh",
+            f"{py_prefix}_Controller.py",
+            f"{file_prefix}_Transitions.cc",
+            f"{file_prefix}_Wakeup.cc",
+        }
 
         s |= self.decls.files(self.ident)
         return s
@@ -56,8 +65,13 @@ class MachineAST(DeclAST):
         self.symtab.pushFrame()
 
         # Create a new machine
-        machine = StateMachine(self.symtab, self.ident, self.location,
-                               self.pairs, self.config_parameters)
+        machine = StateMachine(
+            self.symtab,
+            self.ident,
+            self.location,
+            self.pairs,
+            self.config_parameters,
+        )
 
         self.symtab.newCurrentMachine(machine)
 
@@ -71,19 +85,7 @@ class MachineAST(DeclAST):
         self.symtab.popFrame()
 
     def findMachines(self):
-        # Add to MachineType enumeration
-        for mtype in self.machine_types:
-            machine_type = self.symtab.find("MachineType", Type)
-            pairs = self.pairs_ast.pairs
-
-            if mtype == self.ident:
-                pairs["Primary"] = True
-            else:
-                pairs["Primary"] = False
-
-            if not machine_type.addEnum(mtype, pairs):
-                self.error("Duplicate machine name: %s:%s" % (
-                            machine_type, mtype))
-
-        # Generate code for all the internal decls
-        self.decls.findMachines()
+        mtype = self.ident
+        machine_type = self.symtab.find("MachineType", Type)
+        if not machine_type.checkEnum(mtype):
+            self.error(f"Duplicate machine name: {machine_type}:{mtype}")

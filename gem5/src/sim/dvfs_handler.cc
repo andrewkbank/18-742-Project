@@ -33,37 +33,37 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Vasileios Spiliopoulos
- *          Akash Bagdia
- *          Stephan Diestelhorst
  */
+
+#include "sim/dvfs_handler.hh"
 
 #include <set>
 #include <utility>
 
-#include "base/misc.hh"
+#include "base/trace.hh"
 #include "debug/DVFS.hh"
 #include "params/DVFSHandler.hh"
-#include "sim/clock_domain.hh"
-#include "sim/dvfs_handler.hh"
+#include "sim/serialize.hh"
 #include "sim/stat_control.hh"
 #include "sim/voltage_domain.hh"
+
+namespace gem5
+{
 
 //
 //
 // DVFSHandler methods implementation
 //
 
-DVFSHandler::DVFSHandler(const Params *p)
+DVFSHandler::DVFSHandler(const Params &p)
     : SimObject(p),
-      sysClkDomain(p->sys_clk_domain),
-      enableHandler(p->enable),
-      _transLatency(p->transition_latency)
+      sysClkDomain(p.sys_clk_domain),
+      enableHandler(p.enable),
+      _transLatency(p.transition_latency)
 {
     // Check supplied list of domains for sanity and add them to the
     // domain ID -> domain* hash
-    for(auto dit = p->domains.begin(); dit != p->domains.end(); ++dit) {
+    for (auto dit = p.domains.begin(); dit != p.domains.end(); ++dit) {
         SrcClockDomain *d = *dit;
         DomainID domain_id = d->domainID();
 
@@ -159,14 +159,38 @@ DVFSHandler::UpdateEvent::updatePerfLevel()
 {
     // Perform explicit stats dump for power estimation before performance
     // level migration
-    Stats::dump();
-    Stats::reset();
+    statistics::dump();
+    statistics::reset();
 
     // Update the performance level in the clock domain
     auto d = dvfsHandler->findDomain(domainIDToSet);
     assert(d->perfLevel() != perfLevelToSet);
 
     d->perfLevel(perfLevelToSet);
+}
+
+double
+DVFSHandler::voltageAtPerfLevel(DomainID domain_id, PerfLevel perf_level) const
+{
+    VoltageDomain *d = findDomain(domain_id)->voltageDomain();
+    assert(d);
+    PerfLevel n = d->numVoltages();
+    if (perf_level < n)
+        return d->voltage(perf_level);
+
+    // Request outside of the range of the voltage domain
+    if (n == 1) {
+        DPRINTF(DVFS, "DVFS: Request for perf-level %i for single-point "\
+                "voltage domain %s.  Returning voltage at level 0: %.2f "\
+                "V\n", perf_level, d->name(), d->voltage(0));
+        // Special case for single point voltage domain -> same voltage for
+        // all points
+        return d->voltage(0);
+    }
+
+    warn("DVFSHandler %s reads illegal voltage level %u from "\
+         "VoltageDomain %s. Returning 0 V\n", name(), perf_level, d->name());
+    return 0.;
 }
 
 void
@@ -203,7 +227,7 @@ DVFSHandler::unserialize(CheckpointIn &cp)
 
     UNSERIALIZE_SCALAR(enableHandler);
 
-    if(temp != enableHandler) {
+    if (temp != enableHandler) {
         warn("DVFS: Forcing enable handler status to unserialized value of %d",
              enableHandler);
     }
@@ -229,8 +253,4 @@ DVFSHandler::unserialize(CheckpointIn &cp)
     UpdateEvent::dvfsHandler = this;
 }
 
-DVFSHandler*
-DVFSHandlerParams::create()
-{
-    return new DVFSHandler(this);
-}
+} // namespace gem5

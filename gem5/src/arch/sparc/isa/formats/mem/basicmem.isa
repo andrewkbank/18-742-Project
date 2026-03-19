@@ -25,9 +25,6 @@
 // THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// Authors: Ali Saidi
-//          Gabe Black
 
 ////////////////////////////////////////////////////////////////////
 //
@@ -40,18 +37,19 @@ def template MemDeclare {{
          */
         class %(class_name)s : public %(base_class)s
         {
+          private:
+            %(reg_idx_arr_decl)s;
+
           public:
 
             /// Constructor.
             %(class_name)s(ExtMachInst machInst);
 
-            %(BasicExecDeclare)s
-
-            %(EACompDeclare)s
-
-            %(InitiateAccDeclare)s
-
-            %(CompleteAccDeclare)s
+            Fault execute(ExecContext *, trace::InstRecord *) const override;
+            Fault initiateAcc(ExecContext *,
+                              trace::InstRecord *) const override;
+            Fault completeAcc(PacketPtr, ExecContext *,
+                              trace::InstRecord *) const override;
         };
 }};
 
@@ -73,8 +71,6 @@ let {{
         exec_output = doDualSplitExecute(code, postacc_code, addrCalcReg,
                 addrCalcImm, execute, faultCode, name, name + "Imm",
                 Name, Name + "Imm", asi, opt_flags)
-        exec_output +=  EACompExecute.subst(iop);
-        exec_output +=  EACompExecute.subst(iop_imm);
         return (header_output, decoder_output, exec_output, decode_block)
 }};
 
@@ -87,6 +83,16 @@ def format LoadAlt(code, *opt_flags) {{
             AlternateASIPrivFaultCheck, name, Name, "EXT_ASI", opt_flags)
 }};
 
+def format LoadfAlt(code, *opt_flags) {{
+        code = filterDoubles(code)
+        (header_output,
+         decoder_output,
+         exec_output,
+         decode_block) = doMemFormat(code, LoadFuncs,
+            AlternateASIPrivFaultCheck + fp_enabled, name, Name, "EXT_ASI",
+            opt_flags)
+}};
+
 def format StoreAlt(code, *opt_flags) {{
         code = filterDoubles(code)
         (header_output,
@@ -94,6 +100,16 @@ def format StoreAlt(code, *opt_flags) {{
          exec_output,
          decode_block) = doMemFormat(code, StoreFuncs,
             AlternateASIPrivFaultCheck, name, Name, "EXT_ASI", opt_flags)
+}};
+
+def format StorefAlt(code, *opt_flags) {{
+        code = filterDoubles(code)
+        (header_output,
+         decoder_output,
+         exec_output,
+         decode_block) = doMemFormat(code, StoreFuncs,
+            AlternateASIPrivFaultCheck + fp_enabled, name, Name, "EXT_ASI",
+            opt_flags)
 }};
 
 def format Load(code, *opt_flags) {{
@@ -105,6 +121,15 @@ def format Load(code, *opt_flags) {{
              LoadFuncs, '', name, Name, 0, opt_flags)
 }};
 
+def format Loadf(code, *opt_flags) {{
+        code = filterDoubles(code)
+        (header_output,
+         decoder_output,
+         exec_output,
+         decode_block) = doMemFormat(code,
+             LoadFuncs, fp_enabled, name, Name, 0, opt_flags)
+}};
+
 def format Store(code, *opt_flags) {{
         code = filterDoubles(code)
         (header_output,
@@ -112,6 +137,15 @@ def format Store(code, *opt_flags) {{
          exec_output,
          decode_block) = doMemFormat(code,
              StoreFuncs, '', name, Name, 0, opt_flags)
+}};
+
+def format Storef(code, *opt_flags) {{
+        code = filterDoubles(code)
+        (header_output,
+         decoder_output,
+         exec_output,
+         decode_block) = doMemFormat(code,
+             StoreFuncs, fp_enabled, name, Name, 0, opt_flags)
 }};
 
 def format StoreFsr(code, *opt_flags) {{
@@ -132,4 +166,3 @@ def format TwinLoad(code, *opt_flags) {{
             AlternateASIPrivFaultCheck + TwinAlignmentFaultCheck,
             name, Name, "EXT_ASI", opt_flags)
 }};
-

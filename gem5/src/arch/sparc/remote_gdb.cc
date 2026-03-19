@@ -1,4 +1,5 @@
 /*
+ * Copyright 2015 LabWare
  * Copyright 2014 Google, Inc.
  * Copyright (c) 2002-2005 The Regents of The University of Michigan
  * All rights reserved.
@@ -25,8 +26,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nathan Binkert
  */
 
 /*
@@ -117,20 +116,24 @@
  * "Stub" to allow remote cpu to debug over a serial line using gdb.
  */
 
-#include <signal.h>
+#include "arch/sparc/remote_gdb.hh"
+
 #include <sys/signal.h>
 #include <unistd.h>
 
+#include <csignal>
 #include <string>
 
-#include "arch/sparc/remote_gdb.hh"
-#include "arch/vtophys.hh"
+#include "arch/sparc/regs/int.hh"
+#include "arch/sparc/regs/misc.hh"
+#include "arch/sparc/types.hh"
 #include "base/intmath.hh"
 #include "base/remote_gdb.hh"
 #include "base/socket.hh"
 #include "base/trace.hh"
 #include "cpu/static_inst.hh"
 #include "cpu/thread_context.hh"
+#include "debug/GDBAcc.hh"
 #include "debug/GDBRead.hh"
 #include "mem/page_table.hh"
 #include "mem/physical.hh"
@@ -140,11 +143,14 @@
 #include "sim/process.hh"
 #include "sim/system.hh"
 
-using namespace std;
+namespace gem5
+{
+
 using namespace SparcISA;
 
-RemoteGDB::RemoteGDB(System *_system, ThreadContext *c)
-    : BaseRemoteGDB(_system, c, NumGDBRegs * sizeof(uint64_t))
+RemoteGDB::RemoteGDB(System *_system, ListenSocketConfig _listen_config)
+    : BaseRemoteGDB(_system, _listen_config),
+    regCache32(this), regCache64(this)
 {}
 
 ///////////////////////////////////////////////////////////
@@ -159,85 +165,96 @@ RemoteGDB::acc(Addr va, size_t len)
     // from va to va + len have valid page map entries. Not
     // sure how this will work for other OSes or in general.
     if (FullSystem) {
-        if (va)
-            return true;
-        return false;
+        return va != 0;
     } else {
-        TlbEntry entry;
         // Check to make sure the first byte is mapped into the processes
         // address space.
-        if (context->getProcessPtr()->pTable->lookup(va, entry))
-            return true;
-        return false;
+        return context()->getProcessPtr()->pTable->lookup(va) != nullptr;
     }
 }
 
-///////////////////////////////////////////////////////////
-// RemoteGDB::getregs
-//
-//      Translate the kernel debugger register format into
-//      the GDB register format.
 void
-RemoteGDB::getregs()
+RemoteGDB::SPARCGdbRegCache::getRegs(ThreadContext *context)
 {
-    memset(gdbregs.regs, 0, gdbregs.size);
-
-    PCState pc = context->pcState();
+    DPRINTF(GDBAcc, "getRegs in remotegdb \n");
+    for (int i = 0; i < 32; i++)
+        r.gpr[i] = htobe((uint32_t)context->getReg(intRegClass[i]));
+    auto &pc = context->pcState().as<SparcISA::PCState>();
+    r.pc = htobe((uint32_t)pc.pc());
+    r.npc = htobe((uint32_t)pc.npc());
+    r.y = htobe((uint32_t)context->getReg(int_reg::Y));
     PSTATE pstate = context->readMiscReg(MISCREG_PSTATE);
+    r.psr = htobe((uint32_t)pstate);
+    r.fsr = htobe((uint32_t)context->readMiscReg(MISCREG_FSR));
+    r.csr = htobe((uint32_t)context->getReg(int_reg::Ccr));
+}
 
-    if (pstate.am) {
-        gdbregs.regs32[Reg32Pc] = htobe((uint32_t)pc.pc());
-        gdbregs.regs32[Reg32Npc] = htobe((uint32_t)pc.npc());
-        for (int x = RegG0; x <= RegI0 + 7; x++)
-            gdbregs.regs32[x] = htobe((uint32_t)context->readIntReg(x - RegG0));
+void
+RemoteGDB::SPARC64GdbRegCache::getRegs(ThreadContext *context)
+{
+    DPRINTF(GDBAcc, "getRegs in remotegdb \n");
+    for (int i = 0; i < 32; i++)
+        r.gpr[i] = htobe(context->getReg(intRegClass[i]));
+    for (int i = 0; i < 32; i++)
+        r.fpr[i] = 0;
+    auto &pc = context->pcState().as<SparcISA::PCState>();
+    r.pc = htobe(pc.pc());
+    r.npc = htobe(pc.npc());
+    r.fsr = htobe(context->readMiscReg(MISCREG_FSR));
+    r.fprs = htobe(context->readMiscReg(MISCREG_FPRS));
+    r.y = htobe(context->getReg(int_reg::Y));
+    PSTATE pstate = context->readMiscReg(MISCREG_PSTATE);
+    r.state = htobe(
+        context->readMiscReg(MISCREG_CWP) |
+        pstate << 8 |
+        context->readMiscReg(MISCREG_ASI) << 24 |
+        context->getReg(int_reg::Ccr) << 32);
+}
 
-        gdbregs.regs32[Reg32Y] =
-            htobe((uint32_t)context->readIntReg(NumIntArchRegs + 1));
-        gdbregs.regs32[Reg32Psr] = htobe((uint32_t)pstate);
-        gdbregs.regs32[Reg32Fsr] =
-            htobe((uint32_t)context->readMiscReg(MISCREG_FSR));
-        gdbregs.regs32[Reg32Csr] =
-            htobe((uint32_t)context->readIntReg(NumIntArchRegs + 2));
-    } else {
-        gdbregs.regs64[RegPc] = htobe(pc.pc());
-        gdbregs.regs64[RegNpc] = htobe(pc.npc());
-        for (int x = RegG0; x <= RegI0 + 7; x++)
-            gdbregs.regs64[x] = htobe(context->readIntReg(x - RegG0));
-
-        gdbregs.regs64[RegFsr] = htobe(context->readMiscReg(MISCREG_FSR));
-        gdbregs.regs64[RegFprs] = htobe(context->readMiscReg(MISCREG_FPRS));
-        gdbregs.regs64[RegY] = htobe(context->readIntReg(NumIntArchRegs + 1));
-        gdbregs.regs64[RegState] = htobe(
-            context->readMiscReg(MISCREG_CWP) |
-            pstate << 8 |
-            context->readMiscReg(MISCREG_ASI) << 24 |
-            context->readIntReg(NumIntArchRegs + 2) << 32);
-    }
-
-    DPRINTF(GDBRead, "PC=%#x\n", gdbregs.regs64[RegPc]);
-
+void
+RemoteGDB::SPARCGdbRegCache::setRegs(ThreadContext *context) const
+{
+    for (int i = 0; i < 32; i++)
+        context->setReg(intRegClass[i], r.gpr[i]);
+    PCState pc;
+    pc.pc(r.pc);
+    pc.npc(r.npc);
+    pc.nnpc(pc.npc() + sizeof(MachInst));
+    pc.upc(0);
+    pc.nupc(1);
+    context->pcState(pc);
     // Floating point registers are left at 0 in netbsd
     // All registers other than the pc, npc and int regs
     // are ignored as well.
 }
 
-///////////////////////////////////////////////////////////
-// RemoteGDB::setregs
-//
-//      Translate the GDB register format into the kernel
-//      debugger register format.
-//
 void
-RemoteGDB::setregs()
+RemoteGDB::SPARC64GdbRegCache::setRegs(ThreadContext *context) const
 {
+    for (int i = 0; i < 32; i++)
+        context->setReg(intRegClass[i], r.gpr[i]);
     PCState pc;
-    pc.pc(gdbregs.regs64[RegPc]);
-    pc.npc(gdbregs.regs64[RegNpc]);
+    pc.pc(r.pc);
+    pc.npc(r.npc);
     pc.nnpc(pc.npc() + sizeof(MachInst));
     pc.upc(0);
     pc.nupc(1);
     context->pcState(pc);
-    for (int x = RegG0; x <= RegI0 + 7; x++)
-        context->setIntReg(x - RegG0, gdbregs.regs64[x]);
-    // Only the integer registers, pc and npc are set in netbsd
+    // Floating point registers are left at 0 in netbsd
+    // All registers other than the pc, npc and int regs
+    // are ignored as well.
 }
+
+
+BaseGdbRegCache*
+RemoteGDB::gdbRegs()
+{
+    PSTATE pstate = context()->readMiscReg(MISCREG_PSTATE);
+    if (pstate.am) {
+        return &regCache32;
+    } else {
+        return &regCache64;
+    }
+}
+
+} // namespace gem5

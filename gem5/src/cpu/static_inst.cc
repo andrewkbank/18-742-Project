@@ -24,42 +24,16 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Steve Reinhardt
- *          Nathan Binkert
  */
+
+#include "cpu/static_inst.hh"
 
 #include <iostream>
 
-#include "cpu/static_inst.hh"
-#include "sim/core.hh"
+#include "cpu/thread_context.hh"
 
-StaticInstPtr StaticInst::nullStaticInstPtr;
-
-using namespace std;
-
-StaticInst::~StaticInst()
+namespace gem5
 {
-    if (cachedDisassembly)
-        delete cachedDisassembly;
-}
-
-bool
-StaticInst::hasBranchTarget(const TheISA::PCState &pc, ThreadContext *tc,
-                            TheISA::PCState &tgt) const
-{
-    if (isDirectCtrl()) {
-        tgt = branchTarget(pc);
-        return true;
-    }
-
-    if (isIndirectCtrl()) {
-        tgt = branchTarget(tc);
-        return true;
-    }
-
-    return false;
-}
 
 StaticInstPtr
 StaticInst::fetchMicroop(MicroPC upc) const
@@ -68,27 +42,27 @@ StaticInst::fetchMicroop(MicroPC upc) const
           "that is not microcoded.");
 }
 
-TheISA::PCState
-StaticInst::branchTarget(const TheISA::PCState &pc) const
+std::unique_ptr<PCStateBase>
+StaticInst::branchTarget(const PCStateBase &pc) const
 {
     panic("StaticInst::branchTarget() called on instruction "
           "that is not a PC-relative branch.");
-    M5_DUMMY_RETURN;
 }
 
-TheISA::PCState
+std::unique_ptr<PCStateBase>
 StaticInst::branchTarget(ThreadContext *tc) const
 {
     panic("StaticInst::branchTarget() called on instruction "
           "that is not an indirect branch.");
-    M5_DUMMY_RETURN;
 }
 
-const string &
-StaticInst::disassemble(Addr pc, const SymbolTable *symtab) const
+const std::string &
+StaticInst::disassemble(Addr pc, const loader::SymbolTable *symtab) const
 {
-    if (!cachedDisassembly)
-        cachedDisassembly = new string(generateDisassembly(pc, symtab));
+    if (!cachedDisassembly) {
+        cachedDisassembly =
+            std::make_unique<std::string>(generateDisassembly(pc, symtab));
+    }
 
     return *cachedDisassembly;
 }
@@ -109,3 +83,13 @@ StaticInst::printFlags(std::ostream &outs,
         }
     }
 }
+
+void
+StaticInst::advancePC(ThreadContext *tc) const
+{
+    std::unique_ptr<PCStateBase> pc(tc->pcState().clone());
+    advancePC(*pc);
+    tc->pcState(*pc);
+}
+
+} // namespace gem5

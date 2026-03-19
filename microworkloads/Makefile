@@ -1,5 +1,6 @@
-M5UTIL=../../gem5/util/m5
-FLAGS=-g -O3 -msse4 -Wall -Werror -I$(RLITE)/src -I$(M5UTIL) \
+M5UTIL=../../../gem5/util/m5
+GEM5INC=../../../gem5/include
+FLAGS=-g -O3 -msse4 -Wall -Werror -I. -I$(RLITE)/src -I$(M5UTIL) -I$(GEM5INC) \
 	-DNUM_USERS=$(NUM_USERS) -DNUM_WEEKS_NOVEMBER=$(NUM_WEEKS_NOVEMBER)
 CPPFLAGS=$(FLAGS) -std=c++11
 CFLAGS=$(FLAGS) -std=c99
@@ -12,7 +13,7 @@ PROGS = $(patsubst %.c,%.exe,$(SRCS))
 all: $(PROGS)
 
 %.exe: %.c
-	gcc -static -O3 -msse2 -I ../gem5/util/m5 $< m5op_x86.S rowop.S -o $@
+	gcc -static -O3 -msse2 -I. -I$(M5UTIL) -I$(GEM5INC) $< m5op_x86.S rowop.S -o $@
 
 clean:
 	rm -f *.exe

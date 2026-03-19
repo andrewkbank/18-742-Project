@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 ARM Limited
+ * Copyright (c) 2014, 2019 ARM Limited
  * All rights reserved
  *
  * Copyright (c) 2001-2006 The Regents of The University of Michigan
@@ -27,34 +27,36 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nathan Binkert
- *          Steve Reinhardt
- *          Andrew Bardsley
  */
+
+#include "base/trace.hh"
 
 #include <cctype>
 #include <fstream>
 #include <iostream>
 #include <sstream>
-#include <string>
 
-#include "base/misc.hh"
-#include "base/output.hh"
+#include "base/atomicio.hh"
+#include "base/logging.hh"
 #include "base/str.hh"
-#include "base/trace.hh"
+#include "debug/FmtFlag.hh"
+#include "debug/FmtStackTrace.hh"
+#include "debug/FmtTicksOff.hh"
+#include "sim/backtrace.hh"
 
-const std::string &name()
+const std::string &
+name()
 {
     static const std::string default_name("global");
 
     return default_name;
 }
 
-namespace Trace
+namespace gem5
 {
 
-bool enabled = false;
+namespace trace
+{
 
 // This variable holds the output logger for debug information.  Other
 // than setting up/redirecting this logger, do *NOT* reference this
@@ -87,12 +89,26 @@ setDebugLogger(Logger *logger)
         debug_logger = logger;
 }
 
-ObjectMatch ignore;
+void
+enable()
+{
+    debug::Flag::globalEnable();
+}
 
 void
-Logger::dump(Tick when, const std::string &name, const void *d, int len)
+disable()
 {
-    if (!name.empty() && ignore.match(name))
+    debug::Flag::globalDisable();
+}
+
+ObjectMatch ignore;
+
+
+void
+Logger::dump(Tick when, const std::string &name,
+         const void *d, int len, const std::string &flag)
+{
+    if (!isEnabled(name))
         return;
 
     const char *data = static_cast<const char *>(d);
@@ -121,7 +137,7 @@ Logger::dump(Tick when, const std::string &name, const void *d, int len)
         }
 
         ccprintf(line, "\n");
-        logMessage(when, name, line.str());
+        logMessage(when, name, flag, line.str());
 
         if (c < 16)
             break;
@@ -130,19 +146,28 @@ Logger::dump(Tick when, const std::string &name, const void *d, int len)
 
 void
 OstreamLogger::logMessage(Tick when, const std::string &name,
-                          const std::string &message)
+        const std::string &flag, const std::string &message)
 {
-    if (!name.empty() && ignore.match(name))
+    if (!isEnabled(name))
         return;
 
-    if (when != MaxTick)
+    if (!debug::FmtTicksOff && (when != MaxTick))
         ccprintf(stream, "%7d: ", when);
+
+    if (debug::FmtFlag && !flag.empty())
+        stream << flag << ": ";
 
     if (!name.empty())
         stream << name << ": ";
 
     stream << message;
     stream.flush();
+
+    if (debug::FmtStackTrace) {
+        print_backtrace();
+        STATIC_ERR("\n");
+    }
 }
 
-} // namespace Trace
+} // namespace trace
+} // namespace gem5

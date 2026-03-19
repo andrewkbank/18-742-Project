@@ -33,55 +33,24 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andrew Bardsley
  */
 
 #include "cpu/minor/stats.hh"
 
-namespace Minor
+namespace gem5
 {
 
-MinorStats::MinorStats()
-{ }
-
-void
-MinorStats::regStats(const std::string &name, BaseCPU &baseCpu)
+namespace minor
 {
-    numInsts
-        .name(name + ".committedInsts")
-        .desc("Number of instructions committed");
 
-    numOps
-        .name(name + ".committedOps")
-        .desc("Number of ops (including micro ops) committed");
-
-    numDiscardedOps
-        .name(name + ".discardedOps")
-        .desc("Number of ops (including micro ops) which were discarded "
-            "before commit");
-
-    numFetchSuspends
-        .name(name + ".numFetchSuspends")
-        .desc("Number of times Execute suspended instruction fetching");
-
-    quiesceCycles
-        .name(name + ".quiesceCycles")
-        .desc("Total number of cycles that CPU has spent quiesced or waiting "
-              "for an interrupt")
-        .prereq(quiesceCycles);
-
-    cpi
-        .name(name + ".cpi")
-        .desc("CPI: cycles per instruction")
-        .precision(6);
-    cpi = baseCpu.numCycles / numInsts;
-
-    ipc
-        .name(name + ".ipc")
-        .desc("IPC: instructions per cycle")
-        .precision(6);
-    ipc = numInsts / baseCpu.numCycles;
+MinorStats::MinorStats(BaseCPU *base_cpu)
+    : statistics::Group(base_cpu),
+    ADD_STAT(quiesceCycles, statistics::units::Cycle::get(),
+             "Total number of cycles that CPU has spent quiesced or waiting "
+             "for an interrupt")
+{
+    quiesceCycles.prereq(quiesceCycles);
 }
 
-};
+} // namespace minor
+} // namespace gem5

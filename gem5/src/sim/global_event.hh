@@ -25,8 +25,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Steve Reinhardt
  */
 
 #ifndef __SIM_GLOBAL_EVENT_HH__
@@ -36,7 +34,10 @@
 #include <vector>
 
 #include "base/barrier.hh"
-#include "sim/eventq_impl.hh"
+#include "sim/eventq.hh"
+
+namespace gem5
+{
 
 /**
  * @file sim/global_event.hh
@@ -161,6 +162,8 @@ class BaseGlobalEventTemplate : public BaseGlobalEvent
         for (int i = 0; i < numMainEventQueues; ++i)
             barrierEvent[i] = new typename Derived::BarrierEvent(this, p, f);
     }
+
+    virtual ~BaseGlobalEventTemplate(){}
 };
 
 
@@ -219,7 +222,7 @@ class GlobalSyncEvent : public BaseGlobalEventTemplate<GlobalSyncEvent>
     };
 
     GlobalSyncEvent(Priority p, Flags f)
-        : Base(p, f)
+        : Base(p, f), repeat(0)
     { }
 
     GlobalSyncEvent(Tick when, Tick _repeat, Priority p, Flags f)
@@ -228,6 +231,8 @@ class GlobalSyncEvent : public BaseGlobalEventTemplate<GlobalSyncEvent>
         schedule(when);
     }
 
+    virtual ~GlobalSyncEvent (){}
+
     void process();
 
     const char *description() const;
@@ -235,5 +240,6 @@ class GlobalSyncEvent : public BaseGlobalEventTemplate<GlobalSyncEvent>
     Tick repeat;
 };
 
+} // namespace gem5
 
 #endif // __SIM_GLOBAL_EVENT_HH__

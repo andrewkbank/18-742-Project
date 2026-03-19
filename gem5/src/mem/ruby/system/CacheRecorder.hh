@@ -32,27 +32,33 @@
  * time. Also dump the requests to a gziped file.
  */
 
-#ifndef __MEM_RUBY_RECORDER_CACHERECORDER_HH__
-#define __MEM_RUBY_RECORDER_CACHERECORDER_HH__
+#ifndef __MEM_RUBY_SYSTEM_CACHERECORDER_HH__
+#define __MEM_RUBY_SYSTEM_CACHERECORDER_HH__
 
 #include <vector>
 
-#include "base/hashmap.hh"
 #include "base/types.hh"
-#include "mem/protocol/RubyRequestType.hh"
 #include "mem/ruby/common/Address.hh"
 #include "mem/ruby/common/DataBlock.hh"
 #include "mem/ruby/common/TypeDefines.hh"
+#include "mem/ruby/protocol/RubyRequestType.hh"
+
+namespace gem5
+{
+
+namespace ruby
+{
 
 class Sequencer;
-
+class RubyPort;
 /*!
  * Class for recording cache contents. Note that the last element of the
  * class is an array of length zero. It is used for creating variable
  * length object, so that while writing the data to a file one does not
  * need to copy the meta data and the actual data separately.
  */
-class TraceRecord {
+class TraceRecord
+{
   public:
     int m_cntrl_id;
     Tick m_time;
@@ -67,17 +73,21 @@ class TraceRecord {
 class CacheRecorder
 {
   public:
-    CacheRecorder();
-    ~CacheRecorder();
-
+    // Construction requires block size.
+    CacheRecorder() = delete;
     CacheRecorder(uint8_t* uncompressed_trace,
                   uint64_t uncompressed_trace_size,
-                  std::vector<Sequencer*>& SequencerMap,
-                  uint64_t block_size_bytes);
+                  std::vector<RubyPort*>& ruby_port_map,
+                  uint64_t trace_block_size_bytes,
+                  uint64_t system_block_size_bytes);
+    ~CacheRecorder();
+
     void addRecord(int cntrl, Addr data_addr, Addr pc_addr,
                    RubyRequestType type, Tick time, DataBlock& data);
 
     uint64_t aggregateRecords(uint8_t **data, uint64_t size);
+
+    uint64_t getNumRecords() const;
 
     /*!
      * Function for flushing the memory contents of the caches to the
@@ -106,7 +116,7 @@ class CacheRecorder
     std::vector<TraceRecord*> m_records;
     uint8_t* m_uncompressed_trace;
     uint64_t m_uncompressed_trace_size;
-    std::vector<Sequencer*> m_seq_map;
+    std::vector<RubyPort*> m_ruby_port_map;
     uint64_t m_bytes_read;
     uint64_t m_records_read;
     uint64_t m_records_flushed;
@@ -127,4 +137,7 @@ operator<<(std::ostream& out, const TraceRecord& obj)
     return out;
 }
 
-#endif // __MEM_RUBY_RECORDER_CACHERECORDER_HH__
+} // namespace ruby
+} // namespace gem5
+
+#endif //__MEM_RUBY_SYSTEM_CACHERECORDER_HH__

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2014 ARM Limited
+ * Copyright (c) 2012-2014, 2017 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -33,12 +33,10 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andrew Bardsley
  */
 
-#include "arch/utility.hh"
 #include "cpu/minor/cpu.hh"
+
 #include "cpu/minor/dyn_inst.hh"
 #include "cpu/minor/fetch1.hh"
 #include "cpu/minor/pipeline.hh"
@@ -46,42 +44,50 @@
 #include "debug/MinorCPU.hh"
 #include "debug/Quiesce.hh"
 
-MinorCPU::MinorCPU(MinorCPUParams *params) :
-    BaseCPU(params)
+namespace gem5
+{
+
+MinorCPU::MinorCPU(const BaseMinorCPUParams &params) :
+    BaseCPU(params),
+    threadPolicy(params.threadPolicy),
+    stats(this)
 {
     /* This is only written for one thread at the moment */
-    Minor::MinorThread *thread;
+    minor::MinorThread *thread;
 
-    if (FullSystem) {
-        thread = new Minor::MinorThread(this, 0, params->system, params->itb,
-            params->dtb, params->isa[0]);
-    } else {
-        /* thread_id 0 */
-        thread = new Minor::MinorThread(this, 0, params->system,
-            params->workload[0], params->itb, params->dtb, params->isa[0]);
+    for (ThreadID i = 0; i < numThreads; i++) {
+        if (FullSystem) {
+            thread = new minor::MinorThread(this, i, params.system,
+                    params.mmu, params.isa[i], params.decoder[i]);
+            thread->setStatus(ThreadContext::Halted);
+        } else {
+            thread = new minor::MinorThread(this, i, params.system,
+                    params.workload[i], params.mmu,
+                    params.isa[i], params.decoder[i]);
+        }
+
+        threads.push_back(thread);
+        ThreadContext *tc = thread->getTC();
+        threadContexts.push_back(tc);
     }
 
-    threads.push_back(thread);
 
-    thread->setStatus(ThreadContext::Halted);
-
-    ThreadContext *tc = thread->getTC();
-
-    if (params->checker) {
+    if (params.checker) {
         fatal("The Minor model doesn't support checking (yet)\n");
     }
 
-    threadContexts.push_back(tc);
-
-    Minor::MinorDynInst::init();
-
-    pipeline = new Minor::Pipeline(*this, *params);
+    pipeline = new minor::Pipeline(*this, params);
     activityRecorder = pipeline->getActivityRecorder();
+
+    fetchEventWrapper = NULL;
 }
 
 MinorCPU::~MinorCPU()
 {
     delete pipeline;
+
+    if (fetchEventWrapper != NULL)
+        delete fetchEventWrapper;
 
     for (ThreadID thread_id = 0; thread_id < threads.size(); thread_id++) {
         delete threads[thread_id];
@@ -93,29 +99,9 @@ MinorCPU::init()
 {
     BaseCPU::init();
 
-    if (!params()->switched_out &&
-        system->getMemoryMode() != Enums::timing)
-    {
+    if (!params().switched_out && system->getMemoryMode() != enums::timing) {
         fatal("The Minor CPU requires the memory system to be in "
             "'timing' mode.\n");
-    }
-
-    /* Initialise the ThreadContext's memory proxies */
-    for (ThreadID thread_id = 0; thread_id < threads.size(); thread_id++) {
-        ThreadContext *tc = getContext(thread_id);
-
-        tc->initMemProxies(tc);
-    }
-
-    /* Initialise CPUs (== threads in the ISA) */
-    if (FullSystem && !params()->switched_out) {
-        for (ThreadID thread_id = 0; thread_id < threads.size(); thread_id++)
-        {
-            ThreadContext *tc = getContext(thread_id);
-
-            /* Initialize CPU, including PC */
-            TheISA::initCPU(tc, cpuId());
-        }
     }
 }
 
@@ -124,7 +110,6 @@ void
 MinorCPU::regStats()
 {
     BaseCPU::regStats();
-    stats.regStats(name(), *this);
     pipeline->regStats();
 }
 
@@ -137,9 +122,6 @@ MinorCPU::serializeThread(CheckpointOut &cp, ThreadID thread_id) const
 void
 MinorCPU::unserializeThread(CheckpointIn &cp, ThreadID thread_id)
 {
-    if (thread_id != 0)
-        fatal("Trying to load more than one thread into a MinorCPU\n");
-
     threads[thread_id]->unserialize(cp);
 }
 
@@ -157,26 +139,15 @@ MinorCPU::unserialize(CheckpointIn &cp)
     BaseCPU::unserialize(cp);
 }
 
-Addr
-MinorCPU::dbg_vtophys(Addr addr)
-{
-    /* Note that this gives you the translation for thread 0 */
-    panic("No implementation for vtophy\n");
-
-    return 0;
-}
-
 void
-MinorCPU::wakeup()
+MinorCPU::wakeup(ThreadID tid)
 {
-    DPRINTF(Drain, "MinorCPU wakeup\n");
+    DPRINTF(Drain, "[tid:%d] MinorCPU wakeup\n", tid);
+    assert(tid < numThreads);
 
-    for (auto i = threads.begin(); i != threads.end(); i ++) {
-        if ((*i)->status() == ThreadContext::Suspended)
-            (*i)->activate();
+    if (threads[tid]->status() == ThreadContext::Suspended) {
+        threads[tid]->activate();
     }
-
-    DPRINTF(Drain,"Suspended Processor awoke\n");
 }
 
 void
@@ -186,21 +157,16 @@ MinorCPU::startup()
 
     BaseCPU::startup();
 
-    for (auto i = threads.begin(); i != threads.end(); i ++)
-        (*i)->startup();
-
-    /* Workaround cases in SE mode where a thread is activated with an
-     * incorrect PC that is updated after the call to activate. This
-     * causes problems for Minor since it instantiates a virtual
-     * branch instruction when activateContext() is called which ends
-     * up pointing to an illegal address.  */
-    if (threads[0]->status() == ThreadContext::Active)
-        activateContext(0);
+    for (ThreadID tid = 0; tid < numThreads; tid++)
+        pipeline->wakeupFetch(tid);
 }
 
 DrainState
 MinorCPU::drain()
 {
+    // Deschedule any power gating event (if any)
+    deschedulePowerGatingEvent();
+
     if (switchedOut()) {
         DPRINTF(Drain, "Minor CPU switched out, draining not needed.\n");
         return DrainState::Drained;
@@ -229,6 +195,11 @@ MinorCPU::signalDrainDone()
 void
 MinorCPU::drainResume()
 {
+    /* When taking over from another cpu make sure lastStopped
+     * is reset since it might have not been defined previously
+     * and might lead to a stats corruption */
+    pipeline->resetLastStopped();
+
     if (switchedOut()) {
         DPRINTF(Drain, "drainResume while switched out.  Ignoring\n");
         return;
@@ -241,8 +212,14 @@ MinorCPU::drainResume()
             "'timing' mode.\n");
     }
 
-    wakeup();
+    for (ThreadID tid = 0; tid < numThreads; tid++){
+        wakeup(tid);
+    }
+
     pipeline->drainResume();
+
+    // Reschedule any power gating event (if any)
+    schedulePowerGatingEvent();
 }
 
 void
@@ -269,14 +246,12 @@ MinorCPU::takeOverFrom(BaseCPU *old_cpu)
     DPRINTF(MinorCPU, "MinorCPU takeOverFrom\n");
 
     BaseCPU::takeOverFrom(old_cpu);
-
-    /* Don't think I need to do anything here */
 }
 
 void
 MinorCPU::activateContext(ThreadID thread_id)
 {
-    DPRINTF(MinorCPU, "ActivateContext thread: %d", thread_id);
+    DPRINTF(MinorCPU, "ActivateContext thread: %d\n", thread_id);
 
     /* Do some cycle accounting.  lastStopped is reset to stop the
      *  wakeup call on the pipeline from adding the quiesce period
@@ -286,8 +261,20 @@ MinorCPU::activateContext(ThreadID thread_id)
 
     /* Wake up the thread, wakeup the pipeline tick */
     threads[thread_id]->activate();
-    wakeupOnEvent(Minor::Pipeline::CPUStageId);
-    pipeline->wakeupFetch();
+    wakeupOnEvent(minor::Pipeline::CPUStageId);
+
+    if (!threads[thread_id]->getUseForClone())//the thread is not cloned
+    {
+        pipeline->wakeupFetch(thread_id);
+    } else { //the thread from clone
+        if (fetchEventWrapper != NULL)
+            delete fetchEventWrapper;
+        fetchEventWrapper = new EventFunctionWrapper([this, thread_id]
+                  { pipeline->wakeupFetch(thread_id); }, "wakeupFetch");
+        schedule(*fetchEventWrapper, clockEdge(Cycles(0)));
+    }
+
+    BaseCPU::activateContext(thread_id);
 }
 
 void
@@ -296,6 +283,8 @@ MinorCPU::suspendContext(ThreadID thread_id)
     DPRINTF(MinorCPU, "SuspendContext %d\n", thread_id);
 
     threads[thread_id]->suspend();
+
+    BaseCPU::suspendContext(thread_id);
 }
 
 void
@@ -308,21 +297,14 @@ MinorCPU::wakeupOnEvent(unsigned int stage_id)
     pipeline->start();
 }
 
-MinorCPU *
-MinorCPUParams::create()
-{
-    numThreads = 1;
-    if (!FullSystem && workload.size() != 1)
-        panic("only one workload allowed");
-    return new MinorCPU(this);
-}
-
-MasterPort &MinorCPU::getInstPort()
+Port &
+MinorCPU::getInstPort()
 {
     return pipeline->getInstPort();
 }
 
-MasterPort &MinorCPU::getDataPort()
+Port &
+MinorCPU::getDataPort()
 {
     return pipeline->getDataPort();
 }
@@ -348,3 +330,5 @@ MinorCPU::totalOps() const
 
     return ret;
 }
+
+} // namespace gem5

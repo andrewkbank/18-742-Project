@@ -27,10 +27,14 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "base/random.hh"
 #include "cpu/testers/rubytest/Check.hh"
+
+#include "base/trace.hh"
 #include "debug/RubyTest.hh"
 #include "mem/ruby/common/SubBlock.hh"
+
+namespace gem5
+{
 
 typedef RubyTester::SenderState SenderState;
 
@@ -39,36 +43,38 @@ Check::Check(Addr address, Addr pc, int _num_writers, int _num_readers,
     : m_num_writers(_num_writers), m_num_readers(_num_readers),
       m_tester_ptr(_tester)
 {
-    m_status = TesterStatus_Idle;
+    m_status = ruby::TesterStatus_Idle;
 
     pickValue();
     pickInitiatingNode();
     changeAddress(address);
     m_pc = pc;
-    m_access_mode = RubyAccessMode(random_mt.random(0,
-                                                    RubyAccessMode_NUM - 1));
+    m_access_mode = ruby::RubyAccessMode(
+        rng->random(0, ruby::RubyAccessMode_NUM - 1));
     m_store_count = 0;
 }
 
 void
-Check::initiate()
+Check::initiate(Cycles current_time)
 {
     DPRINTF(RubyTest, "initiating\n");
     debugPrint();
 
     // currently no protocols support prefetches
-    if (false && (random_mt.random(0, 0xf) == 0)) {
-        initiatePrefetch(); // Prefetch from random processor
+    if (false && (rng->random(0, 0xf) == 0)) {
+        // Prefetch from random processor
+        initiatePrefetch(current_time);
     }
 
-        if (m_tester_ptr->getCheckFlush() && (random_mt.random(0, 0xff) == 0)) {
-        initiateFlush(); // issue a Flush request from random processor
+    if (m_tester_ptr->getCheckFlush() && (rng->random(0, 0xff) == 0)) {
+        // issue a Flush request from random processor
+        initiateFlush(current_time);
     }
 
-    if (m_status == TesterStatus_Idle) {
-        initiateAction();
-    } else if (m_status == TesterStatus_Ready) {
-        initiateCheck();
+    if (m_status == ruby::TesterStatus_Idle) {
+        initiateAction(current_time);
+    } else if (m_status == ruby::TesterStatus_Ready) {
+        initiateCheck(current_time);
     } else {
         // Pending - do nothing
         DPRINTF(RubyTest,
@@ -77,12 +83,12 @@ Check::initiate()
 }
 
 void
-Check::initiatePrefetch()
+Check::initiatePrefetch(Cycles current_time)
 {
     DPRINTF(RubyTest, "initiating prefetch\n");
 
-    int index = random_mt.random(0, m_num_readers - 1);
-    MasterPort* port = m_tester_ptr->getReadableCpuPort(index);
+    int index = rng->random(0, m_num_readers - 1);
+    RequestPort* port = m_tester_ptr->getReadableCpuPort(index);
 
     Request::Flags flags;
     flags.set(Request::PREFETCH);
@@ -90,11 +96,13 @@ Check::initiatePrefetch()
     Packet::Command cmd;
 
     // 1 in 8 chance this will be an exclusive prefetch
-    if (random_mt.random(0, 0x7) != 0) {
+    if (rng->random(0, 0x7) != 0) {
         cmd = MemCmd::ReadReq;
 
         // if necessary, make the request an instruction fetch
-        if (m_tester_ptr->isInstReadableCpuPort(index)) {
+        if (m_tester_ptr->isInstOnlyCpuPort(index) ||
+            (m_tester_ptr->isInstDataCpuPort(index) &&
+             (rng->random(0, 0x1)))) {
             flags.set(Request::INST_FETCH);
         }
     } else {
@@ -103,9 +111,10 @@ Check::initiatePrefetch()
     }
 
     // Prefetches are assumed to be 0 sized
-    Request *req = new Request(m_address, 0, flags,
-            m_tester_ptr->masterId(), curTick(), m_pc);
-    req->setThreadContext(index, 0);
+    RequestPtr req = std::make_shared<Request>(
+            m_address, 0, flags, m_tester_ptr->requestorId());
+    req->setPC(m_pc);
+    req->setContext(index);
 
     PacketPtr pkt = new Packet(req, cmd);
     // despite the oddity of the 0 size (questionable if this should
@@ -116,14 +125,15 @@ Check::initiatePrefetch()
 
     // push the subblock onto the sender state.  The sequencer will
     // update the subblock on the return
-    pkt->senderState = new SenderState(m_address, req->getSize());
+    pkt->senderState = new SenderState(m_address, req->getSize(),
+                                       CACHE_LINE_BITS);
 
     if (port->sendTimingReq(pkt)) {
+        m_tester_ptr->updateProgress(index, m_address, current_time);
         DPRINTF(RubyTest, "successfully initiated prefetch.\n");
     } else {
         // If the packet did not issue, must delete
         delete pkt->senderState;
-        delete pkt->req;
         delete pkt;
 
         DPRINTF(RubyTest,
@@ -132,18 +142,19 @@ Check::initiatePrefetch()
 }
 
 void
-Check::initiateFlush()
+Check::initiateFlush(Cycles current_time)
 {
 
     DPRINTF(RubyTest, "initiating Flush\n");
 
-    int index = random_mt.random(0, m_num_writers - 1);
-    MasterPort* port = m_tester_ptr->getWritableCpuPort(index);
+    int index = rng->random(0, m_num_writers - 1);
+    RequestPort* port = m_tester_ptr->getWritableCpuPort(index);
 
     Request::Flags flags;
 
-    Request *req = new Request(m_address, CHECK_SIZE, flags,
-            m_tester_ptr->masterId(), curTick(), m_pc);
+    RequestPtr req = std::make_shared<Request>(
+            m_address, CHECK_SIZE, flags, m_tester_ptr->requestorId());
+    req->setPC(m_pc);
 
     Packet::Command cmd;
 
@@ -153,21 +164,23 @@ Check::initiateFlush()
 
     // push the subblock onto the sender state.  The sequencer will
     // update the subblock on the return
-    pkt->senderState = new SenderState(m_address, req->getSize());
+    pkt->senderState = new SenderState(m_address, req->getSize(),
+                                       CACHE_LINE_BITS);
 
     if (port->sendTimingReq(pkt)) {
+        m_tester_ptr->updateProgress(index, m_address, current_time);
         DPRINTF(RubyTest, "initiating Flush - successful\n");
     }
 }
 
 void
-Check::initiateAction()
+Check::initiateAction(Cycles current_time)
 {
     DPRINTF(RubyTest, "initiating Action\n");
-    assert(m_status == TesterStatus_Idle);
+    assert(m_status == ruby::TesterStatus_Idle);
 
-    int index = random_mt.random(0, m_num_writers - 1);
-    MasterPort* port = m_tester_ptr->getWritableCpuPort(index);
+    int index = rng->random(0, m_num_writers - 1);
+    RequestPort* port = m_tester_ptr->getWritableCpuPort(index);
 
     Request::Flags flags;
 
@@ -175,10 +188,11 @@ Check::initiateAction()
     Addr writeAddr(m_address + m_store_count);
 
     // Stores are assumed to be 1 byte-sized
-    Request *req = new Request(writeAddr, 1, flags, m_tester_ptr->masterId(),
-                               curTick(), m_pc);
+    RequestPtr req = std::make_shared<Request>(
+        writeAddr, 1, flags, m_tester_ptr->requestorId());
+    req->setPC(m_pc);
 
-    req->setThreadContext(index, 0);
+    req->setContext(index);
     Packet::Command cmd;
 
     // 1 out of 8 chance, issue an atomic rather than a write
@@ -193,115 +207,129 @@ Check::initiateAction()
     *writeData = m_value + m_store_count;
     pkt->dataDynamic(writeData);
 
-    DPRINTF(RubyTest, "data 0x%x check 0x%x\n",
+    DPRINTF(RubyTest, "Seq write: index %d data 0x%x check 0x%x\n", index,
             *(pkt->getConstPtr<uint8_t>()), *writeData);
 
     // push the subblock onto the sender state.  The sequencer will
     // update the subblock on the return
-    pkt->senderState = new SenderState(writeAddr, req->getSize());
+    pkt->senderState = new SenderState(m_address, req->getSize(),
+                                       CACHE_LINE_BITS);
 
     if (port->sendTimingReq(pkt)) {
         DPRINTF(RubyTest, "initiating action - successful\n");
         DPRINTF(RubyTest, "status before action update: %s\n",
-                (TesterStatus_to_string(m_status)).c_str());
-        m_status = TesterStatus_Action_Pending;
+                (ruby::TesterStatus_to_string(m_status)).c_str());
+        m_status = ruby::TesterStatus_Action_Pending;
+        m_tester_ptr->updateProgress(index, m_address, current_time);
+        DPRINTF(RubyTest, "Check %#x, State=Action_Pending\n", m_address);
     } else {
         // If the packet did not issue, must delete
         // Note: No need to delete the data, the packet destructor
         // will delete it
         delete pkt->senderState;
-        delete pkt->req;
         delete pkt;
 
         DPRINTF(RubyTest, "failed to initiate action - sequencer not ready\n");
     }
 
     DPRINTF(RubyTest, "status after action update: %s\n",
-            (TesterStatus_to_string(m_status)).c_str());
+            (ruby::TesterStatus_to_string(m_status)).c_str());
 }
 
 void
-Check::initiateCheck()
+Check::initiateCheck(Cycles current_time)
 {
     DPRINTF(RubyTest, "Initiating Check\n");
-    assert(m_status == TesterStatus_Ready);
+    assert(m_status == ruby::TesterStatus_Ready);
 
-    int index = random_mt.random(0, m_num_readers - 1);
-    MasterPort* port = m_tester_ptr->getReadableCpuPort(index);
+    int index = rng->random(0, m_num_readers - 1);
+    RequestPort* port = m_tester_ptr->getReadableCpuPort(index);
 
     Request::Flags flags;
 
     // If necessary, make the request an instruction fetch
-    if (m_tester_ptr->isInstReadableCpuPort(index)) {
+    if (m_tester_ptr->isInstOnlyCpuPort(index) ||
+        (m_tester_ptr->isInstDataCpuPort(index) &&
+         (rng->random(0, 0x1)))) {
         flags.set(Request::INST_FETCH);
     }
 
     // Checks are sized depending on the number of bytes written
-    Request *req = new Request(m_address, CHECK_SIZE, flags,
-                               m_tester_ptr->masterId(), curTick(), m_pc);
+    RequestPtr req = std::make_shared<Request>(
+            m_address, CHECK_SIZE, flags, m_tester_ptr->requestorId());
+    req->setPC(m_pc);
 
-    req->setThreadContext(index, 0);
+    req->setContext(index);
     PacketPtr pkt = new Packet(req, MemCmd::ReadReq);
     uint8_t *dataArray = new uint8_t[CHECK_SIZE];
     pkt->dataDynamic(dataArray);
 
+    DPRINTF(RubyTest, "Seq read: index %d\n", index);
+
     // push the subblock onto the sender state.  The sequencer will
     // update the subblock on the return
-    pkt->senderState = new SenderState(m_address, req->getSize());
+    pkt->senderState = new SenderState(m_address, req->getSize(),
+                                       CACHE_LINE_BITS);
 
     if (port->sendTimingReq(pkt)) {
         DPRINTF(RubyTest, "initiating check - successful\n");
         DPRINTF(RubyTest, "status before check update: %s\n",
-                TesterStatus_to_string(m_status).c_str());
-        m_status = TesterStatus_Check_Pending;
+                ruby::TesterStatus_to_string(m_status).c_str());
+        m_status = ruby::TesterStatus_Check_Pending;
+        m_tester_ptr->updateProgress(index, m_address, current_time);
+        DPRINTF(RubyTest, "Check %#x, State=Check_Pending\n", m_address);
     } else {
         // If the packet did not issue, must delete
         // Note: No need to delete the data, the packet destructor
         // will delete it
         delete pkt->senderState;
-        delete pkt->req;
         delete pkt;
 
         DPRINTF(RubyTest, "failed to initiate check - cpu port not ready\n");
     }
 
     DPRINTF(RubyTest, "status after check update: %s\n",
-            TesterStatus_to_string(m_status).c_str());
+            ruby::TesterStatus_to_string(m_status).c_str());
 }
 
 void
-Check::performCallback(NodeID proc, SubBlock* data, Cycles curTime)
+Check::performCallback(ruby::NodeID proc, ruby::SubBlock* data, Cycles curTime)
 {
     Addr address = data->getAddress();
 
     // This isn't exactly right since we now have multi-byte checks
     //  assert(getAddress() == address);
 
-    assert(makeLineAddress(m_address) == makeLineAddress(address));
+    int block_size_bits = CACHE_LINE_BITS;
+    assert(ruby::makeLineAddress(m_address, block_size_bits) ==
+           ruby::makeLineAddress(address, block_size_bits));
     assert(data != NULL);
 
     DPRINTF(RubyTest, "RubyTester Callback\n");
     debugPrint();
 
-    if (m_status == TesterStatus_Action_Pending) {
+    if (m_status == ruby::TesterStatus_Action_Pending) {
         DPRINTF(RubyTest, "Action callback write value: %d, currently %d\n",
                 (m_value + m_store_count), data->getByte(0));
         // Perform store one byte at a time
         data->setByte(0, (m_value + m_store_count));
         m_store_count++;
         if (m_store_count == CHECK_SIZE) {
-            m_status = TesterStatus_Ready;
+            m_status = ruby::TesterStatus_Ready;
+            DPRINTF(RubyTest, "Check %#x, State=Ready\n", m_address);
         } else {
-            m_status = TesterStatus_Idle;
+            m_status = ruby::TesterStatus_Idle;
+            DPRINTF(RubyTest, "Check %#x, State=Idle store_count: %d\n",
+                    m_address, m_store_count);
         }
         DPRINTF(RubyTest, "Action callback return data now %d\n",
                 data->getByte(0));
-    } else if (m_status == TesterStatus_Check_Pending) {
+    } else if (m_status == ruby::TesterStatus_Check_Pending) {
         DPRINTF(RubyTest, "Check callback\n");
         // Perform load/check
         for (int byte_number=0; byte_number<CHECK_SIZE; byte_number++) {
             if (uint8_t(m_value + byte_number) != data->getByte(byte_number)) {
-                panic("Action/check failure: proc: %d address: %s data: %s "
+                panic("Action/check failure: proc: %d address: %#x data: %s "
                       "byte_number: %d m_value+byte_number: %d byte: %d %s"
                       "Time: %d\n",
                       proc, address, data, byte_number,
@@ -315,7 +343,8 @@ Check::performCallback(NodeID proc, SubBlock* data, Cycles curTime)
         // successful check complete, increment complete
         m_tester_ptr->incrementCheckCompletions();
 
-        m_status = TesterStatus_Idle;
+        m_status = ruby::TesterStatus_Idle;
+        DPRINTF(RubyTest, "Check %#x, State=Idle\n", m_address);
         pickValue();
 
     } else {
@@ -324,36 +353,40 @@ Check::performCallback(NodeID proc, SubBlock* data, Cycles curTime)
     }
 
     DPRINTF(RubyTest, "proc: %d, Address: 0x%x\n", proc,
-            makeLineAddress(m_address));
+            ruby::makeLineAddress(m_address, block_size_bits));
     DPRINTF(RubyTest, "Callback done\n");
+    m_tester_ptr->eraseProgress(proc, m_address);
     debugPrint();
 }
 
 void
 Check::changeAddress(Addr address)
 {
-    assert(m_status == TesterStatus_Idle || m_status == TesterStatus_Ready);
-    m_status = TesterStatus_Idle;
+    assert(m_status == ruby::TesterStatus_Idle ||
+        m_status == ruby::TesterStatus_Ready);
+    m_status = ruby::TesterStatus_Idle;
     m_address = address;
+    DPRINTF(RubyTest, "Check %#x, State=Idle\n", m_address);
     m_store_count = 0;
 }
 
 void
 Check::pickValue()
 {
-    assert(m_status == TesterStatus_Idle);
-    m_status = TesterStatus_Idle;
-    m_value = random_mt.random(0, 0xff); // One byte
+    assert(m_status == ruby::TesterStatus_Idle);
+    m_value = rng->random(0, 0xff); // One byte
     m_store_count = 0;
 }
 
 void
 Check::pickInitiatingNode()
 {
-    assert(m_status == TesterStatus_Idle || m_status == TesterStatus_Ready);
-    m_status = TesterStatus_Idle;
-    m_initiatingNode = (random_mt.random(0, m_num_writers - 1));
-    DPRINTF(RubyTest, "picked initiating node %d\n", m_initiatingNode);
+    assert(m_status == ruby::TesterStatus_Idle ||
+        m_status == ruby::TesterStatus_Ready);
+    m_status = ruby::TesterStatus_Idle;
+    m_initiatingNode = (rng->random(0, m_num_writers - 1));
+    DPRINTF(RubyTest, "Check %#x, State=Idle, picked initiating node %d\n",
+            m_address, m_initiatingNode);
     m_store_count = 0;
 }
 
@@ -374,6 +407,9 @@ Check::debugPrint()
 {
     DPRINTF(RubyTest,
         "[%#x, value: %d, status: %s, initiating node: %d, store_count: %d]\n",
-        m_address, (int)m_value, TesterStatus_to_string(m_status).c_str(),
+        m_address, (int)m_value,
+        ruby::TesterStatus_to_string(m_status).c_str(),
         m_initiatingNode, m_store_count);
 }
+
+} // namespace gem5

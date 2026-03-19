@@ -24,20 +24,27 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Gabe Black
  */
+
+#include "arch/sparc/isa.hh"
 
 #include "arch/sparc/asi.hh"
 #include "arch/sparc/decoder.hh"
-#include "arch/sparc/isa.hh"
+#include "arch/sparc/interrupts.hh"
+#include "arch/sparc/regs/float.hh"
+#include "arch/sparc/regs/int.hh"
+#include "arch/sparc/regs/misc.hh"
+#include "arch/sparc/sparc_traits.hh"
 #include "base/bitfield.hh"
 #include "base/trace.hh"
 #include "cpu/base.hh"
 #include "cpu/thread_context.hh"
-#include "debug/MiscRegs.hh"
+#include "debug/MatRegs.hh"
 #include "debug/Timer.hh"
 #include "params/SparcISA.hh"
+
+namespace gem5
+{
 
 namespace SparcISA
 {
@@ -59,20 +66,216 @@ buildPstateMask()
 
 static const PSTATE PstateMask = buildPstateMask();
 
-ISA::ISA(Params *p)
-    : SimObject(p)
+namespace
 {
-    tickCompare = NULL;
-    sTickCompare = NULL;
-    hSTickCompare = NULL;
+
+/* Not applicable for SPARC */
+RegClass vecRegClass(VecRegClass, VecRegClassName, 1, debug::IntRegs);
+RegClass vecElemClass(VecElemClass, VecElemClassName, 2, debug::IntRegs);
+RegClass vecPredRegClass(VecPredRegClass, VecPredRegClassName, 1,
+        debug::IntRegs);
+RegClass matRegClass(MatRegClass, MatRegClassName, 0, debug::MatRegs);
+RegClass ccRegClass(CCRegClass, CCRegClassName, 0, debug::IntRegs);
+
+} // anonymous namespace
+
+ISA::ISA(const Params &p) : BaseISA(p, "sparc")
+{
+    _regClasses.push_back(&flatIntRegClass);
+    _regClasses.push_back(&floatRegClass);
+    _regClasses.push_back(&vecRegClass);
+    _regClasses.push_back(&vecElemClass);
+    _regClasses.push_back(&vecPredRegClass);
+    _regClasses.push_back(&matRegClass);
+    _regClasses.push_back(&ccRegClass);
+    _regClasses.push_back(&miscRegClass);
 
     clear();
 }
 
-const SparcISAParams *
-ISA::params() const
+static void
+copyMiscRegs(ThreadContext *src, ThreadContext *dest)
 {
-    return dynamic_cast<const Params *>(_params);
+    uint8_t tl = src->readMiscRegNoEffect(MISCREG_TL);
+
+    // Read all the trap level dependent registers and save them off
+    for (int i = 1; i <= MaxTL; i++) {
+        src->setMiscRegNoEffect(MISCREG_TL, i);
+        dest->setMiscRegNoEffect(MISCREG_TL, i);
+
+        dest->setMiscRegNoEffect(MISCREG_TT,
+                src->readMiscRegNoEffect(MISCREG_TT));
+        dest->setMiscRegNoEffect(MISCREG_TPC,
+                src->readMiscRegNoEffect(MISCREG_TPC));
+        dest->setMiscRegNoEffect(MISCREG_TNPC,
+                src->readMiscRegNoEffect(MISCREG_TNPC));
+        dest->setMiscRegNoEffect(MISCREG_TSTATE,
+                src->readMiscRegNoEffect(MISCREG_TSTATE));
+    }
+
+    // Save off the traplevel
+    dest->setMiscRegNoEffect(MISCREG_TL, tl);
+    src->setMiscRegNoEffect(MISCREG_TL, tl);
+
+
+    // ASRs
+//    dest->setMiscRegNoEffect(MISCREG_Y,
+//            src->readMiscRegNoEffect(MISCREG_Y));
+//    dest->setMiscRegNoEffect(MISCREG_CCR,
+//            src->readMiscRegNoEffect(MISCREG_CCR));
+    dest->setMiscReg(MISCREG_ASI,
+            src->readMiscRegNoEffect(MISCREG_ASI));
+    dest->setMiscRegNoEffect(MISCREG_TICK,
+            src->readMiscRegNoEffect(MISCREG_TICK));
+    dest->setMiscRegNoEffect(MISCREG_FPRS,
+            src->readMiscRegNoEffect(MISCREG_FPRS));
+    dest->setMiscRegNoEffect(MISCREG_SOFTINT,
+            src->readMiscRegNoEffect(MISCREG_SOFTINT));
+    dest->setMiscRegNoEffect(MISCREG_TICK_CMPR,
+            src->readMiscRegNoEffect(MISCREG_TICK_CMPR));
+    dest->setMiscRegNoEffect(MISCREG_STICK,
+            src->readMiscRegNoEffect(MISCREG_STICK));
+    dest->setMiscRegNoEffect(MISCREG_STICK_CMPR,
+            src->readMiscRegNoEffect(MISCREG_STICK_CMPR));
+
+    // Priv Registers
+    dest->setMiscRegNoEffect(MISCREG_TICK,
+            src->readMiscRegNoEffect(MISCREG_TICK));
+    dest->setMiscRegNoEffect(MISCREG_TBA,
+            src->readMiscRegNoEffect(MISCREG_TBA));
+    dest->setMiscRegNoEffect(MISCREG_PSTATE,
+            src->readMiscRegNoEffect(MISCREG_PSTATE));
+    dest->setMiscRegNoEffect(MISCREG_PIL,
+            src->readMiscRegNoEffect(MISCREG_PIL));
+    dest->setMiscReg(MISCREG_CWP,
+            src->readMiscRegNoEffect(MISCREG_CWP));
+//    dest->setMiscRegNoEffect(MISCREG_CANSAVE,
+//            src->readMiscRegNoEffect(MISCREG_CANSAVE));
+//    dest->setMiscRegNoEffect(MISCREG_CANRESTORE,
+//            src->readMiscRegNoEffect(MISCREG_CANRESTORE));
+//    dest->setMiscRegNoEffect(MISCREG_OTHERWIN,
+//            src->readMiscRegNoEffect(MISCREG_OTHERWIN));
+//    dest->setMiscRegNoEffect(MISCREG_CLEANWIN,
+//            src->readMiscRegNoEffect(MISCREG_CLEANWIN));
+//    dest->setMiscRegNoEffect(MISCREG_WSTATE,
+//            src->readMiscRegNoEffect(MISCREG_WSTATE));
+    dest->setMiscReg(MISCREG_GL, src->readMiscRegNoEffect(MISCREG_GL));
+
+    // Hyperprivilged registers
+    dest->setMiscRegNoEffect(MISCREG_HPSTATE,
+            src->readMiscRegNoEffect(MISCREG_HPSTATE));
+    dest->setMiscRegNoEffect(MISCREG_HINTP,
+            src->readMiscRegNoEffect(MISCREG_HINTP));
+    dest->setMiscRegNoEffect(MISCREG_HTBA,
+            src->readMiscRegNoEffect(MISCREG_HTBA));
+    dest->setMiscRegNoEffect(MISCREG_STRAND_STS_REG,
+            src->readMiscRegNoEffect(MISCREG_STRAND_STS_REG));
+    dest->setMiscRegNoEffect(MISCREG_HSTICK_CMPR,
+            src->readMiscRegNoEffect(MISCREG_HSTICK_CMPR));
+
+    // FSR
+    dest->setMiscRegNoEffect(MISCREG_FSR,
+            src->readMiscRegNoEffect(MISCREG_FSR));
+
+    // Strand Status Register
+    dest->setMiscRegNoEffect(MISCREG_STRAND_STS_REG,
+            src->readMiscRegNoEffect(MISCREG_STRAND_STS_REG));
+
+    // MMU Registers
+    dest->setMiscRegNoEffect(MISCREG_MMU_P_CONTEXT,
+            src->readMiscRegNoEffect(MISCREG_MMU_P_CONTEXT));
+    dest->setMiscRegNoEffect(MISCREG_MMU_S_CONTEXT,
+            src->readMiscRegNoEffect(MISCREG_MMU_S_CONTEXT));
+    dest->setMiscRegNoEffect(MISCREG_MMU_PART_ID,
+            src->readMiscRegNoEffect(MISCREG_MMU_PART_ID));
+    dest->setMiscRegNoEffect(MISCREG_MMU_LSU_CTRL,
+            src->readMiscRegNoEffect(MISCREG_MMU_LSU_CTRL));
+
+    // Scratchpad Registers
+    dest->setMiscRegNoEffect(MISCREG_SCRATCHPAD_R0,
+            src->readMiscRegNoEffect(MISCREG_SCRATCHPAD_R0));
+    dest->setMiscRegNoEffect(MISCREG_SCRATCHPAD_R1,
+            src->readMiscRegNoEffect(MISCREG_SCRATCHPAD_R1));
+    dest->setMiscRegNoEffect(MISCREG_SCRATCHPAD_R2,
+            src->readMiscRegNoEffect(MISCREG_SCRATCHPAD_R2));
+    dest->setMiscRegNoEffect(MISCREG_SCRATCHPAD_R3,
+            src->readMiscRegNoEffect(MISCREG_SCRATCHPAD_R3));
+    dest->setMiscRegNoEffect(MISCREG_SCRATCHPAD_R4,
+            src->readMiscRegNoEffect(MISCREG_SCRATCHPAD_R4));
+    dest->setMiscRegNoEffect(MISCREG_SCRATCHPAD_R5,
+            src->readMiscRegNoEffect(MISCREG_SCRATCHPAD_R5));
+    dest->setMiscRegNoEffect(MISCREG_SCRATCHPAD_R6,
+            src->readMiscRegNoEffect(MISCREG_SCRATCHPAD_R6));
+    dest->setMiscRegNoEffect(MISCREG_SCRATCHPAD_R7,
+            src->readMiscRegNoEffect(MISCREG_SCRATCHPAD_R7));
+
+    // Queue Registers
+    dest->setMiscRegNoEffect(MISCREG_QUEUE_CPU_MONDO_HEAD,
+            src->readMiscRegNoEffect(MISCREG_QUEUE_CPU_MONDO_HEAD));
+    dest->setMiscRegNoEffect(MISCREG_QUEUE_CPU_MONDO_TAIL,
+            src->readMiscRegNoEffect(MISCREG_QUEUE_CPU_MONDO_TAIL));
+    dest->setMiscRegNoEffect(MISCREG_QUEUE_DEV_MONDO_HEAD,
+            src->readMiscRegNoEffect(MISCREG_QUEUE_DEV_MONDO_HEAD));
+    dest->setMiscRegNoEffect(MISCREG_QUEUE_DEV_MONDO_TAIL,
+            src->readMiscRegNoEffect(MISCREG_QUEUE_DEV_MONDO_TAIL));
+    dest->setMiscRegNoEffect(MISCREG_QUEUE_RES_ERROR_HEAD,
+            src->readMiscRegNoEffect(MISCREG_QUEUE_RES_ERROR_HEAD));
+    dest->setMiscRegNoEffect(MISCREG_QUEUE_RES_ERROR_TAIL,
+            src->readMiscRegNoEffect(MISCREG_QUEUE_RES_ERROR_TAIL));
+    dest->setMiscRegNoEffect(MISCREG_QUEUE_NRES_ERROR_HEAD,
+            src->readMiscRegNoEffect(MISCREG_QUEUE_NRES_ERROR_HEAD));
+    dest->setMiscRegNoEffect(MISCREG_QUEUE_NRES_ERROR_TAIL,
+            src->readMiscRegNoEffect(MISCREG_QUEUE_NRES_ERROR_TAIL));
+}
+
+void
+ISA::copyRegsFrom(ThreadContext *src)
+{
+    // First loop through the integer registers.
+    int old_gl = src->readMiscRegNoEffect(MISCREG_GL);
+    int old_cwp = src->readMiscRegNoEffect(MISCREG_CWP);
+    // Globals
+    for (int x = 0; x < MaxGL; ++x) {
+        src->setMiscReg(MISCREG_GL, x);
+        tc->setMiscReg(MISCREG_GL, x);
+        // Skip %g0 which is always zero.
+        for (int y = 1; y < 8; y++) {
+            RegId reg = intRegClass[y];
+            tc->setReg(reg, src->getReg(reg));
+        }
+    }
+    // Locals and ins. Outs are all also ins.
+    for (int x = 0; x < NWindows; ++x) {
+         src->setMiscReg(MISCREG_CWP, x);
+         tc->setMiscReg(MISCREG_CWP, x);
+         for (int y = 16; y < 32; y++) {
+             RegId reg = intRegClass[y];
+             tc->setReg(reg, src->getReg(reg));
+         }
+    }
+    // Microcode reg and pseudo int regs (misc regs in the integer regfile).
+    for (int y = int_reg::NumArchRegs;
+            y < int_reg::NumArchRegs + int_reg::NumMicroRegs; ++y) {
+        RegId reg = intRegClass[y];
+        tc->setReg(reg, src->getReg(reg));
+    }
+
+    // Restore src's GL, CWP
+    src->setMiscReg(MISCREG_GL, old_gl);
+    src->setMiscReg(MISCREG_CWP, old_cwp);
+
+
+    // Then loop through the floating point registers.
+    for (int i = 0; i < SparcISA::float_reg::NumArchRegs; ++i) {
+        RegId reg = floatRegClass[i];
+        tc->setReg(reg, src->getReg(reg));
+    }
+
+    // Copy misc. registers
+    copyMiscRegs(src, tc);
+
+    // Lastly copy PC/NPC
+    tc->pcState(src->pcState());
 }
 
 void
@@ -81,7 +284,7 @@ ISA::reloadRegMap()
     installGlobals(gl, CurrentGlobalsOffset);
     installWindow(cwp, CurrentWindowOffset);
     // Microcode registers.
-    for (int i = 0; i < NumMicroIntRegs; i++)
+    for (int i = 0; i < int_reg::NumMicroRegs; i++)
         intRegMap[MicroIntOffset + i] = i + TotalGlobals + NWindows * 16;
     installGlobals(gl, NextGlobalsOffset);
     installWindow(cwp - 1, NextWindowOffset);
@@ -92,7 +295,7 @@ ISA::reloadRegMap()
 void
 ISA::installWindow(int cwp, int offset)
 {
-    assert(offset >= 0 && offset + NumWindowedRegs <= NumIntRegs);
+    assert(offset >= 0 && offset + NumWindowedRegs <= int_reg::NumRegs);
     RegIndex *mapChunk = intRegMap + offset;
     for (int i = 0; i < NumWindowedRegs; i++)
         mapChunk[i] = TotalGlobals +
@@ -102,7 +305,7 @@ ISA::installWindow(int cwp, int offset)
 void
 ISA::installGlobals(int gl, int offset)
 {
-    assert(offset >= 0 && offset + NumGlobalRegs <= NumIntRegs);
+    assert(offset >= 0 && offset + NumGlobalRegs <= int_reg::NumRegs);
     RegIndex *mapChunk = intRegMap + offset;
     mapChunk[0] = 0;
     for (int i = 1; i < NumGlobalRegs; i++)
@@ -119,7 +322,7 @@ ISA::clear()
     // y = 0;
     // ccr = 0;
     asi = 0;
-    tick = ULL(1) << 63;
+    tick = 1ULL << 63;
     fprs = 0;
     gsr = 0;
     softint = 0;
@@ -172,18 +375,18 @@ ISA::clear()
         panic("Tick comparison event active when clearing the ISA object.\n");
 }
 
-MiscReg
-ISA::readMiscRegNoEffect(int miscReg) const
+RegVal
+ISA::readMiscRegNoEffect(RegIndex idx) const
 {
 
-  // The three miscRegs are moved up from the switch statement
+  // The three idxs are moved up from the switch statement
   // due to more frequent calls.
 
-  if (miscReg == MISCREG_GL)
+  if (idx == MISCREG_GL)
     return gl;
-  if (miscReg == MISCREG_CWP)
+  if (idx == MISCREG_CWP)
     return cwp;
-  if (miscReg == MISCREG_TLB_DATA) {
+  if (idx == MISCREG_TLB_DATA) {
     /* Package up all the data for the tlb:
      * 6666555555555544444444443333333333222222222211111111110000000000
      * 3210987654321098765432109876543210987654321098765432109876543210
@@ -205,7 +408,7 @@ ISA::readMiscRegNoEffect(int miscReg) const
                 (uint64_t)secContext << 48;
   }
 
-    switch (miscReg) {
+    switch (idx) {
       // case MISCREG_TLB_DATA:
       //  [original contents see above]
       // case MISCREG_Y:
@@ -247,7 +450,7 @@ ISA::readMiscRegNoEffect(int miscReg) const
       case MISCREG_TBA:
         return tba;
       case MISCREG_PSTATE:
-        return (MiscReg)pstate;
+        return (RegVal)pstate;
       case MISCREG_TL:
         return tl;
       case MISCREG_PIL:
@@ -270,7 +473,7 @@ ISA::readMiscRegNoEffect(int miscReg) const
 
         /** Hyper privileged registers */
       case MISCREG_HPSTATE:
-        return (MiscReg)hpstate;
+        return (RegVal)hpstate;
       case MISCREG_HTSTATE:
         return htstate[tl-1];
       case MISCREG_HINTP:
@@ -329,14 +532,14 @@ ISA::readMiscRegNoEffect(int miscReg) const
       case MISCREG_QUEUE_NRES_ERROR_TAIL:
         return nres_error_tail;
       default:
-        panic("Miscellaneous register %d not implemented\n", miscReg);
+        panic("Miscellaneous register %d not implemented\n", idx);
     }
 }
 
-MiscReg
-ISA::readMiscReg(int miscReg, ThreadContext * tc)
+RegVal
+ISA::readMiscReg(RegIndex idx)
 {
-    switch (miscReg) {
+    switch (idx) {
         // tick and stick are aliased to each other in niagra
         // well store the tick data in stick and the interrupt bit in tick
       case MISCREG_STICK:
@@ -376,15 +579,15 @@ ISA::readMiscReg(int miscReg, ThreadContext * tc)
       case MISCREG_QUEUE_NRES_ERROR_HEAD:
       case MISCREG_QUEUE_NRES_ERROR_TAIL:
       case MISCREG_HPSTATE:
-        return readFSReg(miscReg, tc);
+        return readFSReg(idx);
     }
-    return readMiscRegNoEffect(miscReg);
+    return readMiscRegNoEffect(idx);
 }
 
 void
-ISA::setMiscRegNoEffect(int miscReg, MiscReg val)
+ISA::setMiscRegNoEffect(RegIndex idx, RegVal val)
 {
-    switch (miscReg) {
+    switch (idx) {
 //      case MISCREG_Y:
 //        y = val;
 //        break;
@@ -437,7 +640,7 @@ ISA::setMiscRegNoEffect(int miscReg, MiscReg val)
         panic("Priviliged access to tick regesiters not implemented\n");
       case MISCREG_TBA:
         // clear lower 7 bits on writes.
-        tba = val & ULL(~0x7FFF);
+        tba = val & ~0x7FFFULL;
         break;
       case MISCREG_PSTATE:
         pstate = (val & PstateMask);
@@ -479,6 +682,7 @@ ISA::setMiscRegNoEffect(int miscReg, MiscReg val)
         break;
       case MISCREG_HINTP:
         hintp = val;
+        break;
       case MISCREG_HTBA:
         htba = val;
         break;
@@ -557,18 +761,18 @@ ISA::setMiscRegNoEffect(int miscReg, MiscReg val)
         nres_error_tail = val;
         break;
       default:
-        panic("Miscellaneous register %d not implemented\n", miscReg);
+        panic("Miscellaneous register %d not implemented\n", idx);
     }
 }
 
 void
-ISA::setMiscReg(int miscReg, MiscReg val, ThreadContext * tc)
+ISA::setMiscReg(RegIndex idx, RegVal val)
 {
-    MiscReg new_val = val;
+    RegVal new_val = val;
 
-    switch (miscReg) {
+    switch (idx) {
       case MISCREG_ASI:
-        tc->getDecoderPtr()->setContext(val);
+        tc->getDecoderPtr()->as<Decoder>().setContext(val);
         break;
       case MISCREG_STICK:
       case MISCREG_TICK:
@@ -591,9 +795,9 @@ ISA::setMiscReg(int miscReg, MiscReg val, ThreadContext * tc)
         {
             tl = val;
             if (hpstate.tlz && tl == 0 && !hpstate.hpriv)
-                tc->getCpuPtr()->postInterrupt(IT_TRAP_LEVEL_ZERO, 0);
+                tc->getCpuPtr()->postInterrupt(0, IT_TRAP_LEVEL_ZERO, 0);
             else
-                tc->getCpuPtr()->clearInterrupt(IT_TRAP_LEVEL_ZERO, 0);
+                tc->getCpuPtr()->clearInterrupt(0, IT_TRAP_LEVEL_ZERO, 0);
             return;
         }
       case MISCREG_CWP:
@@ -631,15 +835,17 @@ ISA::setMiscReg(int miscReg, MiscReg val, ThreadContext * tc)
       case MISCREG_QUEUE_NRES_ERROR_HEAD:
       case MISCREG_QUEUE_NRES_ERROR_TAIL:
       case MISCREG_HPSTATE:
-        setFSReg(miscReg, val, tc);
+        setFSReg(idx, val);
         return;
     }
-    setMiscRegNoEffect(miscReg, new_val);
+    setMiscRegNoEffect(idx, new_val);
 }
 
 void
 ISA::serialize(CheckpointOut &cp) const
 {
+    BaseISA::serialize(cp);
+
     SERIALIZE_SCALAR(asi);
     SERIALIZE_SCALAR(tick);
     SERIALIZE_SCALAR(fprs);
@@ -653,12 +859,12 @@ ISA::serialize(CheckpointOut &cp) const
     SERIALIZE_ARRAY(tstate,MaxTL);
     SERIALIZE_ARRAY(tt,MaxTL);
     SERIALIZE_SCALAR(tba);
-    SERIALIZE_SCALAR((uint16_t)pstate);
+    SERIALIZE_SCALAR(pstate);
     SERIALIZE_SCALAR(tl);
     SERIALIZE_SCALAR(pil);
     SERIALIZE_SCALAR(cwp);
     SERIALIZE_SCALAR(gl);
-    SERIALIZE_SCALAR((uint64_t)hpstate);
+    SERIALIZE_SCALAR(hpstate);
     SERIALIZE_ARRAY(htstate,MaxTL);
     SERIALIZE_SCALAR(hintp);
     SERIALIZE_SCALAR(htba);
@@ -678,39 +884,18 @@ ISA::serialize(CheckpointOut &cp) const
     SERIALIZE_SCALAR(res_error_tail);
     SERIALIZE_SCALAR(nres_error_head);
     SERIALIZE_SCALAR(nres_error_tail);
+
     Tick tick_cmp = 0, stick_cmp = 0, hstick_cmp = 0;
-    ThreadContext *tc = NULL;
-    BaseCPU *cpu = NULL;
-    int tc_num = 0;
-    bool tick_intr_sched = true;
+    if (tickCompare && tickCompare->scheduled())
+        tick_cmp = tickCompare->when();
+    if (sTickCompare && sTickCompare->scheduled())
+        stick_cmp = sTickCompare->when();
+    if (hSTickCompare && hSTickCompare->scheduled())
+        hstick_cmp = hSTickCompare->when();
 
-    if (tickCompare)
-        tc = tickCompare->getTC();
-    else if (sTickCompare)
-        tc = sTickCompare->getTC();
-    else if (hSTickCompare)
-        tc = hSTickCompare->getTC();
-    else
-        tick_intr_sched = false;
-
-    SERIALIZE_SCALAR(tick_intr_sched);
-
-    if (tc) {
-        cpu = tc->getCpuPtr();
-        tc_num = cpu->findContext(tc);
-        if (tickCompare && tickCompare->scheduled())
-            tick_cmp = tickCompare->when();
-        if (sTickCompare && sTickCompare->scheduled())
-            stick_cmp = sTickCompare->when();
-        if (hSTickCompare && hSTickCompare->scheduled())
-            hstick_cmp = hSTickCompare->when();
-
-        SERIALIZE_OBJPTR(cpu);
-        SERIALIZE_SCALAR(tc_num);
-        SERIALIZE_SCALAR(tick_cmp);
-        SERIALIZE_SCALAR(stick_cmp);
-        SERIALIZE_SCALAR(hstick_cmp);
-    }
+    SERIALIZE_SCALAR(tick_cmp);
+    SERIALIZE_SCALAR(stick_cmp);
+    SERIALIZE_SCALAR(hstick_cmp);
 }
 
 void
@@ -765,41 +950,23 @@ ISA::unserialize(CheckpointIn &cp)
     UNSERIALIZE_SCALAR(nres_error_tail);
 
     Tick tick_cmp = 0, stick_cmp = 0, hstick_cmp = 0;
-    ThreadContext *tc = NULL;
-    BaseCPU *cpu = NULL;
-    int tc_num;
-    bool tick_intr_sched;
-    UNSERIALIZE_SCALAR(tick_intr_sched);
-    if (tick_intr_sched) {
-        UNSERIALIZE_OBJPTR(cpu);
-        if (cpu) {
-            UNSERIALIZE_SCALAR(tc_num);
-            UNSERIALIZE_SCALAR(tick_cmp);
-            UNSERIALIZE_SCALAR(stick_cmp);
-            UNSERIALIZE_SCALAR(hstick_cmp);
-            tc = cpu->getContext(tc_num);
+    UNSERIALIZE_SCALAR(tick_cmp);
+    UNSERIALIZE_SCALAR(stick_cmp);
+    UNSERIALIZE_SCALAR(hstick_cmp);
 
-            if (tick_cmp) {
-                tickCompare = new TickCompareEvent(this, tc);
-                schedule(tickCompare, tick_cmp);
-            }
-            if (stick_cmp)  {
-                sTickCompare = new STickCompareEvent(this, tc);
-                schedule(sTickCompare, stick_cmp);
-            }
-            if (hstick_cmp)  {
-                hSTickCompare = new HSTickCompareEvent(this, tc);
-                schedule(hSTickCompare, hstick_cmp);
-            }
-        }
+    if (tick_cmp) {
+        tickCompare = new TickCompareEvent(*this);
+        schedule(tickCompare, tick_cmp);
     }
-
+    if (stick_cmp)  {
+        sTickCompare = new STickCompareEvent(*this);
+        schedule(sTickCompare, stick_cmp);
+    }
+    if (hstick_cmp)  {
+        hSTickCompare = new HSTickCompareEvent(*this);
+        schedule(hSTickCompare, hstick_cmp);
+    }
 }
 
-}
-
-SparcISA::ISA *
-SparcISAParams::create()
-{
-    return new SparcISA::ISA(this);
-}
+} // namespace SparcISA
+} // namespace gem5

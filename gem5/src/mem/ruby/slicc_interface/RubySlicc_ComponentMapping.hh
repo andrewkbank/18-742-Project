@@ -29,40 +29,16 @@
 #ifndef __MEM_RUBY_SLICC_INTERFACE_RUBYSLICC_COMPONENTMAPPINGS_HH__
 #define __MEM_RUBY_SLICC_INTERFACE_RUBYSLICC_COMPONENTMAPPINGS_HH__
 
-#include "mem/protocol/MachineType.hh"
 #include "mem/ruby/common/Address.hh"
 #include "mem/ruby/common/MachineID.hh"
 #include "mem/ruby/common/NetDest.hh"
-#include "mem/ruby/structures/DirectoryMemory.hh"
+#include "mem/ruby/protocol/MachineType.hh"
 
-// used to determine the home directory
-// returns a value between 0 and total_directories_within_the_system
-inline NodeID
-map_Address_to_DirectoryNode(Addr addr)
+namespace gem5
 {
-    return DirectoryMemory::mapAddressToDirectoryVersion(addr);
-}
 
-// used to determine the home directory
-// returns a value between 0 and total_directories_within_the_system
-inline MachineID
-map_Address_to_Directory(Addr addr)
+namespace ruby
 {
-    MachineID mach =
-        {MachineType_Directory, map_Address_to_DirectoryNode(addr)};
-    return mach;
-}
-
-inline NetDest
-broadcast(MachineType type)
-{
-    NetDest dest;
-    for (NodeID i = 0; i < MachineType_base_count(type); i++) {
-        MachineID mach = {type, i};
-        dest.add(mach);
-    }
-    return dest;
-}
 
 inline MachineID
 mapAddressToRange(Addr addr, MachineType type, int low_bit,
@@ -89,17 +65,21 @@ machineIDToMachineType(MachineID machID)
     return machID.type;
 }
 
-inline int
-machineCount(MachineType machType)
-{
-    return MachineType_base_count(machType);
-}
-
 inline MachineID
 createMachineID(MachineType type, NodeID id)
 {
     MachineID mach = {type, id};
     return mach;
 }
+
+inline MachineID
+MachineTypeAndNodeIDToMachineID(MachineType type, NodeID node)
+{
+    MachineID mach = {type, node};
+    return mach;
+}
+
+} // namespace ruby
+} // namespace gem5
 
 #endif  // __MEM_RUBY_SLICC_INTERFACE_COMPONENTMAPPINGS_HH__

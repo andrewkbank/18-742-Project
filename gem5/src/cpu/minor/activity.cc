@@ -33,16 +33,18 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andrew Bardsley
  */
+
+#include "cpu/minor/activity.hh"
 
 #include <sstream>
 
-#include "cpu/minor/activity.hh"
 #include "cpu/minor/trace.hh"
 
-namespace Minor
+namespace gem5
+{
+
+namespace minor
 {
 
 void
@@ -60,7 +62,9 @@ MinorActivityRecorder::minorTrace() const
             stages << ',';
     }
 
-    MINORTRACE("activity=%d stages=%s\n", getActivityCount(), stages.str());
+    minor::minorTrace("activity=%d stages=%s\n", getActivityCount(),
+            stages.str());
 }
 
-}
+} // namespace minor
+} // namespace gem5

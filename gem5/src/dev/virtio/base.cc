@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 ARM Limited
+ * Copyright (c) 2014, 2016, 2021 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -33,17 +33,22 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andreas Sandberg
  */
 
-#include "debug/VIO.hh"
 #include "dev/virtio/base.hh"
-#include "params/VirtIODeviceBase.hh"
 
-VirtDescriptor::VirtDescriptor(PortProxy &_memProxy, VirtQueue &_queue,
-                               Index descIndex)
-    : memProxy(&_memProxy), queue(&_queue), _index(descIndex),
+#include "base/trace.hh"
+#include "debug/VIO.hh"
+#include "params/VirtIODeviceBase.hh"
+#include "params/VirtIODummyDevice.hh"
+#include "sim/serialize.hh"
+
+namespace gem5
+{
+
+VirtDescriptor::VirtDescriptor(PortProxy &_memProxy, ByteOrder bo,
+                               VirtQueue &_queue, Index descIndex)
+    : memProxy(&_memProxy), queue(&_queue), byteOrder(bo), _index(descIndex),
       desc{0, 0, 0, 0}
 {
 }
@@ -62,6 +67,7 @@ VirtDescriptor::operator=(VirtDescriptor &&rhs) noexcept
 {
     memProxy = std::move(rhs.memProxy);
     queue = std::move(rhs.queue);
+    byteOrder = std::move(rhs.byteOrder);
     _index = std::move(rhs._index);
     desc = std::move(rhs.desc);
 
@@ -79,8 +85,8 @@ VirtDescriptor::update()
     assert(_index < queue->getSize());
     const Addr desc_addr(vq_addr + sizeof(desc) * _index);
     vring_desc guest_desc;
-    memProxy->readBlob(desc_addr, (uint8_t *)&guest_desc, sizeof(guest_desc));
-    desc = vtoh_legacy(guest_desc);
+    memProxy->readBlob(desc_addr, &guest_desc, sizeof(guest_desc));
+    desc = gtoh(guest_desc, byteOrder);
     DPRINTF(VIO,
             "VirtDescriptor(%i): Addr: 0x%x, Len: %i, Flags: 0x%x, "
             "Next: 0x%x\n",
@@ -93,7 +99,7 @@ VirtDescriptor::updateChain()
     VirtDescriptor *desc(this);
     do {
         desc->update();
-    } while((desc = desc->next()) != NULL && desc != this);
+    } while ((desc = desc->next()) != NULL && desc != this);
 
     if (desc == this)
         panic("Loop in descriptor chain!\n");
@@ -102,7 +108,7 @@ VirtDescriptor::updateChain()
 void
 VirtDescriptor::dump() const
 {
-    if (!DTRACE(VIO))
+    if (!debug::VIO)
         return;
 
     DPRINTF(VIO, "Descriptor[%i]: "
@@ -110,22 +116,22 @@ VirtDescriptor::dump() const
             _index, desc.addr, desc.len, desc.flags, desc.next);
 
     if (isIncoming()) {
-        uint8_t data[desc.len];
-        read(0, data, desc.len);
-        DDUMP(VIO, data, desc.len);
+        auto data = std::make_unique<uint8_t[]>(desc.len);
+        read(0, data.get(), desc.len);
+        DDUMP(VIO, data.get(), desc.len);
     }
 }
 
 void
 VirtDescriptor::dumpChain() const
 {
-    if (!DTRACE(VIO))
+    if (!debug::VIO)
         return;
 
     const VirtDescriptor *desc(this);
     do {
         desc->dump();
-    } while((desc = desc->next()) != NULL);
+    } while ((desc = desc->next()) != NULL);
 }
 
 VirtDescriptor *
@@ -159,7 +165,7 @@ VirtDescriptor::write(size_t offset, const uint8_t *src, size_t size)
     if (!isOutgoing())
         panic("Trying to write to incoming buffer\n");
 
-    memProxy->writeBlob(desc.addr + offset, const_cast<uint8_t *>(src), size);
+    memProxy->writeBlob(desc.addr + offset, src, size);
 }
 
 void
@@ -177,7 +183,7 @@ VirtDescriptor::chainRead(size_t offset, uint8_t *dst, size_t size) const
         } else {
             offset -= desc->size();
         }
-    } while((desc = desc->next()) != NULL && desc->isIncoming() && size > 0);
+    } while ((desc = desc->next()) != NULL && desc->isIncoming() && size > 0);
 
     if (size != 0) {
         panic("Failed to read %i bytes from chain of %i bytes @ offset %i\n",
@@ -200,7 +206,7 @@ VirtDescriptor::chainWrite(size_t offset, const uint8_t *src, size_t size)
         } else {
             offset -= desc->size();
         }
-    } while((desc = desc->next()) != NULL && size > 0);
+    } while ((desc = desc->next()) != NULL && size > 0);
 
     if (size != 0) {
         panic("Failed to write %i bytes into chain of %i bytes @ offset %i\n",
@@ -215,21 +221,21 @@ VirtDescriptor::chainSize() const
     const VirtDescriptor *desc(this);
     do {
         size += desc->size();
-    } while((desc = desc->next()) != NULL);
+    } while ((desc = desc->next()) != NULL);
 
     return size;
 }
 
 
 
-VirtQueue::VirtQueue(PortProxy &proxy, uint16_t size)
-    : _size(size), _address(0), memProxy(proxy),
-      avail(proxy, size), used(proxy, size),
+VirtQueue::VirtQueue(PortProxy &proxy, ByteOrder bo, uint16_t size)
+    : byteOrder(bo), _size(size), _address(0), memProxy(proxy),
+      avail(proxy, bo, size), used(proxy, bo, size),
       _last_avail(0)
 {
     descriptors.reserve(_size);
     for (int i = 0; i < _size; ++i)
-        descriptors.emplace_back(proxy, *this, i);
+        descriptors.emplace_back(proxy, bo, *this, i);
 }
 
 void
@@ -250,6 +256,16 @@ VirtQueue::unserialize(CheckpointIn &cp)
     // Use the address setter to ensure that the ring buffer addresses
     // are updated as well.
     setAddress(addr_in);
+}
+
+void
+VirtQueue::reset()
+{
+    _address = 0;
+    _last_avail = 0;
+
+    avail.reset();
+    used.reset();
 }
 
 void
@@ -301,7 +317,7 @@ VirtQueue::produceDescriptor(VirtDescriptor *desc, uint32_t len)
 void
 VirtQueue::dump() const
 {
-    if (!DTRACE(VIO))
+    if (!debug::VIO)
         return;
 
     for (const VirtDescriptor &d : descriptors)
@@ -315,18 +331,18 @@ VirtQueue::onNotify()
 
     // Consume all pending descriptors from the input queue.
     VirtDescriptor *d;
-    while((d = consumeDescriptor()) != NULL)
+    while ((d = consumeDescriptor()) != NULL)
         onNotifyDescriptor(d);
 }
 
 
-VirtIODeviceBase::VirtIODeviceBase(Params *params, DeviceId id,
+VirtIODeviceBase::VirtIODeviceBase(const Params &params, DeviceId id,
                                    size_t config_size, FeatureBits features)
     : SimObject(params),
       guestFeatures(0),
+      byteOrder(params.byte_order),
       deviceId(id), configSize(config_size), deviceFeatures(features),
-      _deviceStatus(0), _queueSelect(0),
-      transKick(NULL)
+      _deviceStatus(0), _queueSelect(0)
 {
 }
 
@@ -363,7 +379,7 @@ VirtIODeviceBase::reset()
     _deviceStatus = 0;
 
     for (QueueID i = 0; i < _queues.size(); ++i)
-        _queues[i]->setAddress(0);
+        _queues[i]->reset();
 }
 
 void
@@ -476,3 +492,11 @@ VirtIODeviceBase::registerQueue(VirtQueue &queue)
 {
     _queues.push_back(&queue);
 }
+
+
+VirtIODummyDevice::VirtIODummyDevice(const VirtIODummyDeviceParams &params)
+    : VirtIODeviceBase(params, ID_INVALID, 0, 0)
+{
+}
+
+} // namespace gem5

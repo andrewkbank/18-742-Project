@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010-2013, 2015 ARM Limited
+ * Copyright (c) 2010-2013, 2015, 2017 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -33,9 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Chris Emmons
- *          Andreas Sandberg
  */
 
 
@@ -78,12 +75,17 @@
 
 #include <fstream>
 #include <memory>
+#include <vector>
 
-#include "base/bitmap.hh"
 #include "base/framebuffer.hh"
+#include "base/imgwriter.hh"
+#include "base/output.hh"
 #include "dev/arm/amba_device.hh"
 #include "dev/pixelpump.hh"
 #include "sim/serialize.hh"
+
+namespace gem5
+{
 
 class VncInput;
 struct HDLcdParams;
@@ -92,21 +94,18 @@ class HDLcdPixelPump;
 class HDLcd: public AmbaDmaDevice
 {
   public:
-    HDLcd(const HDLcdParams *p);
-    ~HDLcd();
+    HDLcd(const HDLcdParams &p);
 
-    void regStats() M5_ATTR_OVERRIDE;
+    void serialize(CheckpointOut &cp) const override;
+    void unserialize(CheckpointIn &cp) override;
 
-    void serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE;
-    void unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE;
-
-    void drainResume() M5_ATTR_OVERRIDE;
+    void drainResume() override;
 
   public: // IO device interface
-    Tick read(PacketPtr pkt) M5_ATTR_OVERRIDE;
-    Tick write(PacketPtr pkt) M5_ATTR_OVERRIDE;
+    Tick read(PacketPtr pkt) override;
+    Tick write(PacketPtr pkt) override;
 
-    AddrRangeList getAddrRanges() const M5_ATTR_OVERRIDE { return addrRanges; }
+    AddrRangeList getAddrRanges() const override { return addrRanges; }
 
   protected: // Parameters
     VncInput *vnc;
@@ -115,10 +114,12 @@ class HDLcd: public AmbaDmaDevice
     const AddrRangeList addrRanges;
     const bool enableCapture;
     const Addr pixelBufferSize;
+    const Tick virtRefreshRate;
 
   protected: // Register handling
     /** ARM HDLcd register offsets */
-    enum RegisterOffset {
+    enum RegisterOffset
+    {
         Version          = 0x0000,
         Int_RawStat      = 0x0010,
         Int_Clear        = 0x0014,
@@ -229,29 +230,34 @@ class HDLcd: public AmbaDmaDevice
      * HDLCD register contents.
      */
     /**@{*/
-    const VersionReg version;       /**< Version register */
-    uint32_t int_rawstat;           /**< Interrupt raw status register */
-    uint32_t int_mask;              /**< Interrupt mask register */
-    uint32_t fb_base;               /**< Frame buffer base address register */
-    uint32_t fb_line_length;        /**< Frame buffer Line length register */
-    FbLineCountReg fb_line_count;   /**< Frame buffer Line count register */
-    int32_t fb_line_pitch;          /**< Frame buffer Line pitch register */
-    BusOptsReg bus_options;         /**< Bus options register */
-    TimingReg v_sync;               /**< Vertical sync width register */
-    TimingReg v_back_porch;         /**< Vertical back porch width register */
-    TimingReg v_data;               /**< Vertical data width register */
-    TimingReg v_front_porch;        /**< Vertical front porch width register */
-    TimingReg h_sync;               /**< Horizontal sync width register */
-    TimingReg h_back_porch;         /**< Horizontal back porch width register */
-    TimingReg h_data;               /**< Horizontal data width register */
-    TimingReg h_front_porch;        /**< Horizontal front porch width reg */
-    PolaritiesReg polarities;       /**< Polarities register */
-    CommandReg command;             /**< Command register */
-    PixelFormatReg pixel_format;    /**< Pixel format register */
-    ColorSelectReg red_select;      /**< Red color select register */
-    ColorSelectReg green_select;    /**< Green color select register */
-    ColorSelectReg blue_select;     /**< Blue color select register */
+    const VersionReg version = VERSION_RESETV;
+                                    /**< Version register */
+    uint32_t int_rawstat = 0;       /**< Interrupt raw status register */
+    uint32_t int_mask = 0;          /**< Interrupt mask register */
+    uint32_t fb_base = 0;           /**< Frame buffer base address register */
+    uint32_t fb_line_length = 0;    /**< Frame buffer Line length register */
+                                    /**< Frame buffer Line count register */
+    FbLineCountReg fb_line_count = 0;
+    int32_t fb_line_pitch = 0;      /**< Frame buffer Line pitch register */
+    BusOptsReg bus_options = BUS_OPTIONS_RESETV;
+                                    /**< Bus options register */
+    TimingReg v_sync = 0;           /**< Vertical sync width register */
+    TimingReg v_back_porch = 0;     /**< Vertical back porch width register */
+    TimingReg v_data = 0;           /**< Vertical data width register */
+    TimingReg v_front_porch = 0;    /**< Vertical front porch width register */
+    TimingReg h_sync = 0;           /**< Horizontal sync width register */
+    TimingReg h_back_porch = 0;     /**< Horizontal back porch width reg */
+    TimingReg h_data = 0;           /**< Horizontal data width register */
+    TimingReg h_front_porch = 0;    /**< Horizontal front porch width reg */
+    PolaritiesReg polarities = 0;   /**< Polarities register */
+    CommandReg command = 0;         /**< Command register */
+    PixelFormatReg pixel_format = 0;/**< Pixel format register */
+    ColorSelectReg red_select = 0;  /**< Red color select register */
+    ColorSelectReg green_select = 0;/**< Green color select register */
+    ColorSelectReg blue_select = 0; /**< Blue color select register */
     /** @} */
+
+    std::vector<uint8_t> lineBuffer;
 
     uint32_t readReg(Addr offset);
     void writeReg(Addr offset, uint32_t value);
@@ -268,6 +274,7 @@ class HDLcd: public AmbaDmaDevice
 
   public: // Pixel pump callbacks
     bool pxlNext(Pixel &p);
+    size_t lineNext(std::vector<Pixel>::iterator pixel_it, size_t line_length);
     void pxlVSyncBegin();
     void pxlVSyncEnd();
     void pxlUnderrun();
@@ -301,7 +308,9 @@ class HDLcd: public AmbaDmaDevice
      * @see setInterrupts
      * @param ints Set of interrupts to raise
      */
-    void intRaise(uint32_t ints) {
+    void
+    intRaise(uint32_t ints)
+    {
         setInterrupts(int_rawstat | ints, int_mask);
     }
 
@@ -311,46 +320,66 @@ class HDLcd: public AmbaDmaDevice
      * @see setInterrupts
      * @param ints Set of interrupts to clear
      */
-    void intClear(uint32_t ints) {
+    void
+    intClear(uint32_t ints)
+    {
         setInterrupts(int_rawstat & ~ints, int_mask);
     }
 
     /** Masked interrupt status register */
-    const uint32_t intStatus() const { return int_rawstat & int_mask; }
+    uint32_t intStatus() const { return int_rawstat & int_mask; }
 
   protected: // Pixel output
     class PixelPump : public BasePixelPump
     {
       public:
         PixelPump(HDLcd &p, ClockDomain &pxl_clk, unsigned pixel_chunk)
-            : BasePixelPump(p, pxl_clk, pixel_chunk), parent(p) {}
+            : BasePixelPump(p, pxl_clk, pixel_chunk), parent(p)
+        {}
 
         void dumpSettings();
 
       protected:
-        bool nextPixel(Pixel &p) M5_ATTR_OVERRIDE { return parent.pxlNext(p); }
+        bool nextPixel(Pixel &p) override { return parent.pxlNext(p); }
+        size_t
+        nextLine(std::vector<Pixel>::iterator pixel_it,
+                 size_t line_length) override
+        {
+            return parent.lineNext(pixel_it, line_length);
+        }
 
-        void onVSyncBegin() M5_ATTR_OVERRIDE { return parent.pxlVSyncBegin(); }
-        void onVSyncEnd() M5_ATTR_OVERRIDE { return parent.pxlVSyncEnd(); }
+        void onVSyncBegin() override { return parent.pxlVSyncBegin(); }
+        void onVSyncEnd() override { return parent.pxlVSyncEnd(); }
 
-        void onUnderrun(unsigned x, unsigned y) M5_ATTR_OVERRIDE {
+        void
+        onUnderrun(unsigned x, unsigned y) override
+        {
             parent.pxlUnderrun();
         }
 
-        void onFrameDone() M5_ATTR_OVERRIDE { parent.pxlFrameDone(); }
+        void onFrameDone() override { parent.pxlFrameDone(); }
 
       protected:
         HDLcd &parent;
     };
 
+    Addr bypassLineAddress = 0;
+
+    /** Handler for fast frame refresh in KVM-mode */
+    void virtRefresh();
+    EventFunctionWrapper virtRefreshEvent;
+
     /** Helper to write out bitmaps */
-    Bitmap bmp;
+    std::unique_ptr<ImgWriter> imgWriter;
+
+    /** Image Format */
+    enums::ImageFormat imgFormat;
 
     /** Picture of what the current frame buffer looks like */
-    std::ostream *pic;
+    OutputStream *pic = nullptr;
 
     /** Cached pixel converter, set when the converter is enabled. */
-    PixelConverter conv;
+    PixelConverter conv = PixelConverter::rgba8888_le;
 
     PixelPump pixelPump;
 
@@ -366,12 +395,12 @@ class HDLcd: public AmbaDmaDevice
         void abortFrame();
         void dumpSettings();
 
-        void serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE;
-        void unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE;
+        void serialize(CheckpointOut &cp) const override;
+        void unserialize(CheckpointIn &cp) override;
 
       protected:
-        void onEndOfBlock() M5_ATTR_OVERRIDE;
-        void onIdle() M5_ATTR_OVERRIDE;
+        void onEndOfBlock() override;
+        void onIdle() override;
 
         HDLcd &parent;
         const size_t lineSize;
@@ -385,9 +414,13 @@ class HDLcd: public AmbaDmaDevice
     std::unique_ptr<DmaEngine> dmaEngine;
 
   protected: // Statistics
-    struct {
-        Stats::Scalar underruns;
+    struct HDLcdStats: public statistics::Group
+    {
+        HDLcdStats(statistics::Group *parent);
+        statistics::Scalar underruns;
     } stats;
 };
+
+} // namespace gem5
 
 #endif

@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2012-2013, 2015 ARM Limited
+ * Copyright (c) 2018 Inria
+ * Copyright (c) 2012-2013, 2015, 2022, 2024 Arm Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -36,8 +37,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Ron Dreslinski
  */
 
 /**
@@ -48,72 +47,139 @@
 #ifndef __MEM_CACHE_PREFETCH_STRIDE_HH__
 #define __MEM_CACHE_PREFETCH_STRIDE_HH__
 
-#include "base/hashmap.hh"
-#include "mem/cache/prefetch/queued.hh"
-#include "params/StridePrefetcher.hh"
+#include <string>
+#include <unordered_map>
+#include <vector>
 
-class StridePrefetcher : public QueuedPrefetcher
+#include "base/cache/associative_cache.hh"
+#include "base/sat_counter.hh"
+#include "base/types.hh"
+#include "mem/cache/prefetch/queued.hh"
+#include "mem/cache/replacement_policies/replaceable_entry.hh"
+#include "mem/cache/tags/indexing_policies/set_associative.hh"
+#include "mem/cache/tags/tagged_entry.hh"
+#include "mem/packet.hh"
+#include "params/StridePrefetcherHashedSetAssociative.hh"
+
+namespace gem5
+{
+
+namespace replacement_policy
+{
+    class Base;
+}
+struct StridePrefetcherParams;
+
+namespace prefetch
+{
+
+/**
+ * Override the default set associative to apply a specific hash function
+ * when extracting a set.
+ */
+class StridePrefetcherHashedSetAssociative : public TaggedSetAssociative
 {
   protected:
-    const int maxConf;
-    const int threshConf;
-    const int minConf;
-    const int startConf;
+    uint32_t extractSet(const KeyType &key) const override;
+    Addr extractTag(const Addr addr) const override;
 
-    const int pcTableAssoc;
-    const int pcTableSets;
+  public:
+    StridePrefetcherHashedSetAssociative(
+        const StridePrefetcherHashedSetAssociativeParams &p)
+      : TaggedSetAssociative(p)
+    {
+    }
+    ~StridePrefetcherHashedSetAssociative() = default;
+};
 
-    const bool useMasterId;
+class Stride : public Queued
+{
+  protected:
+    /** Initial confidence counter value for the pc tables. */
+    const SatCounter8 initConfidence;
+
+    /** Confidence threshold for prefetch generation. */
+    const double threshConf;
+
+    const bool useRequestorId;
 
     const int degree;
 
-    struct StrideEntry
+    /** How far ahead of the demand stream to start prefetching.
+     *
+     * Skip this number of strides ahead of the first identified
+     * prefetch, then generate `degree` prefetches at `stride`
+     * intervals. A value of zero indicates no skip.
+     */
+    const int distance;
+
+    /**
+     * Information used to create a new PC table. All of them behave equally.
+     */
+    const struct PCTableInfo
     {
-        StrideEntry() : instAddr(0), lastAddr(0), isSecure(false), stride(0),
-                        confidence(0)
-        { }
+        const int assoc;
+        const int numEntries;
 
-        Addr instAddr;
-        Addr lastAddr;
-        bool isSecure;
-        int stride;
-        int confidence;
-    };
+        TaggedIndexingPolicy* const indexingPolicy;
+        replacement_policy::Base* const replacementPolicy;
 
-    class PCTable
-    {
-      public:
-        PCTable(int assoc, int sets, const std::string name) :
-            pcTableAssoc(assoc), pcTableSets(sets), _name(name) {}
-        StrideEntry** operator[] (int context) {
-            auto it = entries.find(context);
-            if (it != entries.end())
-                return it->second;
-
-            return allocateNewContext(context);
+        PCTableInfo(int assoc, int num_entries,
+                    TaggedIndexingPolicy* indexing_policy,
+                    replacement_policy::Base* repl_policy)
+          : assoc(assoc), numEntries(num_entries),
+            indexingPolicy(indexing_policy), replacementPolicy(repl_policy)
+        {
         }
+    } pcTableInfo;
 
-        ~PCTable();
-      private:
-        const std::string name() {return _name; }
-        const int pcTableAssoc;
-        const int pcTableSets;
-        const std::string _name;
-        m5::hash_map<int, StrideEntry**> entries;
+    /** Tagged by hashed PCs. */
+    struct StrideEntry : public TaggedEntry
+    {
+        StrideEntry(const SatCounter8& init_confidence, TagExtractor ext);
 
-        StrideEntry** allocateNewContext(int context);
+        void invalidate() override;
+
+        Addr lastAddr;
+        int stride;
+        SatCounter8 confidence;
     };
-    PCTable pcTable;
+    using PCTable = AssociativeCache<StrideEntry>;
+    std::unordered_map<int, std::unique_ptr<PCTable>> pcTables;
 
-    bool pcTableHit(Addr pc, bool is_secure, int master_id, StrideEntry* &entry);
-    StrideEntry* pcTableVictim(Addr pc, int master_id);
+    /**
+     * If this parameter is set to true, then the prefetcher will operate at
+     * the granularity of cache line. Otherwise it would operate on the
+     * granularity of word addresses
+     */
+    const bool useCachelineAddr;
 
-    Addr pcHash(Addr pc) const;
+    /**
+     * Try to find a table of entries for the given context. If none is
+     * found, a new table is created.
+     *
+     * @param context The context to be searched for.
+     * @return The table corresponding to the given context.
+     */
+    PCTable& findTable(int context);
+
+    /**
+     * Create a PC table for the given context.
+     *
+     * @param context The context of the new PC table.
+     * @return The new PC table
+     */
+    PCTable& allocateNewContext(int context);
+
   public:
+    Stride(const StridePrefetcherParams &p);
 
-    StridePrefetcher(const StridePrefetcherParams *p);
-
-    void calculatePrefetch(const PacketPtr &pkt, std::vector<Addr> &addresses);
+    void calculatePrefetch(const PrefetchInfo &pfi,
+                           std::vector<AddrPriority> &addresses,
+                           const CacheAccessor &cache) override;
 };
+
+} // namespace prefetch
+} // namespace gem5
 
 #endif // __MEM_CACHE_PREFETCH_STRIDE_HH__

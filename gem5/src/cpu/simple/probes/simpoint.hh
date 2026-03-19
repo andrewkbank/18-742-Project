@@ -33,18 +33,20 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Dam Sunwoo
- *          Curtis Dunham
  */
 
 #ifndef __CPU_SIMPLE_PROBES_SIMPOINT_HH__
 #define __CPU_SIMPLE_PROBES_SIMPOINT_HH__
 
-#include "base/hashmap.hh"
+#include <unordered_map>
+
+#include "base/output.hh"
 #include "cpu/simple_thread.hh"
 #include "params/SimPoint.hh"
-#include "sim/probe/probe.hh"
+#include "sim/probe/probe_listener_object.hh"
+
+namespace gem5
+{
 
 /**
  * Probe for SimPoints BBV generation
@@ -58,22 +60,29 @@
  */
 typedef std::pair<Addr, Addr> BasicBlockRange;
 
+} // namespace gem5
+
 /** Overload hash function for BasicBlockRange type */
-__hash_namespace_begin
+namespace std
+{
 template <>
-struct hash<BasicBlockRange>
+struct hash<gem5::BasicBlockRange>
 {
   public:
-    size_t operator()(const BasicBlockRange &bb) const {
-        return hash<Addr>()(bb.first + bb.second);
+    size_t operator()(const gem5::BasicBlockRange &bb) const
+    {
+        return hash<gem5::Addr>()(bb.first + bb.second);
     }
 };
-__hash_namespace_end
+} // namespace std
+
+namespace gem5
+{
 
 class SimPoint : public ProbeListenerObject
 {
   public:
-    SimPoint(const SimPointParams *params);
+    SimPoint(const SimPointParams &params);
     virtual ~SimPoint();
 
     virtual void init();
@@ -85,7 +94,7 @@ class SimPoint : public ProbeListenerObject
      * Called at every macro inst to increment basic block inst counts and
      * to profile block if end of block.
      */
-    void profile(const std::pair<SimpleThread*, StaticInstPtr>&);
+    void profile(const std::pair<SimpleThread*, const StaticInstPtr>&);
 
   private:
     /** SimPoint profiling interval size in instructions */
@@ -96,10 +105,11 @@ class SimPoint : public ProbeListenerObject
     /** Excess inst count from previous interval*/
     uint64_t intervalDrift;
     /** Pointer to SimPoint BBV output stream */
-    std::ostream *simpointStream;
+    OutputStream *simpointStream;
 
     /** Basic Block information */
-    struct BBInfo {
+    struct BBInfo
+    {
         /** Unique ID */
         uint64_t id;
         /** Num of static insts in BB */
@@ -109,11 +119,13 @@ class SimPoint : public ProbeListenerObject
     };
 
     /** Hash table containing all previously seen basic blocks */
-    m5::hash_map<BasicBlockRange, BBInfo> bbMap;
+    std::unordered_map<BasicBlockRange, BBInfo> bbMap;
     /** Currently executing basic block */
     BasicBlockRange currentBBV;
     /** inst count in current basic block */
     uint64_t currentBBVInstCount;
 };
+
+} // namespace gem5
 
 #endif // __CPU_SIMPLE_PROBES_SIMPOINT_HH__

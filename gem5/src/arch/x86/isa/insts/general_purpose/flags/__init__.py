@@ -32,14 +32,10 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Gabe Black
 
-categories = ["load_and_store",
-              "push_and_pop",
-              "set_and_clear"]
+categories = ["load_and_store", "push_and_pop", "set_and_clear"]
 
 microcode = ""
 for category in categories:
-    exec "import %s as cat" % category
+    exec(f"from . import {category} as cat")
     microcode += cat.microcode

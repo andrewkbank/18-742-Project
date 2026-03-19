@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2015 ARM Limited
+ * Copyright (c) 2011-2015, 2018-2020 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -36,11 +36,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Ron Dreslinski
- *          Ali Saidi
- *          Andreas Hansson
- *          William Wang
  */
 
 /**
@@ -52,14 +47,17 @@
 #define __MEM_XBAR_HH__
 
 #include <deque>
+#include <unordered_map>
 
 #include "base/addr_range_map.hh"
-#include "base/hashmap.hh"
 #include "base/types.hh"
-#include "mem/mem_object.hh"
 #include "mem/qport.hh"
 #include "params/BaseXBar.hh"
+#include "sim/clocked_object.hh"
 #include "sim/stats.hh"
+
+namespace gem5
+{
 
 /**
  * The base crossbar contains the common elements of the non-coherent
@@ -70,7 +68,7 @@
  * The BaseXBar is responsible for the basic flow control (busy or
  * not), the administration of retries, and the address decoding.
  */
-class BaseXBar : public MemObject
+class BaseXBar : public ClockedObject
 {
 
   protected:
@@ -84,13 +82,13 @@ class BaseXBar : public MemObject
      * PCIe, etc.
      *
      * The template parameter, PortClass, indicates the destination
-     * port type for the layer. The retry list holds either master
-     * ports or slave ports, depending on the direction of the
-     * layer. Thus, a request layer has a retry list containing slave
-     * ports, whereas a response layer holds master ports.
+     * port type for the layer. The retry list holds either memory-side ports
+     * or CPU-side ports, depending on the direction of the
+     * layer. Thus, a request layer has a retry list containing
+     * CPU-side ports, whereas a response layer holds memory-side ports.
      */
     template <typename SrcType, typename DstType>
-    class Layer : public Drainable
+    class Layer : public Drainable, public statistics::Group
     {
 
       public:
@@ -114,12 +112,9 @@ class BaseXBar : public MemObject
          *
          * @return 1 if busy or waiting to retry, or 0 if idle
          */
-        DrainState drain() M5_ATTR_OVERRIDE;
+        DrainState drain() override;
 
-        /**
-         * Get the crossbar layer's name
-         */
-        const std::string name() const { return xbar.name() + _name; }
+        const std::string name() const { return _name; }
 
 
         /**
@@ -154,7 +149,6 @@ class BaseXBar : public MemObject
          */
         void failedTiming(SrcType* src_port, Tick busy_time);
 
-        /** Occupy the layer until until */
         void occupyLayer(Tick until);
 
         /**
@@ -170,16 +164,11 @@ class BaseXBar : public MemObject
          */
         void recvRetry();
 
-        /**
-         * Register stats for the layer
-         */
-        void regStats();
-
       protected:
 
         /**
          * Sending the actual retry, in a manner specific to the
-         * individual layers. Note that for a MasterPort, there is
+         * individual layers. Note that for a RequestPort, there is
          * both a RequestLayer and a SnoopResponseLayer using the same
          * port, but using different functions for the flow control.
          */
@@ -193,7 +182,6 @@ class BaseXBar : public MemObject
         /** The crossbar this layer is a part of. */
         BaseXBar& xbar;
 
-        /** A name for this layer. */
         std::string _name;
 
         /**
@@ -214,7 +202,6 @@ class BaseXBar : public MemObject
          */
         enum State { IDLE, BUSY, RETRY };
 
-        /** track the state of the layer */
         State state;
 
         /**
@@ -235,21 +222,19 @@ class BaseXBar : public MemObject
          * potential waiting port, or drain if asked to do so.
          */
         void releaseLayer();
-
-        /** event used to schedule a release of the layer */
-        EventWrapper<Layer, &Layer::releaseLayer> releaseEvent;
+        EventFunctionWrapper releaseEvent;
 
         /**
          * Stats for occupancy and utilization. These stats capture
          * the time the layer spends in the busy state and are thus only
          * relevant when the memory system is in timing mode.
          */
-        Stats::Scalar occupancy;
-        Stats::Formula utilization;
+        statistics::Scalar occupancy;
+        statistics::Formula utilization;
 
     };
 
-    class ReqLayer : public Layer<SlavePort,MasterPort>
+    class ReqLayer : public Layer<ResponsePort, RequestPort>
     {
       public:
         /**
@@ -259,16 +244,20 @@ class BaseXBar : public MemObject
          * @param _xbar the crossbar this layer belongs to
          * @param _name the layer's name
          */
-        ReqLayer(MasterPort& _port, BaseXBar& _xbar, const std::string& _name) :
-            Layer(_port, _xbar, _name) {}
+        ReqLayer(RequestPort& _port, BaseXBar& _xbar,
+        const std::string& _name) :
+            Layer(_port, _xbar, _name)
+        {}
 
       protected:
-
-        void sendRetry(SlavePort* retry_port)
-        { retry_port->sendRetryReq(); }
+        void
+        sendRetry(ResponsePort* retry_port) override
+        {
+            retry_port->sendRetryReq();
+        }
     };
 
-    class RespLayer : public Layer<MasterPort,SlavePort>
+    class RespLayer : public Layer<RequestPort, ResponsePort>
     {
       public:
         /**
@@ -278,16 +267,20 @@ class BaseXBar : public MemObject
          * @param _xbar the crossbar this layer belongs to
          * @param _name the layer's name
          */
-        RespLayer(SlavePort& _port, BaseXBar& _xbar, const std::string& _name) :
-            Layer(_port, _xbar, _name) {}
+        RespLayer(ResponsePort& _port, BaseXBar& _xbar,
+                  const std::string& _name) :
+            Layer(_port, _xbar, _name)
+        {}
 
       protected:
-
-        void sendRetry(MasterPort* retry_port)
-        { retry_port->sendRetryResp(); }
+        void
+        sendRetry(RequestPort* retry_port) override
+        {
+            retry_port->sendRetryResp();
+        }
     };
 
-    class SnoopRespLayer : public Layer<SlavePort,MasterPort>
+    class SnoopRespLayer : public Layer<ResponsePort, RequestPort>
     {
       public:
         /**
@@ -297,14 +290,18 @@ class BaseXBar : public MemObject
          * @param _xbar the crossbar this layer belongs to
          * @param _name the layer's name
          */
-        SnoopRespLayer(MasterPort& _port, BaseXBar& _xbar,
+        SnoopRespLayer(RequestPort& _port, BaseXBar& _xbar,
                        const std::string& _name) :
-            Layer(_port, _xbar, _name) {}
+            Layer(_port, _xbar, _name)
+        {}
 
       protected:
 
-        void sendRetry(SlavePort* retry_port)
-        { retry_port->sendRetrySnoopResp(); }
+        void
+        sendRetry(ResponsePort* retry_port) override
+        {
+            retry_port->sendRetrySnoopResp();
+        }
     };
 
     /**
@@ -312,14 +309,14 @@ class BaseXBar : public MemObject
      * and to decode the address.
      */
     const Cycles frontendLatency;
-    /** Cycles of forward latency */
     const Cycles forwardLatency;
-    /** Cycles of response latency */
     const Cycles responseLatency;
+    /** Cycles the layer is occupied processing the packet header */
+    const Cycles headerLatency;
     /** the width of the xbar in bytes */
     const uint32_t width;
 
-    AddrRangeMap<PortID> portMap;
+    AddrRangeMap<PortID, 3> portMap;
 
     /**
      * Remember where request packets came from so that we can route
@@ -327,7 +324,7 @@ class BaseXBar : public MemObject
      * the underlying Request pointer inside the Packet stays
      * constant.
      */
-    m5::unordered_map<RequestPtr, PortID> routeTo;
+    std::unordered_map<RequestPtr, PortID> routeTo;
 
     /** all contigous ranges seen by this crossbar */
     AddrRangeList xbarRanges;
@@ -338,63 +335,24 @@ class BaseXBar : public MemObject
      * Function called by the port when the crossbar is recieving a
      * range change.
      *
-     * @param master_port_id id of the port that received the change
+     * @param mem_side_port_id id of the port that received the change
      */
-    void recvRangeChange(PortID master_port_id);
+    virtual void recvRangeChange(PortID mem_side_port_id);
 
-    /** Find which port connected to this crossbar (if any) should be
-     * given a packet with this address.
+    /**
+     * Find which port connected to this crossbar (if any) should be
+     * given a packet with this address range.
      *
-     * @param addr Address to find port for.
-     * @return id of port that the packet should be sent out of.
+     * @param addr_range Address range to find port for.
+     * @param pkt Packet that containing the address range.
+     * @return id of port that the packet should be sent ou of.
      */
-    PortID findPort(Addr addr);
+    virtual PortID findPort(AddrRange addr_range, PacketPtr pkt = nullptr);
 
-    // Cache for the findPort function storing recently used ports from portMap
-    struct PortCache {
-        bool valid;
-        PortID id;
-        AddrRange range;
-    };
-
-    PortCache portCache[3];
-
-    // Checks the cache and returns the id of the port that has the requested
-    // address within its range
-    inline PortID checkPortCache(Addr addr) const {
-        if (portCache[0].valid && portCache[0].range.contains(addr)) {
-            return portCache[0].id;
-        }
-        if (portCache[1].valid && portCache[1].range.contains(addr)) {
-            return portCache[1].id;
-        }
-        if (portCache[2].valid && portCache[2].range.contains(addr)) {
-            return portCache[2].id;
-        }
-
-        return InvalidPortID;
-    }
-
-    // Clears the earliest entry of the cache and inserts a new port entry
-    inline void updatePortCache(short id, const AddrRange& range) {
-        portCache[2].valid = portCache[1].valid;
-        portCache[2].id    = portCache[1].id;
-        portCache[2].range = portCache[1].range;
-
-        portCache[1].valid = portCache[0].valid;
-        portCache[1].id    = portCache[0].id;
-        portCache[1].range = portCache[0].range;
-
-        portCache[0].valid = true;
-        portCache[0].id    = id;
-        portCache[0].range = range;
-    }
-
-    // Clears the cache. Needs to be called in constructor.
-    inline void clearPortCache() {
-        portCache[2].valid = false;
-        portCache[1].valid = false;
-        portCache[0].valid = false;
+    PortID
+    findPort(PacketPtr pkt)
+    {
+        return findPort(pkt->getAddrRange(), pkt);
     }
 
     /**
@@ -416,17 +374,17 @@ class BaseXBar : public MemObject
     void calcPacketTiming(PacketPtr pkt, Tick header_delay);
 
     /**
-     * Remember for each of the master ports of the crossbar if we got
-     * an address range from the connected slave. For convenience,
-     * also keep track of if we got ranges from all the slave modules
+     * Remember for each of the memory-side ports of the crossbar if we got
+     * an address range from the connected CPU-side ports. For convenience,
+     * also keep track of if we got ranges from all the CPU-side-port modules
      * or not.
      */
     std::vector<bool> gotAddrRanges;
     bool gotAllAddrRanges;
 
-    /** The master and slave ports of the crossbar */
-    std::vector<QueuedSlavePort*> slavePorts;
-    std::vector<MasterPort*> masterPorts;
+    /** The memory-side ports and CPU-side ports of the crossbar */
+    std::vector<QueuedResponsePort*> cpuSidePorts;
+    std::vector<RequestPort*> memSidePorts;
 
     /** Port that handles requests that don't match any of the interfaces.*/
     PortID defaultPortID;
@@ -437,35 +395,32 @@ class BaseXBar : public MemObject
        addresses not handled by another port to default device. */
     const bool useDefaultRange;
 
-    BaseXBar(const BaseXBarParams *p);
-
-    virtual ~BaseXBar();
+    BaseXBar(const BaseXBarParams &p);
 
     /**
      * Stats for transaction distribution and data passing through the
      * crossbar. The transaction distribution is globally counting
      * different types of commands. The packet count and total packet
      * size are two-dimensional vectors that are indexed by the
-     * slave port and master port id (thus the neighbouring master and
-     * neighbouring slave), summing up both directions (request and
-     * response).
+     * CPU-side port and memory-side port id (thus the neighbouring memory-side
+     * ports and neighbouring CPU-side ports), summing up both directions
+     * (request and response).
      */
-    Stats::Vector transDist;
-    Stats::Vector2d pktCount;
-    Stats::Vector2d pktSize;
+    statistics::Vector transDist;
+    statistics::Vector2d pktCount;
+    statistics::Vector2d pktSize;
 
   public:
 
-    virtual void init();
+    virtual ~BaseXBar();
 
     /** A function used to return the port associated with this object. */
-    BaseMasterPort& getMasterPort(const std::string& if_name,
-                                  PortID idx = InvalidPortID);
-    BaseSlavePort& getSlavePort(const std::string& if_name,
-                                PortID idx = InvalidPortID);
+    Port &getPort(const std::string &if_name,
+                  PortID idx=InvalidPortID) override;
 
-    virtual void regStats();
-
+    void regStats() override;
 };
+
+} // namespace gem5
 
 #endif //__MEM_XBAR_HH__

@@ -24,22 +24,21 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nathan Binkert
- *          Steve Reinhardt
  */
+
+#include "sim/debug.hh"
 
 #include <string>
 #include <vector>
 
 #include "base/debug.hh"
-#include "sim/debug.hh"
-#include "sim/eventq_impl.hh"
+#include "sim/eventq.hh"
 #include "sim/global_event.hh"
 #include "sim/sim_events.hh"
 #include "sim/sim_exit.hh"
 
-using namespace std;
+namespace gem5
+{
 
 //
 // Debug event: place a breakpoint on the process function and
@@ -66,7 +65,7 @@ DebugBreakEvent::DebugBreakEvent(Tick when)
 void
 DebugBreakEvent::process()
 {
-    Debug::breakpoint();
+    debug::breakpoint();
 }
 
 
@@ -85,6 +84,12 @@ schedBreak(Tick when)
 {
     new DebugBreakEvent(when);
     warn("need to stop all queues");
+}
+
+void
+schedRelBreak(Tick delta)
+{
+    schedBreak(curTick() + delta);
 }
 
 ///
@@ -106,19 +111,4 @@ eventqDump()
     }
 }
 
-int remote_gdb_base_port = 7000;
-
-int
-getRemoteGDBPort()
-{
-    return remote_gdb_base_port;
-}
-
-// Set remote GDB base port.  0 means disable remote GDB.
-// Callable from python.
-void
-setRemoteGDBPort(int port)
-{
-    remote_gdb_base_port = port;
-}
-
+} // namespace gem5

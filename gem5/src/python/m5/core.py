@@ -1,3 +1,15 @@
+# Copyright (c) 2019 ARM Limited
+# All rights reserved.
+#
+# The license below extends only to copyright in the software and shall
+# not be construed as granting a license to any other intellectual
+# property including but not limited to intellectual property relating
+# to a hardware implementation of the functionality of the software
+# licensed hereunder.  You may use the software subject to the license
+# terms below provided that you ensure that this notice is replicated
+# unmodified and in its entirety in all distributions of the software,
+# modified or unmodified, in source code or in binary form.
+#
 # Copyright (c) 2008 The Hewlett-Packard Development Company
 # All rights reserved.
 #
@@ -23,10 +35,36 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Nathan Binkert
 
-import internal
+import os
+import sys
+from pathlib import Path
 
-def setOutputDir(dir):
-    internal.core.setOutputDir(dir)
+import m5
+
+from _m5.core import setOutputDir
+from _m5.loader import setInterpDir
+
+"""
+This function is meant to have a similar functionality to override_outdir in
+src/python/gem5/simulate/simulator.py. It changes the output directory for
+simerr.txt and simout.txt, which are generated when the -re flag is passed to
+gem5 in the command line. This function is primarily for use with multisim.
+
+Code copied and adapted from main.py
+"""
+
+
+def override_re_outdir(new_outdir):
+    options = m5.options
+
+    stdout_file = Path(new_outdir) / "simout.txt"
+    stderr_file = Path(new_outdir) / "simerr.txt"
+    if options.redirect_stdout:
+        redir_fd = os.open(stdout_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        os.dup2(redir_fd, sys.stdout.fileno())
+        if not options.redirect_stderr:
+            os.dup2(redir_fd, sys.stderr.fileno())
+    if options.redirect_stderr:
+        redir_fd = os.open(stderr_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        os.dup2(redir_fd, sys.stderr.fileno())

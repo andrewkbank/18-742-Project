@@ -32,27 +32,29 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Marco Elver
 
-from MemObject import MemObject
-from m5.SimObject import SimObject
 from m5.params import *
 from m5.proxy import *
+from m5.SimObject import SimObject
+
 
 class MemChecker(SimObject):
-    type = 'MemChecker'
+    type = "MemChecker"
     cxx_header = "mem/mem_checker.hh"
+    cxx_class = "gem5::MemChecker"
 
-class MemCheckerMonitor(MemObject):
-    type = 'MemCheckerMonitor'
+
+class MemCheckerMonitor(SimObject):
+    type = "MemCheckerMonitor"
     cxx_header = "mem/mem_checker_monitor.hh"
+    cxx_class = "gem5::MemCheckerMonitor"
 
     # one port in each direction
-    master = MasterPort("Master port")
-    slave = SlavePort("Slave port")
-    cpu_side = SlavePort("Alias for slave")
-    mem_side = MasterPort("Alias for master")
+    mem_side_port = RequestPort(
+        "This port sends requests and receives responses"
+    )
+    cpu_side_port = ResponsePort(
+        "This port receives requests and sends responses"
+    )
     warn_only = Param.Bool(False, "Warn about violations only")
     memchecker = Param.MemChecker("Instance shared with other monitors")
-

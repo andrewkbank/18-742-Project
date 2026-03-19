@@ -1,4 +1,16 @@
 /*
+ * Copyright (c) 2016-2018,2019 ARM Limited
+ * All rights reserved
+ *
+ * The license below extends only to copyright in the software and shall
+ * not be construed as granting a license to any other intellectual
+ * property including but not limited to intellectual property relating
+ * to a hardware implementation of the functionality of the software
+ * licensed hereunder. You may use the software subject to the license
+ * terms below provided that you ensure that this notice is replicated
+ * unmodified and in its entirety in all distributions of the software,
+ * modified or unmodified, in source code or in binary form.
+ *
  * Copyright (c) 2004-2005 The Regents of The University of Michigan
  * Copyright (c) 2013 Advanced Micro Devices, Inc.
  * All rights reserved.
@@ -25,60 +37,68 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Kevin Lim
  */
+
+#include "cpu/o3/rename_map.hh"
 
 #include <vector>
 
-#include "cpu/o3/rename_map.hh"
+#include "cpu/o3/dyn_inst.hh"
+#include "cpu/reg_class.hh"
 #include "debug/Rename.hh"
 
-using namespace std;
+namespace gem5
+{
 
-/**** SimpleRenameMap methods ****/
+namespace o3
+{
 
-SimpleRenameMap::SimpleRenameMap()
-    : freeList(NULL), zeroReg(0)
+SimpleRenameMap::SimpleRenameMap() : freeList(NULL)
 {
 }
 
 
 void
-SimpleRenameMap::init(unsigned size, SimpleFreeList *_freeList,
-                      RegIndex _zeroReg)
+SimpleRenameMap::init(const RegClass &reg_class, SimpleFreeList *_freeList)
 {
     assert(freeList == NULL);
     assert(map.empty());
 
-    map.resize(size);
+    map.resize(reg_class.numRegs());
     freeList = _freeList;
-    zeroReg = _zeroReg;
 }
 
 SimpleRenameMap::RenameInfo
-SimpleRenameMap::rename(RegIndex arch_reg)
+SimpleRenameMap::rename(const RegId& arch_reg)
 {
-    PhysRegIndex renamed_reg;
-
+    PhysRegIdPtr renamed_reg;
     // Record the current physical register that is renamed to the
     // requested architected register.
-    PhysRegIndex prev_reg = map[arch_reg];
+    PhysRegIdPtr prev_reg = map[arch_reg.index()];
 
-    // If it's not referencing the zero register, then rename the
-    // register.
-    if (arch_reg != zeroReg) {
-        renamed_reg = freeList->getReg();
-
-        map[arch_reg] = renamed_reg;
+    if (arch_reg.is(InvalidRegClass)) {
+        assert(prev_reg->is(InvalidRegClass));
+        renamed_reg = prev_reg;
+    } else if (prev_reg->getNumPinnedWrites() > 0) {
+        // Do not rename if the register is pinned
+        assert(arch_reg.getNumPinnedWrites() == 0);  // Prevent pinning the
+                                                     // same register twice
+        DPRINTF(Rename, "Renaming pinned reg, numPinnedWrites %d\n",
+                prev_reg->getNumPinnedWrites());
+        renamed_reg = prev_reg;
+        renamed_reg->decrNumPinnedWrites();
     } else {
-        // Otherwise return the zero register so nothing bad happens.
-        assert(prev_reg == zeroReg);
-        renamed_reg = zeroReg;
+        renamed_reg = freeList->getReg();
+        map[arch_reg.index()] = renamed_reg;
+        renamed_reg->setNumPinnedWrites(arch_reg.getNumPinnedWrites());
+        renamed_reg->setNumPinnedWritesToComplete(
+            arch_reg.getNumPinnedWrites() + 1);
     }
 
-    DPRINTF(Rename, "Renamed reg %d to physical reg %d old mapping was %d\n",
-            arch_reg, renamed_reg, prev_reg);
+    DPRINTF(Rename, "Renamed reg %d to physical reg %d (%d) old mapping was"
+            " %d (%d)\n",
+            arch_reg, renamed_reg->flatIndex(), renamed_reg->flatIndex(),
+            prev_reg->flatIndex(), prev_reg->flatIndex());
 
     return RenameInfo(renamed_reg, prev_reg);
 }
@@ -87,95 +107,26 @@ SimpleRenameMap::rename(RegIndex arch_reg)
 /**** UnifiedRenameMap methods ****/
 
 void
-UnifiedRenameMap::init(PhysRegFile *_regFile,
-                       RegIndex _intZeroReg,
-                       RegIndex _floatZeroReg,
-                       UnifiedFreeList *freeList)
+UnifiedRenameMap::init(const BaseISA::RegClasses &regClasses,
+        PhysRegFile *_regFile, UnifiedFreeList *freeList)
 {
     regFile = _regFile;
 
-    intMap.init(TheISA::NumIntRegs, &(freeList->intList), _intZeroReg);
-
-    floatMap.init(TheISA::NumFloatRegs, &(freeList->floatList), _floatZeroReg);
-
-    ccMap.init(TheISA::NumCCRegs, &(freeList->ccList), (RegIndex)-1);
+    for (int i = 0; i < renameMaps.size(); i++)
+        renameMaps[i].init(*regClasses.at(i), &(freeList->freeLists[i]));
 }
 
-
-UnifiedRenameMap::RenameInfo
-UnifiedRenameMap::rename(RegIndex arch_reg)
+bool
+UnifiedRenameMap::canRename(DynInstPtr inst) const
 {
-    RegIndex rel_arch_reg;
-
-    switch (regIdxToClass(arch_reg, &rel_arch_reg)) {
-      case IntRegClass:
-        return renameInt(rel_arch_reg);
-
-      case FloatRegClass:
-        return renameFloat(rel_arch_reg);
-
-      case CCRegClass:
-        return renameCC(rel_arch_reg);
-
-      case MiscRegClass:
-        return renameMisc(rel_arch_reg);
-
-      default:
-        panic("rename rename(): unknown reg class %s\n",
-              RegClassStrings[regIdxToClass(arch_reg)]);
+    for (int i = 0; i < renameMaps.size(); i++) {
+        if (inst->numDestRegs((RegClassType)i) >
+                renameMaps[i].numFreeEntries()) {
+            return false;
+        }
     }
+    return true;
 }
 
-
-PhysRegIndex
-UnifiedRenameMap::lookup(RegIndex arch_reg) const
-{
-    RegIndex rel_arch_reg;
-
-    switch (regIdxToClass(arch_reg, &rel_arch_reg)) {
-      case IntRegClass:
-        return lookupInt(rel_arch_reg);
-
-      case FloatRegClass:
-        return lookupFloat(rel_arch_reg);
-
-      case CCRegClass:
-        return lookupCC(rel_arch_reg);
-
-      case MiscRegClass:
-        return lookupMisc(rel_arch_reg);
-
-      default:
-        panic("rename lookup(): unknown reg class %s\n",
-              RegClassStrings[regIdxToClass(arch_reg)]);
-    }
-}
-
-void
-UnifiedRenameMap::setEntry(RegIndex arch_reg, PhysRegIndex phys_reg)
-{
-    RegIndex rel_arch_reg;
-
-    switch (regIdxToClass(arch_reg, &rel_arch_reg)) {
-      case IntRegClass:
-        return setIntEntry(rel_arch_reg, phys_reg);
-
-      case FloatRegClass:
-        return setFloatEntry(rel_arch_reg, phys_reg);
-
-      case CCRegClass:
-        return setCCEntry(rel_arch_reg, phys_reg);
-
-      case MiscRegClass:
-        // Misc registers do not actually rename, so don't change
-        // their mappings.  We end up here when a commit or squash
-        // tries to update or undo a hardwired misc reg nmapping,
-        // which should always be setting it to what it already is.
-        assert(phys_reg == lookupMisc(rel_arch_reg));
-        return;
-
-      default:
-        panic("rename setEntry(): unknown reg class %s\n",
-              RegClassStrings[regIdxToClass(arch_reg)]);
-    }
-}
+} // namespace o3
+} // namespace gem5

@@ -30,56 +30,22 @@
  *          Ali Saidi
  */
 
-#include "m5ops.h"
+#include <gem5/asm/generic/m5ops.h>
 
-#ifdef M5OP_ADDR
-/* Use the memory mapped m5op interface */
-#define TWO_BYTE_OP(name, number)         \
-        .globl name;                      \
-        .func name;                       \
-name:                                     \
-        mov m5_mem, %r11;                 \
-        mov $number, %rax;                \
-        shl $8, %rax;                     \
-        mov 0(%r11, %rax, 1), %rax;       \
-        ret;                              \
-        .endfunc;
+.macro m5op_func, name, func
+        .globl \name
+        .func \name
+\name:
+        .byte 0x0F, 0x04
+        .word \func
+        ret
+        .endfunc
+.endm
 
-#else
-/* Use the magic instruction based m5op interface. This does not work
- * in virtualized environments.
- */
+.text
 
-#define TWO_BYTE_OP(name, number)         \
-        .globl name;                      \
-        .func name;                       \
-name:                                     \
-        .byte 0x0F, 0x04;                 \
-        .word number;                     \
-        ret;                              \
-        .endfunc;
+#define M5OP(name, func) m5op_func name, func;
+        M5OP_FOREACH
+#undef M5OP
 
-#endif
-
-TWO_BYTE_OP(arm, arm_func)
-TWO_BYTE_OP(quiesce, quiesce_func)
-TWO_BYTE_OP(quiesceNs, quiescens_func)
-TWO_BYTE_OP(quiesceCycle, quiescecycle_func)
-TWO_BYTE_OP(quiesceTime, quiescetime_func)
-TWO_BYTE_OP(rpns, rpns_func)
-TWO_BYTE_OP(m5_exit, exit_func)
-TWO_BYTE_OP(m5_fail, fail_func)
-TWO_BYTE_OP(m5_initparam, initparam_func)
-TWO_BYTE_OP(m5_loadsymbol, loadsymbol_func)
-TWO_BYTE_OP(m5_reset_stats, resetstats_func)
-TWO_BYTE_OP(m5_dump_stats, dumpstats_func)
-TWO_BYTE_OP(m5_dumpreset_stats, dumprststats_func)
-TWO_BYTE_OP(m5_checkpoint, ckpt_func)
-TWO_BYTE_OP(m5_readfile, readfile_func)
-TWO_BYTE_OP(m5_writefile, writefile_func)
-TWO_BYTE_OP(m5_debugbreak, debugbreak_func)
-TWO_BYTE_OP(m5_switchcpu, switchcpu_func)
-TWO_BYTE_OP(m5_addsymbol, addsymbol_func)
-TWO_BYTE_OP(m5_panic, panic_func)
-TWO_BYTE_OP(m5_work_begin, work_begin_func)
-TWO_BYTE_OP(m5_work_end, work_end_func)
+.section .note.GNU-stack

@@ -37,10 +37,22 @@
 #include "mem/ruby/common/Address.hh"
 #include "mem/ruby/common/Consumer.hh"
 
+namespace gem5
+{
+
+namespace ruby
+{
+
 class TimerTable
 {
   public:
     TimerTable();
+
+    void
+    setBlockSize(int block_size)
+    {
+        m_block_size_bits = floorLog2(block_size);
+    }
 
     void
     setConsumer(Consumer* consumer_ptr)
@@ -82,6 +94,8 @@ class TimerTable
     //! Consumer to signal a wakeup()
     Consumer* m_consumer_ptr;
 
+    int m_block_size_bits = 0;
+
     std::string m_name;
 };
 
@@ -92,5 +106,8 @@ operator<<(std::ostream& out, const TimerTable& obj)
     out << std::flush;
     return out;
 }
+
+} // namespace ruby
+} // namespace gem5
 
 #endif // __MEM_RUBY_STRUCTURES_TIMERTABLE_HH__

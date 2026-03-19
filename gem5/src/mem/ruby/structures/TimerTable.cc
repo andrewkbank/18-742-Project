@@ -30,6 +30,12 @@
 
 #include "mem/ruby/system/RubySystem.hh"
 
+namespace gem5
+{
+
+namespace ruby
+{
+
 TimerTable::TimerTable()
     : m_next_time(0)
 {
@@ -64,7 +70,7 @@ TimerTable::nextAddress() const
 void
 TimerTable::set(Addr address, Tick ready_time)
 {
-    assert(address == makeLineAddress(address));
+    assert(address == makeLineAddress(address, m_block_size_bits));
     assert(!m_map.count(address));
 
     m_map[address] = ready_time;
@@ -81,7 +87,7 @@ TimerTable::set(Addr address, Tick ready_time)
 void
 TimerTable::unset(Addr address)
 {
-    assert(address == makeLineAddress(address));
+    assert(address == makeLineAddress(address, m_block_size_bits));
     assert(m_map.count(address));
     m_map.erase(address);
 
@@ -120,3 +126,6 @@ TimerTable::updateNext() const
 
     m_next_valid = true;
 }
+
+} // namespace ruby
+} // namespace gem5

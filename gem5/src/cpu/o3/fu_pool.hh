@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2013 ARM Limited
+ * Copyright (c) 2012-2013, 2025 Arm Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -36,8 +36,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Kevin Lim
  */
 
 #ifndef __CPU_O3_FU_POOL_HH__
@@ -53,8 +51,14 @@
 #include "params/FUPool.hh"
 #include "sim/sim_object.hh"
 
+namespace gem5
+{
+
 class FUDesc;
 class FuncUnit;
+
+namespace o3
+{
 
 /**
  * Pool of FU's, specific to the new CPU model. The old FU pool had lists of
@@ -91,7 +95,8 @@ class FUPool : public SimObject
      * by iterating through it, thus leaving free units at the head of the
      * queue.
      */
-    class FUIdxQueue {
+    class FUIdxQueue
+    {
       public:
         /** Constructs a circular queue of FU indices. */
         FUIdxQueue()
@@ -126,20 +131,49 @@ class FUPool : public SimObject
     /** Functional units. */
     std::vector<FuncUnit *> funcUnits;
 
-    typedef std::vector<FuncUnit *>::iterator fuListIterator;
-
   public:
     typedef FUPoolParams Params;
     /** Constructs a FU pool. */
-    FUPool(const Params *p);
+    FUPool(const Params &p);
     ~FUPool();
 
     /**
-     * Gets a FU providing the requested capability. Will mark the unit as busy,
-     * but leaves the freeing of the unit up to the IEW stage.
+     * Named constants to differentiate cases where an
+     * instruction asked the FUPool for a free FU
+     * but did not get one
+     */
+
+    /**
+     * Instruction asked for a FU but does not actually
+     * need any (e.g., NOP)
+     */
+    static constexpr auto NoNeedFU = -3;
+
+    /**
+     * Instruction asked for a FU but this FUPool does
+     * not have a FU for this instruction op type
+     */
+    static constexpr auto NoCapableFU = -2;
+
+    /**
+     * Instruction asked for a FU but all FU for
+     * this op type have already been allocated to
+     * other instructions this cycle
+     */
+    static constexpr auto NoFreeFU = -1;
+
+    /** Returns true if the FU has the required capability */
+    bool isCapable(OpClass capability);
+
+    /**
+     * Gets a FU providing the requested capability. Will mark the
+     * unit as busy, but leaves the freeing of the unit up to the IEW
+     * stage.
+     *
      * @param capability The capability requested.
-     * @return Returns -2 if the FU pool does not have the capability, -1 if
-     * there is no free FU, and the FU's index otherwise.
+     * @return Returns NoCapableFU if the FU pool does not have the
+     * capability, NoFreeFU if there is no free FU, and the FU's index
+     * otherwise.
      */
     int getUnit(OpClass capability);
 
@@ -171,5 +205,8 @@ class FUPool : public SimObject
     /** Takes over from another CPU's thread. */
     void takeOverFrom() {};
 };
+
+} // namespace o3
+} // namespace gem5
 
 #endif // __CPU_O3_FU_POOL_HH__

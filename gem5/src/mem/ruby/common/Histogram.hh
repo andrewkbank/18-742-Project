@@ -29,10 +29,15 @@
 #ifndef __MEM_RUBY_COMMON_HISTOGRAM_HH__
 #define __MEM_RUBY_COMMON_HISTOGRAM_HH__
 
+#include <cstdint>
 #include <iostream>
 #include <vector>
 
-#include "mem/ruby/common/TypeDefines.hh"
+namespace gem5
+{
+
+namespace ruby
+{
 
 class Histogram
 {
@@ -82,5 +87,8 @@ operator<<(std::ostream& out, const Histogram& obj)
     out << std::flush;
     return out;
 }
+
+} // namespace ruby
+} // namespace gem5
 
 #endif // __MEM_RUBY_COMMON_HISTOGRAM_HH__

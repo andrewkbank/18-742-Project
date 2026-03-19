@@ -1,6 +1,6 @@
 // -*- mode:c++ -*-
 
-// Copyright (c) 2010-2013 ARM Limited
+// Copyright (c) 2010-2013,2016,2018-2019,2024-2025 ARM Limited
 // All rights reserved
 //
 // The license below extends only to copyright in the software and shall
@@ -34,8 +34,6 @@
 // THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// Authors: Gabe Black
 
 output header {{
 
@@ -43,8 +41,8 @@ template <class Micro>
 class VfpMacroRegRegOp : public VfpMacroOp
 {
   public:
-    VfpMacroRegRegOp(ExtMachInst _machInst, IntRegIndex _dest,
-                     IntRegIndex _op1, bool _wide) :
+    VfpMacroRegRegOp(ExtMachInst _machInst, RegIndex _dest,
+                     RegIndex _op1, bool _wide) :
         VfpMacroOp("VfpMacroRegRegOp", _machInst, No_OpClass, _wide)
     {
         numMicroops = machInst.fpscrLen + 1;
@@ -60,14 +58,12 @@ class VfpMacroRegRegOp : public VfpMacroOp
             nextIdxs(_dest, _op1);
         }
     }
-
-    %(BasicExecPanic)s
 };
 
 template <class VfpOp>
-static StaticInstPtr
+StaticInstPtr
 decodeVfpRegRegOp(ExtMachInst machInst,
-        IntRegIndex dest, IntRegIndex op1, bool wide)
+        RegIndex dest, RegIndex op1, bool wide)
 {
     if (machInst.fpscrLen == 0 || VfpMacroOp::inScalarBank(dest)) {
         return new VfpOp(machInst, dest, op1);
@@ -80,7 +76,7 @@ template <class Micro>
 class VfpMacroRegImmOp : public VfpMacroOp
 {
   public:
-    VfpMacroRegImmOp(ExtMachInst _machInst, IntRegIndex _dest, uint64_t _imm,
+    VfpMacroRegImmOp(ExtMachInst _machInst, RegIndex _dest, uint64_t _imm,
                      bool _wide) :
         VfpMacroOp("VfpMacroRegImmOp", _machInst, No_OpClass, _wide)
     {
@@ -96,14 +92,12 @@ class VfpMacroRegImmOp : public VfpMacroOp
             nextIdxs(_dest);
         }
     }
-
-    %(BasicExecPanic)s
 };
 
 template <class VfpOp>
-static StaticInstPtr
+StaticInstPtr
 decodeVfpRegImmOp(ExtMachInst machInst,
-        IntRegIndex dest, uint64_t imm, bool wide)
+        RegIndex dest, uint64_t imm, bool wide)
 {
     if (machInst.fpscrLen == 0 || VfpMacroOp::inScalarBank(dest)) {
         return new VfpOp(machInst, dest, imm);
@@ -116,8 +110,8 @@ template <class Micro>
 class VfpMacroRegRegImmOp : public VfpMacroOp
 {
   public:
-    VfpMacroRegRegImmOp(ExtMachInst _machInst, IntRegIndex _dest,
-                        IntRegIndex _op1, uint64_t _imm, bool _wide) :
+    VfpMacroRegRegImmOp(ExtMachInst _machInst, RegIndex _dest,
+                        RegIndex _op1, uint64_t _imm, bool _wide) :
         VfpMacroOp("VfpMacroRegRegImmOp", _machInst, No_OpClass, _wide)
     {
         numMicroops = machInst.fpscrLen + 1;
@@ -132,14 +126,12 @@ class VfpMacroRegRegImmOp : public VfpMacroOp
             nextIdxs(_dest, _op1);
         }
     }
-
-    %(BasicExecPanic)s
 };
 
 template <class VfpOp>
-static StaticInstPtr
-decodeVfpRegRegImmOp(ExtMachInst machInst, IntRegIndex dest,
-                     IntRegIndex op1, uint64_t imm, bool wide)
+StaticInstPtr
+decodeVfpRegRegImmOp(ExtMachInst machInst, RegIndex dest,
+                     RegIndex op1, uint64_t imm, bool wide)
 {
     if (machInst.fpscrLen == 0 || VfpMacroOp::inScalarBank(dest)) {
         return new VfpOp(machInst, dest, op1, imm);
@@ -152,8 +144,8 @@ template <class Micro>
 class VfpMacroRegRegRegOp : public VfpMacroOp
 {
   public:
-    VfpMacroRegRegRegOp(ExtMachInst _machInst, IntRegIndex _dest,
-                        IntRegIndex _op1, IntRegIndex _op2, bool _wide) :
+    VfpMacroRegRegRegOp(ExtMachInst _machInst, RegIndex _dest,
+                        RegIndex _op1, RegIndex _op2, bool _wide) :
         VfpMacroOp("VfpMacroRegRegRegOp", _machInst, No_OpClass, _wide)
     {
         numMicroops = machInst.fpscrLen + 1;
@@ -168,14 +160,12 @@ class VfpMacroRegRegRegOp : public VfpMacroOp
             nextIdxs(_dest, _op1, _op2);
         }
     }
-
-    %(BasicExecPanic)s
 };
 
 template <class VfpOp>
-static StaticInstPtr
-decodeVfpRegRegRegOp(ExtMachInst machInst, IntRegIndex dest,
-                     IntRegIndex op1, IntRegIndex op2, bool wide)
+StaticInstPtr
+decodeVfpRegRegRegOp(ExtMachInst machInst, RegIndex dest,
+                     RegIndex op1, RegIndex op2, bool wide)
 {
     if (machInst.fpscrLen == 0 || VfpMacroOp::inScalarBank(dest)) {
         return new VfpOp(machInst, dest, op1, op2);
@@ -195,11 +185,11 @@ let {{
     MiscDest = Op1;
     '''
 
-    vmsrIop = InstObjParams("vmsr", "Vmsr", "FpRegRegImmOp",
-                            { "code": vmsrCode,
-                              "predicate_test": predicateTest,
-                              "op_class": "SimdFloatMiscOp" },
-                             ["IsSerializeAfter","IsNonSpeculative"])
+    vmsrIop = ArmInstObjParams("vmsr", "Vmsr", "FpRegRegImmOp",
+                               { "code": vmsrCode,
+                                 "predicate_test": predicateTest,
+                                 "op_class": "SimdFloatMiscOp" },
+                                ["IsSerializeAfter","IsNonSpeculative"])
     header_output += FpRegRegImmOpDeclare.subst(vmsrIop);
     decoder_output += FpRegRegImmOpConstructor.subst(vmsrIop);
     exec_output += PredOpExecute.subst(vmsrIop);
@@ -208,23 +198,23 @@ let {{
     Fpscr = Op1 & ~FpCondCodesMask;
     FpCondCodes = Op1 & FpCondCodesMask;
     '''
-    vmsrFpscrIop = InstObjParams("vmsr", "VmsrFpscr", "FpRegRegOp",
-                                 { "code": vmsrFpscrCode,
-                                   "predicate_test": predicateTest,
-                                   "op_class": "SimdFloatMiscOp" },
-                                 ["IsSerializeAfter","IsNonSpeculative",
-                                  "IsSquashAfter"])
+    vmsrFpscrIop = ArmInstObjParams("vmsr", "VmsrFpscr", "FpRegRegOp",
+                                    { "code": vmsrFpscrCode,
+                                      "predicate_test": predicateTest,
+                                      "op_class": "SimdFloatMiscOp" },
+                                    ["IsSerializeAfter","IsNonSpeculative",
+                                     "IsSquashAfter"])
     header_output += FpRegRegOpDeclare.subst(vmsrFpscrIop);
     decoder_output += FpRegRegOpConstructor.subst(vmsrFpscrIop);
     exec_output += PredOpExecute.subst(vmsrFpscrIop);
 
     vmrsCode = vmrsEnabledCheckCode + '''
     CPSR cpsr = Cpsr;
-    SCR  scr  = Scr;
-    if (!inSecureState(scr, cpsr) && (cpsr.mode != MODE_HYP)) {
+    if (!isSecure(xc->tcBase()) && (cpsr.mode != MODE_HYP)) {
         HCR hcr = Hcr;
         bool hypTrap = false;
-        switch(xc->tcBase()->flattenMiscIndex(op1)) {
+        auto *isa = static_cast<ArmISA::ISA *>(xc->tcBase()->getIsaPtr());
+        switch (isa->flattenMiscIndex(op1)) {
           case MISCREG_FPSID:
             hypTrap = hcr.tid0;
             break;
@@ -235,41 +225,41 @@ let {{
         }
         if (hypTrap) {
             return std::make_shared<HypervisorTrap>(machInst, imm,
-                EC_TRAPPED_CP10_MRC_VMRS);
+                ExceptionClass::TRAPPED_CP10_MRC_VMRS);
         }
     }
     Dest = MiscOp1;
     '''
 
-    vmrsIop = InstObjParams("vmrs", "Vmrs", "FpRegRegImmOp",
-                            { "code": vmrsCode,
-                              "predicate_test": predicateTest,
-                              "op_class": "SimdFloatMiscOp" },
-                            ["IsSerializeBefore"])
+    vmrsIop = ArmInstObjParams("vmrs", "Vmrs", "FpRegRegImmOp",
+                               { "code": vmrsCode,
+                                 "predicate_test": predicateTest,
+                                 "op_class": "SimdFloatMiscOp" },
+                               ["IsSerializeBefore"])
     header_output += FpRegRegImmOpDeclare.subst(vmrsIop);
     decoder_output += FpRegRegImmOpConstructor.subst(vmrsIop);
     exec_output += PredOpExecute.subst(vmrsIop);
 
-    vmrsFpscrIop = InstObjParams("vmrs", "VmrsFpscr", "FpRegRegOp",
-                                 { "code": vmrsEnabledCheckCode + \
-                                           "Dest = Fpscr | FpCondCodes;",
-                                   "predicate_test": predicateTest,
-                                   "op_class": "SimdFloatMiscOp" },
-                                 ["IsSerializeBefore"])
+    vmrsFpscrIop = ArmInstObjParams("vmrs", "VmrsFpscr", "FpRegRegOp",
+                                    { "code": vmrsEnabledCheckCode + \
+                                              "Dest = Fpscr | FpCondCodes;",
+                                      "predicate_test": predicateTest,
+                                      "op_class": "SimdFloatMiscOp" },
+                                    ["IsSerializeBefore"])
     header_output += FpRegRegOpDeclare.subst(vmrsFpscrIop);
     decoder_output += FpRegRegOpConstructor.subst(vmrsFpscrIop);
     exec_output += PredOpExecute.subst(vmrsFpscrIop);
 
-    vmrsApsrFpscrCode = vmrsApsrEnabledCheckCode + '''
+    vmrsApsrFpscrCode = vfpEnabledCheckCode + '''
         FPSCR fpscr = FpCondCodes;
         CondCodesNZ = (fpscr.n << 1) | fpscr.z;
         CondCodesC = fpscr.c;
         CondCodesV = fpscr.v;
     '''
-    vmrsApsrFpscrIop = InstObjParams("vmrs", "VmrsApsrFpscr", "PredOp",
-                                     { "code": vmrsApsrFpscrCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatMiscOp" })
+    vmrsApsrFpscrIop = ArmInstObjParams("vmrs", "VmrsApsrFpscr", "PredOp",
+                                        { "code": vmrsApsrFpscrCode,
+                                          "predicate_test": predicateTest,
+                                          "op_class": "SimdFloatMiscOp" })
     header_output += BasicDeclare.subst(vmrsApsrFpscrIop);
     decoder_output += BasicConstructor.subst(vmrsApsrFpscrIop);
     exec_output += PredOpExecute.subst(vmrsApsrFpscrIop);
@@ -277,10 +267,10 @@ let {{
     vmovImmSCode = vfpEnabledCheckCode + '''
         FpDest_uw = bits(imm, 31, 0);
     '''
-    vmovImmSIop = InstObjParams("vmov", "VmovImmS", "FpRegImmOp",
-                                { "code": vmovImmSCode,
-                                  "predicate_test": predicateTest,
-                                  "op_class": "SimdFloatMiscOp" }, [])
+    vmovImmSIop = ArmInstObjParams("vmov", "VmovImmS", "FpRegImmOp",
+                                   { "code": vmovImmSCode,
+                                     "predicate_test": predicateTest,
+                                     "op_class": "SimdFloatMiscOp" }, [])
     header_output += FpRegImmOpDeclare.subst(vmovImmSIop);
     decoder_output += FpRegImmOpConstructor.subst(vmovImmSIop);
     exec_output += PredOpExecute.subst(vmovImmSIop);
@@ -289,10 +279,10 @@ let {{
         FpDestP0_uw = bits(imm, 31, 0);
         FpDestP1_uw = bits(imm, 63, 32);
     '''
-    vmovImmDIop = InstObjParams("vmov", "VmovImmD", "FpRegImmOp",
-                                { "code": vmovImmDCode,
-                                  "predicate_test": predicateTest,
-                                  "op_class": "SimdFloatMiscOp" }, [])
+    vmovImmDIop = ArmInstObjParams("vmov", "VmovImmD", "FpRegImmOp",
+                                   { "code": vmovImmDCode,
+                                     "predicate_test": predicateTest,
+                                     "op_class": "SimdFloatMiscOp" }, [])
     header_output += FpRegImmOpDeclare.subst(vmovImmDIop);
     decoder_output += FpRegImmOpConstructor.subst(vmovImmDIop);
     exec_output += PredOpExecute.subst(vmovImmDIop);
@@ -303,10 +293,10 @@ let {{
         FpDestP2_uw = bits(imm, 31, 0);
         FpDestP3_uw = bits(imm, 63, 32);
     '''
-    vmovImmQIop = InstObjParams("vmov", "VmovImmQ", "FpRegImmOp",
-                                { "code": vmovImmQCode,
-                                  "predicate_test": predicateTest,
-                                  "op_class": "SimdFloatMiscOp" }, [])
+    vmovImmQIop = ArmInstObjParams("vmov", "VmovImmQ", "FpRegImmOp",
+                                   { "code": vmovImmQCode,
+                                     "predicate_test": predicateTest,
+                                     "op_class": "SimdFloatMiscOp" }, [])
     header_output += FpRegImmOpDeclare.subst(vmovImmQIop);
     decoder_output += FpRegImmOpConstructor.subst(vmovImmQIop);
     exec_output += PredOpExecute.subst(vmovImmQIop);
@@ -314,10 +304,10 @@ let {{
     vmovRegSCode = vfpEnabledCheckCode + '''
         FpDest_uw = FpOp1_uw;
     '''
-    vmovRegSIop = InstObjParams("vmov", "VmovRegS", "FpRegRegOp",
-                                { "code": vmovRegSCode,
-                                  "predicate_test": predicateTest,
-                                  "op_class": "SimdFloatMiscOp" }, [])
+    vmovRegSIop = ArmInstObjParams("vmov", "VmovRegS", "FpRegRegOp",
+                                   { "code": vmovRegSCode,
+                                     "predicate_test": predicateTest,
+                                     "op_class": "SimdFloatMiscOp" }, [])
     header_output += FpRegRegOpDeclare.subst(vmovRegSIop);
     decoder_output += FpRegRegOpConstructor.subst(vmovRegSIop);
     exec_output += PredOpExecute.subst(vmovRegSIop);
@@ -326,10 +316,10 @@ let {{
         FpDestP0_uw = FpOp1P0_uw;
         FpDestP1_uw = FpOp1P1_uw;
     '''
-    vmovRegDIop = InstObjParams("vmov", "VmovRegD", "FpRegRegOp",
-                                { "code": vmovRegDCode,
-                                  "predicate_test": predicateTest,
-                                  "op_class": "SimdFloatMiscOp" }, [])
+    vmovRegDIop = ArmInstObjParams("vmov", "VmovRegD", "FpRegRegOp",
+                                   { "code": vmovRegDCode,
+                                     "predicate_test": predicateTest,
+                                     "op_class": "SimdFloatMiscOp" }, [])
     header_output += FpRegRegOpDeclare.subst(vmovRegDIop);
     decoder_output += FpRegRegOpConstructor.subst(vmovRegDIop);
     exec_output += PredOpExecute.subst(vmovRegDIop);
@@ -340,10 +330,10 @@ let {{
         FpDestP2_uw = FpOp1P2_uw;
         FpDestP3_uw = FpOp1P3_uw;
     '''
-    vmovRegQIop = InstObjParams("vmov", "VmovRegQ", "FpRegRegOp",
-                                { "code": vmovRegQCode,
-                                  "predicate_test": predicateTest,
-                                  "op_class": "SimdFloatMiscOp" }, [])
+    vmovRegQIop = ArmInstObjParams("vmov", "VmovRegQ", "FpRegRegOp",
+                                   { "code": vmovRegQCode,
+                                     "predicate_test": predicateTest,
+                                     "op_class": "SimdFloatMiscOp" }, [])
     header_output  += FpRegRegOpDeclare.subst(vmovRegQIop);
     decoder_output  += FpRegRegOpConstructor.subst(vmovRegQIop);
     exec_output += PredOpExecute.subst(vmovRegQIop);
@@ -351,10 +341,10 @@ let {{
     vmovCoreRegBCode = simdEnabledCheckCode + '''
         FpDest_uw = insertBits(FpDest_uw, imm * 8 + 7, imm * 8, Op1_ub);
     '''
-    vmovCoreRegBIop = InstObjParams("vmov", "VmovCoreRegB", "FpRegRegImmOp",
-                                    { "code": vmovCoreRegBCode,
-                                      "predicate_test": predicateTest,
-                                      "op_class": "SimdFloatMiscOp" }, [])
+    vmovCoreRegBIop = ArmInstObjParams("vmov", "VmovCoreRegB", "FpRegRegImmOp",
+                                       { "code": vmovCoreRegBCode,
+                                         "predicate_test": predicateTest,
+                                         "op_class": "SimdFloatMiscOp" }, [])
     header_output  += FpRegRegImmOpDeclare.subst(vmovCoreRegBIop);
     decoder_output  += FpRegRegImmOpConstructor.subst(vmovCoreRegBIop);
     exec_output += PredOpExecute.subst(vmovCoreRegBIop);
@@ -362,10 +352,10 @@ let {{
     vmovCoreRegHCode = simdEnabledCheckCode + '''
         FpDest_uw = insertBits(FpDest_uw, imm * 16 + 15, imm * 16, Op1_uh);
     '''
-    vmovCoreRegHIop = InstObjParams("vmov", "VmovCoreRegH", "FpRegRegImmOp",
-                                    { "code": vmovCoreRegHCode,
-                                      "predicate_test": predicateTest,
-                                      "op_class": "SimdFloatMiscOp" }, [])
+    vmovCoreRegHIop = ArmInstObjParams("vmov", "VmovCoreRegH", "FpRegRegImmOp",
+                                       { "code": vmovCoreRegHCode,
+                                         "predicate_test": predicateTest,
+                                         "op_class": "SimdFloatMiscOp" }, [])
     header_output  += FpRegRegImmOpDeclare.subst(vmovCoreRegHIop);
     decoder_output  += FpRegRegImmOpConstructor.subst(vmovCoreRegHIop);
     exec_output += PredOpExecute.subst(vmovCoreRegHIop);
@@ -373,10 +363,10 @@ let {{
     vmovCoreRegWCode = vfpEnabledCheckCode + '''
         FpDest_uw = Op1_uw;
     '''
-    vmovCoreRegWIop = InstObjParams("vmov", "VmovCoreRegW", "FpRegRegOp",
-                                    { "code": vmovCoreRegWCode,
-                                      "predicate_test": predicateTest,
-                                      "op_class": "SimdFloatMiscOp" }, [])
+    vmovCoreRegWIop = ArmInstObjParams("vmov", "VmovCoreRegW", "FpRegRegOp",
+                                       { "code": vmovCoreRegWCode,
+                                         "predicate_test": predicateTest,
+                                         "op_class": "SimdFloatMiscOp" }, [])
     header_output  += FpRegRegOpDeclare.subst(vmovCoreRegWIop);
     decoder_output  += FpRegRegOpConstructor.subst(vmovCoreRegWIop);
     exec_output += PredOpExecute.subst(vmovCoreRegWIop);
@@ -385,10 +375,11 @@ let {{
         assert(imm < 4);
         Dest = bits(FpOp1_uw, imm * 8 + 7, imm * 8);
     '''
-    vmovRegCoreUBIop = InstObjParams("vmov", "VmovRegCoreUB", "FpRegRegImmOp",
-                                     { "code": vmovRegCoreUBCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatMiscOp" }, [])
+    vmovRegCoreUBIop = ArmInstObjParams(
+            "vmov", "VmovRegCoreUB", "FpRegRegImmOp",
+            { "code": vmovRegCoreUBCode,
+              "predicate_test": predicateTest,
+              "op_class": "SimdFloatMiscOp" }, [])
     header_output  += FpRegRegImmOpDeclare.subst(vmovRegCoreUBIop);
     decoder_output  += FpRegRegImmOpConstructor.subst(vmovRegCoreUBIop);
     exec_output += PredOpExecute.subst(vmovRegCoreUBIop);
@@ -397,10 +388,11 @@ let {{
         assert(imm < 2);
         Dest = bits(FpOp1_uw, imm * 16 + 15, imm * 16);
     '''
-    vmovRegCoreUHIop = InstObjParams("vmov", "VmovRegCoreUH", "FpRegRegImmOp",
-                                     { "code": vmovRegCoreUHCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatMiscOp" }, [])
+    vmovRegCoreUHIop = ArmInstObjParams(
+            "vmov", "VmovRegCoreUH", "FpRegRegImmOp",
+            { "code": vmovRegCoreUHCode,
+              "predicate_test": predicateTest,
+              "op_class": "SimdFloatMiscOp" }, [])
     header_output  += FpRegRegImmOpDeclare.subst(vmovRegCoreUHIop);
     decoder_output  += FpRegRegImmOpConstructor.subst(vmovRegCoreUHIop);
     exec_output += PredOpExecute.subst(vmovRegCoreUHIop);
@@ -409,10 +401,11 @@ let {{
         assert(imm < 4);
         Dest = sext<8>(bits(FpOp1_uw, imm * 8 + 7, imm * 8));
     '''
-    vmovRegCoreSBIop = InstObjParams("vmov", "VmovRegCoreSB", "FpRegRegImmOp",
-                                     { "code": vmovRegCoreSBCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatMiscOp" }, [])
+    vmovRegCoreSBIop = ArmInstObjParams(
+            "vmov", "VmovRegCoreSB", "FpRegRegImmOp",
+            { "code": vmovRegCoreSBCode,
+              "predicate_test": predicateTest,
+              "op_class": "SimdFloatMiscOp" }, [])
     header_output  += FpRegRegImmOpDeclare.subst(vmovRegCoreSBIop);
     decoder_output  += FpRegRegImmOpConstructor.subst(vmovRegCoreSBIop);
     exec_output += PredOpExecute.subst(vmovRegCoreSBIop);
@@ -421,10 +414,11 @@ let {{
         assert(imm < 2);
         Dest = sext<16>(bits(FpOp1_uw, imm * 16 + 15, imm * 16));
     '''
-    vmovRegCoreSHIop = InstObjParams("vmov", "VmovRegCoreSH", "FpRegRegImmOp",
-                                     { "code": vmovRegCoreSHCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatMiscOp" }, [])
+    vmovRegCoreSHIop = ArmInstObjParams(
+            "vmov", "VmovRegCoreSH", "FpRegRegImmOp",
+            { "code": vmovRegCoreSHCode,
+              "predicate_test": predicateTest,
+              "op_class": "SimdFloatMiscOp" }, [])
     header_output  += FpRegRegImmOpDeclare.subst(vmovRegCoreSHIop);
     decoder_output  += FpRegRegImmOpConstructor.subst(vmovRegCoreSHIop);
     exec_output += PredOpExecute.subst(vmovRegCoreSHIop);
@@ -432,10 +426,10 @@ let {{
     vmovRegCoreWCode = vfpEnabledCheckCode + '''
         Dest = FpOp1_uw;
     '''
-    vmovRegCoreWIop = InstObjParams("vmov", "VmovRegCoreW", "FpRegRegOp",
-                                     { "code": vmovRegCoreWCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatMiscOp" }, [])
+    vmovRegCoreWIop = ArmInstObjParams("vmov", "VmovRegCoreW", "FpRegRegOp",
+                                       { "code": vmovRegCoreWCode,
+                                         "predicate_test": predicateTest,
+                                         "op_class": "SimdFloatMiscOp" }, [])
     header_output  += FpRegRegOpDeclare.subst(vmovRegCoreWIop);
     decoder_output  += FpRegRegOpConstructor.subst(vmovRegCoreWIop);
     exec_output += PredOpExecute.subst(vmovRegCoreWIop);
@@ -444,10 +438,11 @@ let {{
         FpDestP0_uw = Op1_uw;
         FpDestP1_uw = Op2_uw;
     '''
-    vmov2Reg2CoreIop = InstObjParams("vmov", "Vmov2Reg2Core", "FpRegRegRegOp",
-                                     { "code": vmov2Reg2CoreCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatMiscOp" }, [])
+    vmov2Reg2CoreIop = ArmInstObjParams(
+            "vmov", "Vmov2Reg2Core", "FpRegRegRegOp",
+            { "code": vmov2Reg2CoreCode,
+              "predicate_test": predicateTest,
+              "op_class": "SimdFloatMiscOp" }, [])
     header_output  += FpRegRegRegOpDeclare.subst(vmov2Reg2CoreIop);
     decoder_output  += FpRegRegRegOpConstructor.subst(vmov2Reg2CoreIop);
     exec_output += PredOpExecute.subst(vmov2Reg2CoreIop);
@@ -456,10 +451,11 @@ let {{
         Dest_uw = FpOp2P0_uw;
         Op1_uw = FpOp2P1_uw;
     '''
-    vmov2Core2RegIop = InstObjParams("vmov", "Vmov2Core2Reg", "FpRegRegRegOp",
-                                     { "code": vmov2Core2RegCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatMiscOp" }, [])
+    vmov2Core2RegIop = ArmInstObjParams(
+            "vmov", "Vmov2Core2Reg", "FpRegRegRegOp",
+            { "code": vmov2Core2RegCode,
+              "predicate_test": predicateTest,
+              "op_class": "SimdFloatMiscOp" }, [])
     header_output  += FpRegRegRegOpDeclare.subst(vmov2Core2RegIop);
     decoder_output  += FpRegRegRegOpConstructor.subst(vmov2Core2RegIop);
     exec_output += PredOpExecute.subst(vmov2Core2RegIop);
@@ -471,9 +467,25 @@ let {{
     decoder_output = ""
     exec_output = ""
 
+    halfCode = vfpEnabledCheckCode + '''
+        [[maybe_unused]] FPSCR fpscr = fpVASimdFPSCRValue((FPSCR)FpscrExc);
+        uint16_t half_src1 = FpOp1_uw & 0xFFFF;
+        uint16_t half_src2 = (FpOp1_uw >> 16) & 0xFFFF;
+        static_assert(std::is_same_v<decltype(%(op1)s), uint16_t>,
+                      "operation triggers invalid implicit conversion");
+        static_assert(std::is_same_v<decltype(%(op2)s), uint16_t>,
+                      "operation triggers invalid implicit conversion");
+        uint16_t half_dest1 = %(op1)s;
+        uint16_t half_dest2 = %(op2)s;
+        FpDestP0_uw = (uint32_t)half_dest1 | ((uint32_t)half_dest2 << 16);
+        FpscrExc = fpscr;
+    '''
+
     singleSimpleCode = vfpEnabledCheckCode + '''
-        FPSCR fpscr M5_VAR_USED = (FPSCR) FpscrExc;
-        FpDest = %(op)s;
+        [[maybe_unused]] FPSCR fpscr = (FPSCR) FpscrExc;
+        static_assert(std::is_same_v<decltype(%(op)s), uint32_t>,
+                      "operation triggers invalid implicit conversion");
+        FpDest_uw = %(op)s;
     '''
     singleCode = singleSimpleCode + '''
         FpscrExc = fpscr;
@@ -489,14 +501,18 @@ let {{
         finishVfp(fpscr, state, fpscr.fz);
         FpscrExc = fpscr;
     '''
-    singleBinOp = "binaryOp(fpscr, FpOp1, FpOp2," + \
-                "%(func)s, fpscr.fz, fpscr.dn, fpscr.rMode)"
-    singleUnaryOp = "unaryOp(fpscr, FpOp1, %(func)s, fpscr.fz, fpscr.rMode)"
+    singleBinOp = "floatToBits32(binaryOp(fpscr, FpOp1, FpOp2, " + \
+                  "%(func)s, fpscr.fz, fpscr.dn, fpscr.rMode))"
+    singleUnaryOp = "floatToBits32(unaryOp(fpscr, FpOp1, " + \
+                    "%(func)s, fpscr.fz, fpscr.rMode))"
     doubleCode = vfpEnabledCheckCode + '''
-        FPSCR fpscr M5_VAR_USED = (FPSCR) FpscrExc;
-        double dest = %(op)s;
-        FpDestP0_uw = dblLow(dest);
-        FpDestP1_uw = dblHi(dest);
+        [[maybe_unused]] FPSCR fpscr = (FPSCR) FpscrExc;
+        uint64_t cOp1 = ((uint64_t)FpOp1P0_uw | ((uint64_t)FpOp1P1_uw << 32));
+        static_assert(std::is_same_v<decltype(%(op)s), uint64_t>,
+                      "operation triggers invalid implicit conversion");
+        uint64_t cDest = %(op)s;
+        FpDestP0_uw = (uint32_t)cDest;
+        FpDestP1_uw = (uint32_t)(cDest >> 32);
         FpscrExc = fpscr;
     '''
     doubleTernOp = vfpEnabledCheckCode + '''
@@ -513,25 +529,25 @@ let {{
         FpscrExc = fpscr;
     '''
     doubleBinOp = '''
-        binaryOp(fpscr, dbl(FpOp1P0_uw, FpOp1P1_uw),
-                        dbl(FpOp2P0_uw, FpOp2P1_uw),
-                        %(func)s, fpscr.fz, fpscr.dn, fpscr.rMode);
+        floatToBits64(binaryOp(fpscr, bitsToFloat64(cOp1),
+                               dbl(FpOp2P0_uw, FpOp2P1_uw),
+                               %(func)s, fpscr.fz, fpscr.dn, fpscr.rMode))
     '''
     doubleUnaryOp = '''
-        unaryOp(fpscr, dbl(FpOp1P0_uw, FpOp1P1_uw), %(func)s,
-                fpscr.fz, fpscr.rMode)
+        floatToBits64(unaryOp(fpscr, bitsToFloat64(cOp1), %(func)s,
+                              fpscr.fz, fpscr.rMode))
     '''
 
     def buildTernaryFpOp(Name, base, opClass, singleOp, doubleOp, paramStr):
         global header_output, decoder_output, exec_output
 
         code = singleTernOp % { "op": singleOp, "palam": paramStr }
-        sIop = InstObjParams(Name.lower() + "s", Name + "S", base,
+        sIop = ArmInstObjParams(Name.lower() + ".f32", Name + "S", base,
                 { "code": code,
                   "predicate_test": predicateTest,
                   "op_class": opClass }, [])
         code = doubleTernOp % { "op": doubleOp, "palam": paramStr }
-        dIop = InstObjParams(Name.lower() + "d", Name + "D", base,
+        dIop = ArmInstObjParams(Name.lower() + ".f64", Name + "D", base,
                 { "code": code,
                   "predicate_test": predicateTest,
                   "op_class": opClass }, [])
@@ -558,13 +574,13 @@ let {{
 
         code = singleCode % { "op": singleBinOp }
         code = code % { "func": singleOp }
-        sIop = InstObjParams(name + "s", Name + "S", base,
+        sIop = ArmInstObjParams(name + ".f32", Name + "S", base,
                 { "code": code,
                   "predicate_test": predicateTest,
                   "op_class": opClass }, [])
         code = doubleCode % { "op": doubleBinOp }
         code = code % { "func": doubleOp }
-        dIop = InstObjParams(name + "d", Name + "D", base,
+        dIop = ArmInstObjParams(name + ".f64", Name + "D", base,
                 { "code": code,
                   "predicate_test": predicateTest,
                   "op_class": opClass }, [])
@@ -586,6 +602,66 @@ let {{
     buildBinFpOp("vmul", "Vmul", "FpRegRegRegOp", "SimdFloatMultOp", "fpMulS",
                  "fpMulD")
 
+    def buildBinOp(name, base, opClass, op):
+        '''
+        Create backported aarch64 instructions that use fplib.
+
+        Because they are backported, these instructions are unconditional.
+        '''
+        global header_output, decoder_output, exec_output
+        inst_datas = [
+            (
+                "s",
+                '''
+                FpDest_uw = fplib%(op)s<>(FpOp1_uw, FpOp2_uw, fpscr);
+                '''
+            ),
+            (
+                "d",
+                '''
+                uint64_t op1 = ((uint64_t)FpOp1P0_uw |
+                               ((uint64_t)FpOp1P1_uw << 32));
+                uint64_t op2 = ((uint64_t)FpOp2P0_uw |
+                               ((uint64_t)FpOp2P1_uw << 32));
+                uint64_t dest = fplib%(op)s<>(op1, op2, fpscr);
+                FpDestP0_uw = dest;
+                FpDestP1_uw = dest >> 32;
+                '''
+            )
+        ]
+        Name = name[0].upper() + name[1:]
+        declareTempl = eval(base + "Declare");
+        constructorTempl = eval(base + "Constructor");
+        for size_suffix, code in inst_datas:
+            code = (
+                '''
+                FPSCR fpscr = (FPSCR)FpscrExc;
+                ''' +
+                code +
+                '''
+                FpscrExc = fpscr;
+                '''
+            )
+            iop = ArmInstObjParams(
+                name + size_suffix,
+                Name + size_suffix.upper(),
+                base,
+                {
+                    "code": code % {"op": op},
+                    "op_class": opClass
+                },
+                []
+            )
+            header_output += declareTempl.subst(iop)
+            decoder_output += constructorTempl.subst(iop)
+            exec_output += BasicExecute.subst(iop)
+    ops = [
+        ("vminnm", "FpRegRegRegOp", "SimdFloatCmpOp", "MinNum"),
+        ("vmaxnm", "FpRegRegRegOp", "SimdFloatCmpOp", "MaxNum"),
+    ]
+    for op in ops:
+        buildBinOp(*op)
+
     def buildUnaryFpOp(name, Name, base, opClass, singleOp, doubleOp = None):
         if doubleOp is None:
             doubleOp = singleOp
@@ -593,13 +669,13 @@ let {{
 
         code = singleCode % { "op": singleUnaryOp }
         code = code % { "func": singleOp }
-        sIop = InstObjParams(name + "s", Name + "S", base,
+        sIop = ArmInstObjParams(name + ".f32", Name + "S", base,
                 { "code": code,
                   "predicate_test": predicateTest,
                   "op_class": opClass }, [])
         code = doubleCode % { "op": doubleUnaryOp }
         code = code % { "func": doubleOp }
-        dIop = InstObjParams(name + "d", Name + "D", base,
+        dIop = ArmInstObjParams(name + ".f64", Name + "D", base,
                 { "code": code,
                   "predicate_test": predicateTest,
                   "op_class": opClass }, [])
@@ -615,17 +691,21 @@ let {{
     buildUnaryFpOp("vsqrt", "Vsqrt", "FpRegRegOp", "SimdFloatSqrtOp", "sqrtf",
                    "sqrt")
 
-    def buildSimpleUnaryFpOp(name, Name, base, opClass, singleOp,
-                             doubleOp = None):
+    def buildSimpleUnaryFpOp(name, Name, base, opClass,
+                             halfOp1, halfOp2, singleOp, doubleOp):
         if doubleOp is None:
             doubleOp = singleOp
         global header_output, decoder_output, exec_output
 
-        sIop = InstObjParams(name + "s", Name + "S", base,
+        hIop = ArmInstObjParams(name + ".f16", Name + "H", base,
+                { "code": halfCode % { "op1": halfOp1, "op2": halfOp2 },
+                  "predicate_test": predicateTest,
+                  "op_class": opClass }, [])
+        sIop = ArmInstObjParams(name + ".f32", Name + "S", base,
                 { "code": singleSimpleCode % { "op": singleOp },
                   "predicate_test": predicateTest,
                   "op_class": opClass }, [])
-        dIop = InstObjParams(name + "d", Name + "D", base,
+        dIop = ArmInstObjParams(name + ".f64", Name + "D", base,
                 { "code": doubleCode % { "op": doubleOp },
                   "predicate_test": predicateTest,
                   "op_class": opClass }, [])
@@ -633,15 +713,41 @@ let {{
         declareTempl = eval(base + "Declare");
         constructorTempl = eval(base + "Constructor");
 
-        for iop in sIop, dIop:
+        for iop in hIop, sIop, dIop:
             header_output += declareTempl.subst(iop)
             decoder_output += constructorTempl.subst(iop)
             exec_output += PredOpExecute.subst(iop)
 
     buildSimpleUnaryFpOp("vneg", "Vneg", "FpRegRegOp", "SimdFloatMiscOp",
-                         "-FpOp1", "-dbl(FpOp1P0_uw, FpOp1P1_uw)")
+                         "fplibNeg(half_src1)", "fplibNeg(half_src2)",
+                         "fplibNeg(FpOp1_uw)", "fplibNeg(cOp1)")
     buildSimpleUnaryFpOp("vabs", "Vabs", "FpRegRegOp", "SimdFloatMiscOp",
-                         "fabsf(FpOp1)", "fabs(dbl(FpOp1P0_uw, FpOp1P1_uw))")
+                         "fplibAbs(half_src1)", "fplibAbs(half_src2)",
+                         "fplibAbs(FpOp1_uw)", "fplibAbs(cOp1)")
+    buildSimpleUnaryFpOp("vrintp", "VRIntP", "FpRegRegOp", "SimdCvtOp",
+        "fplibRoundInt<uint16_t>(half_src1, FPRounding_POSINF, false, fpscr)",
+        "fplibRoundInt<uint16_t>(half_src2, FPRounding_POSINF, false, fpscr)",
+        "fplibRoundInt<uint32_t>(FpOp1_uw, FPRounding_POSINF, false, fpscr)",
+        "fplibRoundInt<uint64_t>(cOp1, FPRounding_POSINF, false, fpscr)"
+        )
+    buildSimpleUnaryFpOp("vrintm", "VRIntM", "FpRegRegOp", "SimdCvtOp",
+        "fplibRoundInt<uint16_t>(half_src1, FPRounding_NEGINF, false, fpscr)",
+        "fplibRoundInt<uint16_t>(half_src2, FPRounding_NEGINF, false, fpscr)",
+        "fplibRoundInt<uint32_t>(FpOp1_uw, FPRounding_NEGINF, false, fpscr)",
+        "fplibRoundInt<uint64_t>(cOp1, FPRounding_NEGINF, false, fpscr)"
+        )
+    buildSimpleUnaryFpOp("vrinta", "VRIntA", "FpRegRegOp", "SimdCvtOp",
+        "fplibRoundInt<uint16_t>(half_src1, FPRounding_TIEAWAY, false, fpscr)",
+        "fplibRoundInt<uint16_t>(half_src2, FPRounding_TIEAWAY, false, fpscr)",
+        "fplibRoundInt<uint32_t>(FpOp1_uw, FPRounding_TIEAWAY, false, fpscr)",
+        "fplibRoundInt<uint64_t>(cOp1, FPRounding_TIEAWAY, false, fpscr)"
+        )
+    buildSimpleUnaryFpOp("vrintn", "VRIntN", "FpRegRegOp", "SimdCvtOp",
+        "fplibRoundInt<uint16_t>(half_src1, FPRounding_TIEEVEN, false, fpscr)",
+        "fplibRoundInt<uint16_t>(half_src2, FPRounding_TIEEVEN, false, fpscr)",
+        "fplibRoundInt<uint32_t>(FpOp1_uw, FPRounding_TIEEVEN, false, fpscr)",
+        "fplibRoundInt<uint64_t>(cOp1, FPRounding_TIEEVEN, false, fpscr)"
+        )
 }};
 
 let {{
@@ -658,7 +764,7 @@ let {{
                 fpscr.fz, fpscr.dn, fpscr.rMode);
         FpscrExc = fpscr;
     '''
-    vmlaSIop = InstObjParams("vmlas", "VmlaS", "FpRegRegRegOp",
+    vmlaSIop = ArmInstObjParams("vmlas", "VmlaS", "FpRegRegRegOp",
                                      { "code": vmlaSCode,
                                        "predicate_test": predicateTest,
                                        "op_class": "SimdFloatMultAccOp" }, [])
@@ -678,7 +784,7 @@ let {{
         FpDestP1_uw = dblHi(dest);
         FpscrExc = fpscr;
     '''
-    vmlaDIop = InstObjParams("vmlad", "VmlaD", "FpRegRegRegOp",
+    vmlaDIop = ArmInstObjParams("vmlad", "VmlaD", "FpRegRegRegOp",
                                      { "code": vmlaDCode,
                                        "predicate_test": predicateTest,
                                        "op_class": "SimdFloatMultAccOp" }, [])
@@ -694,7 +800,7 @@ let {{
                 fpscr.fz, fpscr.dn, fpscr.rMode);
         FpscrExc = fpscr;
     '''
-    vmlsSIop = InstObjParams("vmlss", "VmlsS", "FpRegRegRegOp",
+    vmlsSIop = ArmInstObjParams("vmlss", "VmlsS", "FpRegRegRegOp",
                                      { "code": vmlsSCode,
                                        "predicate_test": predicateTest,
                                        "op_class": "SimdFloatMultAccOp" }, [])
@@ -714,7 +820,7 @@ let {{
         FpDestP1_uw = dblHi(dest);
         FpscrExc = fpscr;
     '''
-    vmlsDIop = InstObjParams("vmlsd", "VmlsD", "FpRegRegRegOp",
+    vmlsDIop = ArmInstObjParams("vmlsd", "VmlsD", "FpRegRegRegOp",
                                      { "code": vmlsDCode,
                                        "predicate_test": predicateTest,
                                        "op_class": "SimdFloatMultAccOp" }, [])
@@ -730,7 +836,7 @@ let {{
                 fpscr.fz, fpscr.dn, fpscr.rMode);
         FpscrExc = fpscr;
     '''
-    vnmlaSIop = InstObjParams("vnmlas", "VnmlaS", "FpRegRegRegOp",
+    vnmlaSIop = ArmInstObjParams("vnmlas", "VnmlaS", "FpRegRegRegOp",
                                      { "code": vnmlaSCode,
                                        "predicate_test": predicateTest,
                                        "op_class": "SimdFloatMultAccOp" }, [])
@@ -750,7 +856,7 @@ let {{
         FpDestP1_uw = dblHi(dest);
         FpscrExc = fpscr;
     '''
-    vnmlaDIop = InstObjParams("vnmlad", "VnmlaD", "FpRegRegRegOp",
+    vnmlaDIop = ArmInstObjParams("vnmlad", "VnmlaD", "FpRegRegRegOp",
                                      { "code": vnmlaDCode,
                                        "predicate_test": predicateTest,
                                        "op_class": "SimdFloatMultAccOp" }, [])
@@ -766,10 +872,10 @@ let {{
                 fpscr.fz, fpscr.dn, fpscr.rMode);
         FpscrExc = fpscr;
     '''
-    vnmlsSIop = InstObjParams("vnmlss", "VnmlsS", "FpRegRegRegOp",
-                              { "code": vnmlsSCode,
-                                "predicate_test": predicateTest,
-                                "op_class": "SimdFloatMultAccOp" }, [])
+    vnmlsSIop = ArmInstObjParams("vnmlss", "VnmlsS", "FpRegRegRegOp",
+                                 { "code": vnmlsSCode,
+                                   "predicate_test": predicateTest,
+                                   "op_class": "SimdFloatMultAccOp" }, [])
     header_output  += FpRegRegRegOpDeclare.subst(vnmlsSIop);
     decoder_output  += FpRegRegRegOpConstructor.subst(vnmlsSIop);
     exec_output += PredOpExecute.subst(vnmlsSIop);
@@ -786,10 +892,10 @@ let {{
         FpDestP1_uw = dblHi(dest);
         FpscrExc = fpscr;
     '''
-    vnmlsDIop = InstObjParams("vnmlsd", "VnmlsD", "FpRegRegRegOp",
-                              { "code": vnmlsDCode,
-                                "predicate_test": predicateTest,
-                                "op_class": "SimdFloatMultAccOp" }, [])
+    vnmlsDIop = ArmInstObjParams("vnmlsd", "VnmlsD", "FpRegRegRegOp",
+                                 { "code": vnmlsDCode,
+                                   "predicate_test": predicateTest,
+                                   "op_class": "SimdFloatMultAccOp" }, [])
     header_output  += FpRegRegRegOpDeclare.subst(vnmlsDIop);
     decoder_output  += FpRegRegRegOpConstructor.subst(vnmlsDIop);
     exec_output += PredOpExecute.subst(vnmlsDIop);
@@ -800,10 +906,10 @@ let {{
                 fpscr.fz, fpscr.dn, fpscr.rMode);
         FpscrExc = fpscr;
     '''
-    vnmulSIop = InstObjParams("vnmuls", "VnmulS", "FpRegRegRegOp",
-                              { "code": vnmulSCode,
-                                "predicate_test": predicateTest,
-                                "op_class": "SimdFloatMultOp" }, [])
+    vnmulSIop = ArmInstObjParams("vnmuls", "VnmulS", "FpRegRegRegOp",
+                                 { "code": vnmulSCode,
+                                   "predicate_test": predicateTest,
+                                   "op_class": "SimdFloatMultOp" }, [])
     header_output  += FpRegRegRegOpDeclare.subst(vnmulSIop);
     decoder_output  += FpRegRegRegOpConstructor.subst(vnmulSIop);
     exec_output += PredOpExecute.subst(vnmulSIop);
@@ -818,7 +924,7 @@ let {{
         FpDestP1_uw = dblHi(dest);
         FpscrExc = fpscr;
     '''
-    vnmulDIop = InstObjParams("vnmuld", "VnmulD", "FpRegRegRegOp",
+    vnmulDIop = ArmInstObjParams("vnmuld", "VnmulD", "FpRegRegRegOp",
                                      { "code": vnmulDCode,
                                        "predicate_test": predicateTest,
                                        "op_class": "SimdFloatMultOp" }, [])
@@ -837,15 +943,15 @@ let {{
         FPSCR fpscr = (FPSCR) FpscrExc;
         VfpSavedState state = prepFpState(fpscr.rMode);
         __asm__ __volatile__("" : "=m" (FpOp1_uw) : "m" (FpOp1_uw));
-        FpDest = FpOp1_uw;
+        FpDest = (float)FpOp1_uw;  // Should use fplib here instead.
         __asm__ __volatile__("" :: "m" (FpDest));
         finishVfp(fpscr, state, fpscr.fz);
         FpscrExc = fpscr;
     '''
-    vcvtUIntFpSIop = InstObjParams("vcvt", "VcvtUIntFpS", "FpRegRegOp",
-                                     { "code": vcvtUIntFpSCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
+    vcvtUIntFpSIop = ArmInstObjParams("vcvt", "VcvtUIntFpS", "FpRegRegOp",
+                                      { "code": vcvtUIntFpSCode,
+                                        "predicate_test": predicateTest,
+                                        "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegOpDeclare.subst(vcvtUIntFpSIop);
     decoder_output += FpRegRegOpConstructor.subst(vcvtUIntFpSIop);
     exec_output += PredOpExecute.subst(vcvtUIntFpSIop);
@@ -854,17 +960,18 @@ let {{
         FPSCR fpscr = (FPSCR) FpscrExc;
         VfpSavedState state = prepFpState(fpscr.rMode);
         __asm__ __volatile__("" : "=m" (FpOp1P0_uw) : "m" (FpOp1P0_uw));
-        double cDest = (uint64_t)FpOp1P0_uw;
+        // Should use fplib here instead.
+        double cDest = (double)(uint64_t)FpOp1P0_uw;
         __asm__ __volatile__("" :: "m" (cDest));
         finishVfp(fpscr, state, fpscr.fz);
         FpDestP0_uw = dblLow(cDest);
         FpDestP1_uw = dblHi(cDest);
         FpscrExc = fpscr;
     '''
-    vcvtUIntFpDIop = InstObjParams("vcvt", "VcvtUIntFpD", "FpRegRegOp",
-                                     { "code": vcvtUIntFpDCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
+    vcvtUIntFpDIop = ArmInstObjParams("vcvt", "VcvtUIntFpD", "FpRegRegOp",
+                                      { "code": vcvtUIntFpDCode,
+                                        "predicate_test": predicateTest,
+                                        "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegOpDeclare.subst(vcvtUIntFpDIop);
     decoder_output += FpRegRegOpConstructor.subst(vcvtUIntFpDIop);
     exec_output += PredOpExecute.subst(vcvtUIntFpDIop);
@@ -873,15 +980,15 @@ let {{
         FPSCR fpscr = (FPSCR) FpscrExc;
         VfpSavedState state = prepFpState(fpscr.rMode);
         __asm__ __volatile__("" : "=m" (FpOp1_sw) : "m" (FpOp1_sw));
-        FpDest = FpOp1_sw;
+        FpDest = (float)FpOp1_sw;  // Should use fplib here instead.
         __asm__ __volatile__("" :: "m" (FpDest));
         finishVfp(fpscr, state, fpscr.fz);
         FpscrExc = fpscr;
     '''
-    vcvtSIntFpSIop = InstObjParams("vcvt", "VcvtSIntFpS", "FpRegRegOp",
-                                     { "code": vcvtSIntFpSCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
+    vcvtSIntFpSIop = ArmInstObjParams("vcvt", "VcvtSIntFpS", "FpRegRegOp",
+                                      { "code": vcvtSIntFpSCode,
+                                        "predicate_test": predicateTest,
+                                        "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegOpDeclare.subst(vcvtSIntFpSIop);
     decoder_output += FpRegRegOpConstructor.subst(vcvtSIntFpSIop);
     exec_output += PredOpExecute.subst(vcvtSIntFpSIop);
@@ -890,20 +997,39 @@ let {{
         FPSCR fpscr = (FPSCR) FpscrExc;
         VfpSavedState state = prepFpState(fpscr.rMode);
         __asm__ __volatile__("" : "=m" (FpOp1P0_sw) : "m" (FpOp1P0_sw));
-        double cDest = FpOp1P0_sw;
+        double cDest = (double)FpOp1P0_sw;  // Should use fplib here instead.
         __asm__ __volatile__("" :: "m" (cDest));
         finishVfp(fpscr, state, fpscr.fz);
         FpDestP0_uw = dblLow(cDest);
         FpDestP1_uw = dblHi(cDest);
         FpscrExc = fpscr;
     '''
-    vcvtSIntFpDIop = InstObjParams("vcvt", "VcvtSIntFpD", "FpRegRegOp",
-                                     { "code": vcvtSIntFpDCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
+    vcvtSIntFpDIop = ArmInstObjParams("vcvt", "VcvtSIntFpD", "FpRegRegOp",
+                                      { "code": vcvtSIntFpDCode,
+                                        "predicate_test": predicateTest,
+                                        "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegOpDeclare.subst(vcvtSIntFpDIop);
     decoder_output += FpRegRegOpConstructor.subst(vcvtSIntFpDIop);
     exec_output += PredOpExecute.subst(vcvtSIntFpDIop);
+
+    vjcvtSFixedFpDCode = vfpEnabledCheckCode + '''
+        FPSCR fpscr = (FPSCR) FpscrExc;
+        VfpSavedState state = prepFpState(fpscr.rMode);
+        uint64_t cOp1 = ((uint64_t)FpOp1P0_uw | ((uint64_t)FpOp1P1_uw << 32));
+        uint8_t nz;
+        FpDest_uw = fplibFPToFixedJS(cOp1, fpscr, false, nz);
+        finishVfp(fpscr, state, fpscr.fz);
+        FpCondCodes = fpscr & FpCondCodesMask;
+        FpscrExc = fpscr;
+    '''
+    vjcvtSFixedFpDIop = ArmInstObjParams(
+            "vjcvt", "VjcvtSFixedFpD", "FpRegRegOp",
+            { "code": vjcvtSFixedFpDCode,
+              "predicate_test": predicateTest,
+              "op_class": "SimdFloatCvtOp" }, [])
+    header_output += FpRegRegOpDeclare.subst(vjcvtSFixedFpDIop);
+    decoder_output += FpRegRegOpConstructor.subst(vjcvtSFixedFpDIop);
+    exec_output += PredOpExecute.subst(vjcvtSFixedFpDIop);
 
     vcvtFpUIntSRCode = vfpEnabledCheckCode + '''
         FPSCR fpscr = (FPSCR) FpscrExc;
@@ -915,10 +1041,10 @@ let {{
         finishVfp(fpscr, state, fpscr.fz);
         FpscrExc = fpscr;
     '''
-    vcvtFpUIntSRIop = InstObjParams("vcvt", "VcvtFpUIntSR", "FpRegRegOp",
-                                     { "code": vcvtFpUIntSRCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
+    vcvtFpUIntSRIop = ArmInstObjParams("vcvt", "VcvtFpUIntSR", "FpRegRegOp",
+                                       { "code": vcvtFpUIntSRCode,
+                                         "predicate_test": predicateTest,
+                                         "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegOpDeclare.subst(vcvtFpUIntSRIop);
     decoder_output += FpRegRegOpConstructor.subst(vcvtFpUIntSRIop);
     exec_output += PredOpExecute.subst(vcvtFpUIntSRIop);
@@ -935,10 +1061,10 @@ let {{
         FpDestP0_uw = result;
         FpscrExc = fpscr;
     '''
-    vcvtFpUIntDRIop = InstObjParams("vcvtr", "VcvtFpUIntDR", "FpRegRegOp",
-                                     { "code": vcvtFpUIntDRCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
+    vcvtFpUIntDRIop = ArmInstObjParams("vcvtr", "VcvtFpUIntDR", "FpRegRegOp",
+                                       { "code": vcvtFpUIntDRCode,
+                                         "predicate_test": predicateTest,
+                                         "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegOpDeclare.subst(vcvtFpUIntDRIop);
     decoder_output += FpRegRegOpConstructor.subst(vcvtFpUIntDRIop);
     exec_output += PredOpExecute.subst(vcvtFpUIntDRIop);
@@ -953,10 +1079,10 @@ let {{
         finishVfp(fpscr, state, fpscr.fz);
         FpscrExc = fpscr;
     '''
-    vcvtFpSIntSRIop = InstObjParams("vcvtr", "VcvtFpSIntSR", "FpRegRegOp",
-                                     { "code": vcvtFpSIntSRCode,
-                                        "predicate_test": predicateTest,
-                                        "op_class": "SimdFloatCvtOp" }, [])
+    vcvtFpSIntSRIop = ArmInstObjParams("vcvtr", "VcvtFpSIntSR", "FpRegRegOp",
+                                       { "code": vcvtFpSIntSRCode,
+                                         "predicate_test": predicateTest,
+                                         "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegOpDeclare.subst(vcvtFpSIntSRIop);
     decoder_output += FpRegRegOpConstructor.subst(vcvtFpSIntSRIop);
     exec_output += PredOpExecute.subst(vcvtFpSIntSRIop);
@@ -973,93 +1099,112 @@ let {{
         FpDestP0_uw = result;
         FpscrExc = fpscr;
     '''
-    vcvtFpSIntDRIop = InstObjParams("vcvtr", "VcvtFpSIntDR", "FpRegRegOp",
-                                     { "code": vcvtFpSIntDRCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
+    vcvtFpSIntDRIop = ArmInstObjParams("vcvtr", "VcvtFpSIntDR", "FpRegRegOp",
+                                       { "code": vcvtFpSIntDRCode,
+                                         "predicate_test": predicateTest,
+                                         "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegOpDeclare.subst(vcvtFpSIntDRIop);
     decoder_output += FpRegRegOpConstructor.subst(vcvtFpSIntDRIop);
     exec_output += PredOpExecute.subst(vcvtFpSIntDRIop);
 
-    vcvtFpUIntSCode = vfpEnabledCheckCode + '''
+    round_mode_suffix_to_mode = {
+        '': 'VfpRoundZero',
+        'a': 'VfpRoundAway',
+        'm': 'VfpRoundDown',
+        'n': 'VfpRoundNearest',
+        'p': 'VfpRoundUpward',
+    }
+
+    def buildVcvt(code, className, roundModeSuffix):
+        global header_output, decoder_output, exec_output, \
+            vfpEnabledCheckCode, round_mode_suffix_to_mode
+        full_code = vfpEnabledCheckCode + code.format(
+            round_mode=round_mode_suffix_to_mode[roundModeSuffix],
+        )
+        iop = ArmInstObjParams(
+            "vcvt{}".format(roundModeSuffix),
+            className.format(roundModeSuffix),
+            "FpRegRegOp",
+            { "code": full_code,
+              "predicate_test": predicateTest,
+              "op_class": "SimdFloatCvtOp" },
+            []
+        )
+        header_output += FpRegRegOpDeclare.subst(iop);
+        decoder_output += FpRegRegOpConstructor.subst(iop);
+        exec_output += PredOpExecute.subst(iop);
+
+    code = '''
         FPSCR fpscr = (FPSCR) FpscrExc;
         vfpFlushToZero(fpscr, FpOp1);
         VfpSavedState state = prepFpState(fpscr.rMode);
-        fesetround(FeRoundZero);
+        gem5::RoundingMode old_rm = gem5::getFpRound();
+        gem5::setFpRound(gem5::RoundingMode::TowardZero);
         __asm__ __volatile__("" : "=m" (FpOp1) : "m" (FpOp1));
-        FpDest_uw = vfpFpToFixed<float>(FpOp1, false, 32, 0);
+        FpDest_uw = vfpFpToFixed<float>(
+            FpOp1, false, 32, 0, true, {round_mode});
         __asm__ __volatile__("" :: "m" (FpDest_uw));
+        gem5::setFpRound(old_rm);
         finishVfp(fpscr, state, fpscr.fz);
         FpscrExc = fpscr;
     '''
-    vcvtFpUIntSIop = InstObjParams("vcvt", "VcvtFpUIntS", "FpRegRegOp",
-                                     { "code": vcvtFpUIntSCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
-    header_output += FpRegRegOpDeclare.subst(vcvtFpUIntSIop);
-    decoder_output += FpRegRegOpConstructor.subst(vcvtFpUIntSIop);
-    exec_output += PredOpExecute.subst(vcvtFpUIntSIop);
+    for round_mode_suffix in round_mode_suffix_to_mode:
+        buildVcvt(code, "Vcvt{}FpUIntS", round_mode_suffix)
 
-    vcvtFpUIntDCode = vfpEnabledCheckCode + '''
+    code = '''
         FPSCR fpscr = (FPSCR) FpscrExc;
         double cOp1 = dbl(FpOp1P0_uw, FpOp1P1_uw);
         vfpFlushToZero(fpscr, cOp1);
         VfpSavedState state = prepFpState(fpscr.rMode);
-        fesetround(FeRoundZero);
+        gem5::RoundingMode old_rm = gem5::getFpRound();
+        gem5::setFpRound(gem5::RoundingMode::TowardZero);
         __asm__ __volatile__("" : "=m" (cOp1) : "m" (cOp1));
-        uint64_t result = vfpFpToFixed<double>(cOp1, false, 32, 0);
+        uint64_t result = vfpFpToFixed<double>(
+            cOp1, false, 32, 0, true, {round_mode});
         __asm__ __volatile__("" :: "m" (result));
+        gem5::setFpRound(old_rm);
         finishVfp(fpscr, state, fpscr.fz);
         FpDestP0_uw = result;
         FpscrExc = fpscr;
     '''
-    vcvtFpUIntDIop = InstObjParams("vcvt", "VcvtFpUIntD", "FpRegRegOp",
-                                     { "code": vcvtFpUIntDCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
-    header_output += FpRegRegOpDeclare.subst(vcvtFpUIntDIop);
-    decoder_output += FpRegRegOpConstructor.subst(vcvtFpUIntDIop);
-    exec_output += PredOpExecute.subst(vcvtFpUIntDIop);
+    for round_mode_suffix in round_mode_suffix_to_mode:
+        buildVcvt(code, "Vcvt{}FpUIntD", round_mode_suffix)
 
-    vcvtFpSIntSCode = vfpEnabledCheckCode + '''
+    code = '''
         FPSCR fpscr = (FPSCR) FpscrExc;
         vfpFlushToZero(fpscr, FpOp1);
         VfpSavedState state = prepFpState(fpscr.rMode);
-        fesetround(FeRoundZero);
+        gem5::RoundingMode old_rm = gem5::getFpRound();
+        gem5::setFpRound(gem5::RoundingMode::TowardZero);
         __asm__ __volatile__("" : "=m" (FpOp1) : "m" (FpOp1));
-        FpDest_sw = vfpFpToFixed<float>(FpOp1, true, 32, 0);
+        FpDest_sw = vfpFpToFixed<float>(
+            FpOp1, true, 32, 0, true, {round_mode});
         __asm__ __volatile__("" :: "m" (FpDest_sw));
+        gem5::setFpRound(old_rm);
         finishVfp(fpscr, state, fpscr.fz);
         FpscrExc = fpscr;
     '''
-    vcvtFpSIntSIop = InstObjParams("vcvt", "VcvtFpSIntS", "FpRegRegOp",
-                                     { "code": vcvtFpSIntSCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
-    header_output += FpRegRegOpDeclare.subst(vcvtFpSIntSIop);
-    decoder_output += FpRegRegOpConstructor.subst(vcvtFpSIntSIop);
-    exec_output += PredOpExecute.subst(vcvtFpSIntSIop);
+    for round_mode_suffix in round_mode_suffix_to_mode:
+        buildVcvt(code, "Vcvt{}FpSIntS", round_mode_suffix)
 
-    vcvtFpSIntDCode = vfpEnabledCheckCode + '''
+    code = '''
         FPSCR fpscr = (FPSCR) FpscrExc;
         double cOp1 = dbl(FpOp1P0_uw, FpOp1P1_uw);
         vfpFlushToZero(fpscr, cOp1);
         VfpSavedState state = prepFpState(fpscr.rMode);
-        fesetround(FeRoundZero);
+        gem5::RoundingMode old_rm = gem5::getFpRound();
+        gem5::setFpRound(gem5::RoundingMode::TowardZero);
         __asm__ __volatile__("" : "=m" (cOp1) : "m" (cOp1));
-        int64_t result = vfpFpToFixed<double>(cOp1, true, 32, 0);
+        int64_t result = vfpFpToFixed<double>(
+            cOp1, true, 32, 0, true, {round_mode});
         __asm__ __volatile__("" :: "m" (result));
+        gem5::setFpRound(old_rm);
         finishVfp(fpscr, state, fpscr.fz);
         FpDestP0_uw = result;
         FpscrExc = fpscr;
     '''
-    vcvtFpSIntDIop = InstObjParams("vcvt", "VcvtFpSIntD", "FpRegRegOp",
-                                     { "code": vcvtFpSIntDCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
-    header_output += FpRegRegOpDeclare.subst(vcvtFpSIntDIop);
-    decoder_output += FpRegRegOpConstructor.subst(vcvtFpSIntDIop);
-    exec_output += PredOpExecute.subst(vcvtFpSIntDIop);
+    for round_mode_suffix in round_mode_suffix_to_mode:
+        buildVcvt(code, "Vcvt{}FpSIntD", round_mode_suffix)
 
     vcvtFpSFpDCode = vfpEnabledCheckCode + '''
         FPSCR fpscr = (FPSCR) FpscrExc;
@@ -1073,7 +1218,7 @@ let {{
         FpDestP1_uw = dblHi(cDest);
         FpscrExc = fpscr;
     '''
-    vcvtFpSFpDIop = InstObjParams("vcvt", "VcvtFpSFpD", "FpRegRegOp",
+    vcvtFpSFpDIop = ArmInstObjParams("vcvt", "VcvtFpSFpD", "FpRegRegOp",
                                      { "code": vcvtFpSFpDCode,
                                        "predicate_test": predicateTest,
                                        "op_class": "SimdFloatCvtOp" }, [])
@@ -1092,7 +1237,7 @@ let {{
         finishVfp(fpscr, state, fpscr.fz);
         FpscrExc = fpscr;
     '''
-    vcvtFpDFpSIop = InstObjParams("vcvt", "VcvtFpDFpS", "FpRegRegOp",
+    vcvtFpDFpSIop = ArmInstObjParams("vcvt", "VcvtFpDFpS", "FpRegRegOp",
                                      { "code": vcvtFpDFpSCode,
                                        "predicate_test": predicateTest,
                                        "op_class": "SimdFloatCvtOp" }, [])
@@ -1111,10 +1256,10 @@ let {{
         finishVfp(fpscr, state, fpscr.fz);
         FpscrExc = fpscr;
     '''
-    vcvtFpHTFpSIop = InstObjParams("vcvtt", "VcvtFpHTFpS", "FpRegRegOp",
-                                   { "code": vcvtFpHTFpSCode,
-                                     "predicate_test": predicateTest,
-                                     "op_class": "SimdFloatCvtOp" }, [])
+    vcvtFpHTFpSIop = ArmInstObjParams("vcvtt", "VcvtFpHTFpS", "FpRegRegOp",
+                                      { "code": vcvtFpHTFpSCode,
+                                        "predicate_test": predicateTest,
+                                        "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegOpDeclare.subst(vcvtFpHTFpSIop);
     decoder_output += FpRegRegOpConstructor.subst(vcvtFpHTFpSIop);
     exec_output += PredOpExecute.subst(vcvtFpHTFpSIop);
@@ -1129,10 +1274,10 @@ let {{
         finishVfp(fpscr, state, fpscr.fz);
         FpscrExc = fpscr;
     '''
-    vcvtFpHBFpSIop = InstObjParams("vcvtb", "VcvtFpHBFpS", "FpRegRegOp",
-                                   { "code": vcvtFpHBFpSCode,
-                                     "predicate_test": predicateTest,
-                                     "op_class": "SimdFloatCvtOp" }, [])
+    vcvtFpHBFpSIop = ArmInstObjParams("vcvtb", "VcvtFpHBFpS", "FpRegRegOp",
+                                      { "code": vcvtFpHBFpSCode,
+                                        "predicate_test": predicateTest,
+                                        "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegOpDeclare.subst(vcvtFpHBFpSIop);
     decoder_output += FpRegRegOpConstructor.subst(vcvtFpHBFpSIop);
     exec_output += PredOpExecute.subst(vcvtFpHBFpSIop);
@@ -1150,10 +1295,10 @@ let {{
         finishVfp(fpscr, state, fpscr.fz);
         FpscrExc = fpscr;
     '''
-    vcvtFpSFpHTIop = InstObjParams("vcvtt", "VcvtFpSFpHT", "FpRegRegOp",
-                                    { "code": vcvtFpHTFpSCode,
-                                      "predicate_test": predicateTest,
-                                      "op_class": "SimdFloatCvtOp" }, [])
+    vcvtFpSFpHTIop = ArmInstObjParams("vcvtt", "VcvtFpSFpHT", "FpRegRegOp",
+                                      { "code": vcvtFpHTFpSCode,
+                                        "predicate_test": predicateTest,
+                                        "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegOpDeclare.subst(vcvtFpSFpHTIop);
     decoder_output += FpRegRegOpConstructor.subst(vcvtFpSFpHTIop);
     exec_output += PredOpExecute.subst(vcvtFpSFpHTIop);
@@ -1171,13 +1316,48 @@ let {{
         finishVfp(fpscr, state, fpscr.fz);
         FpscrExc = fpscr;
     '''
-    vcvtFpSFpHBIop = InstObjParams("vcvtb", "VcvtFpSFpHB", "FpRegRegOp",
-                                   { "code": vcvtFpSFpHBCode,
-                                     "predicate_test": predicateTest,
-                                     "op_class": "SimdFloatCvtOp" }, [])
+    vcvtFpSFpHBIop = ArmInstObjParams("vcvtb", "VcvtFpSFpHB", "FpRegRegOp",
+                                      { "code": vcvtFpSFpHBCode,
+                                        "predicate_test": predicateTest,
+                                        "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegOpDeclare.subst(vcvtFpSFpHBIop);
     decoder_output += FpRegRegOpConstructor.subst(vcvtFpSFpHBIop);
     exec_output += PredOpExecute.subst(vcvtFpSFpHBIop);
+
+    bf16_check = '''
+      RegVal isar6 = xc->tcBase()->readMiscReg(MISCREG_ID_ISAR6);
+      if (!(bits(isar6, 23, 20) >= 0x1))
+          return std::make_shared<UndefinedInstruction>(machInst, true);
+    '''
+    vcvtFpSBfTCode = vfpEnabledCheckCode + bf16_check + '''
+        FPSCR fpscr = (FPSCR) FpscrExc;
+        uint32_t src_elem = fpToBits(FpOp1);
+        FpDest_uw = insertBits(FpDest_uw, 31, 16,
+                        fplibConvertBF(src_elem, FPCRRounding(fpscr), fpscr));
+        FpscrExc = fpscr;
+    '''
+    vcvtFpSBfTIop = ArmInstObjParams("vcvtt", "VcvtFpSBfT", "FpRegRegOp",
+                                      { "code": vcvtFpSBfTCode,
+                                        "predicate_test": predicateTest,
+                                        "op_class": "SimdBf16CvtOp" }, [])
+    header_output += FpRegRegOpDeclare.subst(vcvtFpSBfTIop);
+    decoder_output += FpRegRegOpConstructor.subst(vcvtFpSBfTIop);
+    exec_output += PredOpExecute.subst(vcvtFpSBfTIop);
+
+    vcvtFpSBfBCode = vfpEnabledCheckCode + bf16_check + '''
+        FPSCR fpscr = (FPSCR) FpscrExc;
+        uint32_t src_elem = fpToBits(FpOp1);
+        FpDest_uw = insertBits(FpDest_uw, 15, 0,
+                        fplibConvertBF(src_elem, FPCRRounding(fpscr), fpscr));
+        FpscrExc = fpscr;
+    '''
+    vcvtFpSBfBIop = ArmInstObjParams("vcvtb", "VcvtFpSBfB", "FpRegRegOp",
+                                      { "code": vcvtFpSBfBCode,
+                                        "predicate_test": predicateTest,
+                                        "op_class": "SimdBf16CvtOp" }, [])
+    header_output += FpRegRegOpDeclare.subst(vcvtFpSBfBIop);
+    decoder_output += FpRegRegOpConstructor.subst(vcvtFpSBfBIop);
+    exec_output += PredOpExecute.subst(vcvtFpSBfBIop);
 
     vcmpSCode = vfpEnabledCheckCode + '''
         FPSCR fpscr = (FPSCR) FpscrExc;
@@ -1201,7 +1381,7 @@ let {{
         FpCondCodes = fpscr & FpCondCodesMask;
         FpscrExc = fpscr;
     '''
-    vcmpSIop = InstObjParams("vcmps", "VcmpS", "FpRegRegOp",
+    vcmpSIop = ArmInstObjParams("vcmps", "VcmpS", "FpRegRegOp",
                                      { "code": vcmpSCode,
                                        "predicate_test": predicateTest,
                                        "op_class": "SimdFloatCmpOp" }, [])
@@ -1221,7 +1401,7 @@ let {{
         } else if (cDest > cOp1) {
             fpscr.n = 0; fpscr.z = 0; fpscr.c = 1; fpscr.v = 0;
         } else {
-            const uint64_t qnan = ULL(0x7ff8000000000000);
+            const uint64_t qnan = 0x7ff8000000000000ULL;
             const bool nan1 = std::isnan(cDest);
             const bool signal1 = nan1 && ((fpToBits(cDest) & qnan) != qnan);
             const bool nan2 = std::isnan(cOp1);
@@ -1233,7 +1413,7 @@ let {{
         FpCondCodes = fpscr & FpCondCodesMask;
         FpscrExc = fpscr;
     '''
-    vcmpDIop = InstObjParams("vcmpd", "VcmpD", "FpRegRegOp",
+    vcmpDIop = ArmInstObjParams("vcmpd", "VcmpD", "FpRegRegOp",
                                      { "code": vcmpDCode,
                                        "predicate_test": predicateTest,
                                        "op_class": "SimdFloatCmpOp" }, [])
@@ -1244,13 +1424,12 @@ let {{
     vcmpZeroSCode = vfpEnabledCheckCode + '''
         FPSCR fpscr = (FPSCR) FpscrExc;
         vfpFlushToZero(fpscr, FpDest);
-        // This only handles imm == 0 for now.
-        assert(imm == 0);
-        if (FpDest == imm) {
+        assert(imm == 0); // immediate must be zero.
+        if (FpDest == 0.0f) {
             fpscr.n = 0; fpscr.z = 1; fpscr.c = 1; fpscr.v = 0;
-        } else if (FpDest < imm) {
+        } else if (FpDest < 0.0f) {
             fpscr.n = 1; fpscr.z = 0; fpscr.c = 0; fpscr.v = 0;
-        } else if (FpDest > imm) {
+        } else if (FpDest > 0.0f) {
             fpscr.n = 0; fpscr.z = 0; fpscr.c = 1; fpscr.v = 0;
         } else {
             const uint32_t qnan = 0x7fc00000;
@@ -1263,7 +1442,7 @@ let {{
         FpCondCodes = fpscr & FpCondCodesMask;
         FpscrExc = fpscr;
     '''
-    vcmpZeroSIop = InstObjParams("vcmpZeros", "VcmpZeroS", "FpRegImmOp",
+    vcmpZeroSIop = ArmInstObjParams("vcmpZeros", "VcmpZeroS", "FpRegImmOp",
                                      { "code": vcmpZeroSCode,
                                        "predicate_test": predicateTest,
                                        "op_class": "SimdFloatCmpOp" }, [])
@@ -1272,19 +1451,18 @@ let {{
     exec_output += PredOpExecute.subst(vcmpZeroSIop);
 
     vcmpZeroDCode = vfpEnabledCheckCode + '''
-        // This only handles imm == 0 for now.
-        assert(imm == 0);
         double cDest = dbl(FpDestP0_uw, FpDestP1_uw);
         FPSCR fpscr = (FPSCR) FpscrExc;
         vfpFlushToZero(fpscr, cDest);
-        if (cDest == imm) {
+        assert(imm == 0); // immediate must be zero.
+        if (cDest == 0.0) {
             fpscr.n = 0; fpscr.z = 1; fpscr.c = 1; fpscr.v = 0;
-        } else if (cDest < imm) {
+        } else if (cDest < 0.0) {
             fpscr.n = 1; fpscr.z = 0; fpscr.c = 0; fpscr.v = 0;
-        } else if (cDest > imm) {
+        } else if (cDest > 0.0) {
             fpscr.n = 0; fpscr.z = 0; fpscr.c = 1; fpscr.v = 0;
         } else {
-            const uint64_t qnan = ULL(0x7ff8000000000000);
+            const uint64_t qnan = 0x7ff8000000000000ULL;
             const bool nan = std::isnan(cDest);
             const bool signal = nan && ((fpToBits(cDest) & qnan) != qnan);
             if (signal)
@@ -1294,7 +1472,7 @@ let {{
         FpCondCodes = fpscr & FpCondCodesMask;
         FpscrExc = fpscr;
     '''
-    vcmpZeroDIop = InstObjParams("vcmpZerod", "VcmpZeroD", "FpRegImmOp",
+    vcmpZeroDIop = ArmInstObjParams("vcmpZerod", "VcmpZeroD", "FpRegImmOp",
                                      { "code": vcmpZeroDCode,
                                        "predicate_test": predicateTest,
                                        "op_class": "SimdFloatCmpOp" }, [])
@@ -1318,7 +1496,7 @@ let {{
         FpCondCodes = fpscr & FpCondCodesMask;
         FpscrExc = fpscr;
     '''
-    vcmpeSIop = InstObjParams("vcmpes", "VcmpeS", "FpRegRegOp",
+    vcmpeSIop = ArmInstObjParams("vcmpes", "VcmpeS", "FpRegRegOp",
                                      { "code": vcmpeSCode,
                                        "predicate_test": predicateTest,
                                        "op_class": "SimdFloatCmpOp" }, [])
@@ -1344,7 +1522,7 @@ let {{
         FpCondCodes = fpscr & FpCondCodesMask;
         FpscrExc = fpscr;
     '''
-    vcmpeDIop = InstObjParams("vcmped", "VcmpeD", "FpRegRegOp",
+    vcmpeDIop = ArmInstObjParams("vcmped", "VcmpeD", "FpRegRegOp",
                                      { "code": vcmpeDCode,
                                        "predicate_test": predicateTest,
                                        "op_class": "SimdFloatCmpOp" }, [])
@@ -1355,11 +1533,12 @@ let {{
     vcmpeZeroSCode = vfpEnabledCheckCode + '''
         FPSCR fpscr = (FPSCR) FpscrExc;
         vfpFlushToZero(fpscr, FpDest);
-        if (FpDest == imm) {
+        assert(imm == 0); // immediate must be zero.
+        if (FpDest == 0.0f) {
             fpscr.n = 0; fpscr.z = 1; fpscr.c = 1; fpscr.v = 0;
-        } else if (FpDest < imm) {
+        } else if (FpDest < 0.0f) {
             fpscr.n = 1; fpscr.z = 0; fpscr.c = 0; fpscr.v = 0;
-        } else if (FpDest > imm) {
+        } else if (FpDest > 0.0f) {
             fpscr.n = 0; fpscr.z = 0; fpscr.c = 1; fpscr.v = 0;
         } else {
             fpscr.ioc = 1;
@@ -1368,7 +1547,7 @@ let {{
         FpCondCodes = fpscr & FpCondCodesMask;
         FpscrExc = fpscr;
     '''
-    vcmpeZeroSIop = InstObjParams("vcmpeZeros", "VcmpeZeroS", "FpRegImmOp",
+    vcmpeZeroSIop = ArmInstObjParams("vcmpeZeros", "VcmpeZeroS", "FpRegImmOp",
                                      { "code": vcmpeZeroSCode,
                                        "predicate_test": predicateTest,
                                        "op_class": "SimdFloatCmpOp" }, [])
@@ -1380,11 +1559,12 @@ let {{
         double cDest = dbl(FpDestP0_uw, FpDestP1_uw);
         FPSCR fpscr = (FPSCR) FpscrExc;
         vfpFlushToZero(fpscr, cDest);
-        if (cDest == imm) {
+        assert(imm == 0); // immediate must be zero.
+        if (cDest == 0.0) {
             fpscr.n = 0; fpscr.z = 1; fpscr.c = 1; fpscr.v = 0;
-        } else if (cDest < imm) {
+        } else if (cDest < 0.0) {
             fpscr.n = 1; fpscr.z = 0; fpscr.c = 0; fpscr.v = 0;
-        } else if (cDest > imm) {
+        } else if (cDest > 0.0) {
             fpscr.n = 0; fpscr.z = 0; fpscr.c = 1; fpscr.v = 0;
         } else {
             fpscr.ioc = 1;
@@ -1393,7 +1573,7 @@ let {{
         FpCondCodes = fpscr & FpCondCodesMask;
         FpscrExc = fpscr;
     '''
-    vcmpeZeroDIop = InstObjParams("vcmpeZerod", "VcmpeZeroD", "FpRegImmOp",
+    vcmpeZeroDIop = ArmInstObjParams("vcmpeZerod", "VcmpeZeroD", "FpRegImmOp",
                                      { "code": vcmpeZeroDCode,
                                        "predicate_test": predicateTest,
                                        "op_class": "SimdFloatCmpOp" }, [])
@@ -1401,6 +1581,46 @@ let {{
     decoder_output += FpRegImmOpConstructor.subst(vcmpeZeroDIop);
     exec_output += PredOpExecute.subst(vcmpeZeroDIop);
 }};
+
+let {{
+
+    header_output = ""
+    decoder_output = ""
+    exec_output = ""
+
+    vselSCode = vfpEnabledCheckCode + '''
+        if (testPredicate(CondCodesNZ, CondCodesC, CondCodesV, cond)) {
+            FpDest = FpOp1;
+        } else {
+            FpDest = FpOp2;
+        } '''
+
+    vselSIop = ArmInstObjParams("vsel.f32", "VselS", "FpRegRegRegCondOp",
+                                { "code" : vselSCode,
+                                  "predicate_test" : predicateTest,
+                                  "op_class" : "SimdFloatCmpOp" }, [] )
+    header_output += FpRegRegRegCondOpDeclare.subst(vselSIop);
+    decoder_output += FpRegRegRegCondOpConstructor.subst(vselSIop);
+    exec_output +=  PredOpExecute.subst(vselSIop);
+
+    vselDCode = vfpEnabledCheckCode + '''
+        if (testPredicate(CondCodesNZ, CondCodesC, CondCodesV, cond)) {
+            FpDestP0_uw = FpOp1P0_uw;
+            FpDestP1_uw = FpOp1P1_uw;
+        } else {
+            FpDestP0_uw = FpOp2P0_uw;
+            FpDestP1_uw = FpOp2P1_uw;
+        } '''
+
+    vselDIop = ArmInstObjParams("vsel.f64", "VselD", "FpRegRegRegCondOp",
+                                { "code" : vselDCode,
+                                  "predicate_test" : predicateTest,
+                                  "op_class" : "SimdFloatCmpOp" }, [] )
+    header_output += FpRegRegRegCondOpDeclare.subst(vselDIop);
+    decoder_output += FpRegRegRegCondOpConstructor.subst(vselDIop);
+    exec_output +=  PredOpExecute.subst(vselDIop);
+}};
+
 
 let {{
 
@@ -1418,10 +1638,11 @@ let {{
         finishVfp(fpscr, state, fpscr.fz);
         FpscrExc = fpscr;
     '''
-    vcvtFpSFixedSIop = InstObjParams("vcvt", "VcvtFpSFixedS", "FpRegRegImmOp",
-                                     { "code": vcvtFpSFixedSCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
+    vcvtFpSFixedSIop = ArmInstObjParams(
+            "vcvt", "VcvtFpSFixedS", "FpRegRegImmOp",
+            { "code": vcvtFpSFixedSCode,
+              "predicate_test": predicateTest,
+              "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegImmOpDeclare.subst(vcvtFpSFixedSIop);
     decoder_output += FpRegRegImmOpConstructor.subst(vcvtFpSFixedSIop);
     exec_output += PredOpExecute.subst(vcvtFpSFixedSIop);
@@ -1439,10 +1660,11 @@ let {{
         FpDestP1_uw = mid >> 32;
         FpscrExc = fpscr;
     '''
-    vcvtFpSFixedDIop = InstObjParams("vcvt", "VcvtFpSFixedD", "FpRegRegImmOp",
-                                     { "code": vcvtFpSFixedDCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
+    vcvtFpSFixedDIop = ArmInstObjParams(
+            "vcvt", "VcvtFpSFixedD", "FpRegRegImmOp",
+            { "code": vcvtFpSFixedDCode,
+              "predicate_test": predicateTest,
+              "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegImmOpDeclare.subst(vcvtFpSFixedDIop);
     decoder_output += FpRegRegImmOpConstructor.subst(vcvtFpSFixedDIop);
     exec_output += PredOpExecute.subst(vcvtFpSFixedDIop);
@@ -1457,10 +1679,11 @@ let {{
         finishVfp(fpscr, state, fpscr.fz);
         FpscrExc = fpscr;
     '''
-    vcvtFpUFixedSIop = InstObjParams("vcvt", "VcvtFpUFixedS", "FpRegRegImmOp",
-                                     { "code": vcvtFpUFixedSCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
+    vcvtFpUFixedSIop = ArmInstObjParams(
+            "vcvt", "VcvtFpUFixedS", "FpRegRegImmOp",
+            { "code": vcvtFpUFixedSCode,
+              "predicate_test": predicateTest,
+              "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegImmOpDeclare.subst(vcvtFpUFixedSIop);
     decoder_output += FpRegRegImmOpConstructor.subst(vcvtFpUFixedSIop);
     exec_output += PredOpExecute.subst(vcvtFpUFixedSIop);
@@ -1478,10 +1701,11 @@ let {{
         FpDestP1_uw = mid >> 32;
         FpscrExc = fpscr;
     '''
-    vcvtFpUFixedDIop = InstObjParams("vcvt", "VcvtFpUFixedD", "FpRegRegImmOp",
-                                     { "code": vcvtFpUFixedDCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
+    vcvtFpUFixedDIop = ArmInstObjParams(
+            "vcvt", "VcvtFpUFixedD", "FpRegRegImmOp",
+            { "code": vcvtFpUFixedDCode,
+              "predicate_test": predicateTest,
+              "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegImmOpDeclare.subst(vcvtFpUFixedDIop);
     decoder_output += FpRegRegImmOpConstructor.subst(vcvtFpUFixedDIop);
     exec_output += PredOpExecute.subst(vcvtFpUFixedDIop);
@@ -1495,10 +1719,11 @@ let {{
         finishVfp(fpscr, state, fpscr.fz);
         FpscrExc = fpscr;
     '''
-    vcvtSFixedFpSIop = InstObjParams("vcvt", "VcvtSFixedFpS", "FpRegRegImmOp",
-                                     { "code": vcvtSFixedFpSCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
+    vcvtSFixedFpSIop = ArmInstObjParams(
+            "vcvt", "VcvtSFixedFpS", "FpRegRegImmOp",
+            { "code": vcvtSFixedFpSCode,
+              "predicate_test": predicateTest,
+              "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegImmOpDeclare.subst(vcvtSFixedFpSIop);
     decoder_output += FpRegRegImmOpConstructor.subst(vcvtSFixedFpSIop);
     exec_output += PredOpExecute.subst(vcvtSFixedFpSIop);
@@ -1515,10 +1740,11 @@ let {{
         FpDestP1_uw = dblHi(cDest);
         FpscrExc = fpscr;
     '''
-    vcvtSFixedFpDIop = InstObjParams("vcvt", "VcvtSFixedFpD", "FpRegRegImmOp",
-                                     { "code": vcvtSFixedFpDCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
+    vcvtSFixedFpDIop = ArmInstObjParams(
+            "vcvt", "VcvtSFixedFpD", "FpRegRegImmOp",
+            { "code": vcvtSFixedFpDCode,
+              "predicate_test": predicateTest,
+              "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegImmOpDeclare.subst(vcvtSFixedFpDIop);
     decoder_output += FpRegRegImmOpConstructor.subst(vcvtSFixedFpDIop);
     exec_output += PredOpExecute.subst(vcvtSFixedFpDIop);
@@ -1532,10 +1758,11 @@ let {{
         finishVfp(fpscr, state, fpscr.fz);
         FpscrExc = fpscr;
     '''
-    vcvtUFixedFpSIop = InstObjParams("vcvt", "VcvtUFixedFpS", "FpRegRegImmOp",
-                                     { "code": vcvtUFixedFpSCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
+    vcvtUFixedFpSIop = ArmInstObjParams(
+            "vcvt", "VcvtUFixedFpS", "FpRegRegImmOp",
+            { "code": vcvtUFixedFpSCode,
+              "predicate_test": predicateTest,
+              "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegImmOpDeclare.subst(vcvtUFixedFpSIop);
     decoder_output += FpRegRegImmOpConstructor.subst(vcvtUFixedFpSIop);
     exec_output += PredOpExecute.subst(vcvtUFixedFpSIop);
@@ -1552,10 +1779,11 @@ let {{
         FpDestP1_uw = dblHi(cDest);
         FpscrExc = fpscr;
     '''
-    vcvtUFixedFpDIop = InstObjParams("vcvt", "VcvtUFixedFpD", "FpRegRegImmOp",
-                                     { "code": vcvtUFixedFpDCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
+    vcvtUFixedFpDIop = ArmInstObjParams(
+            "vcvt", "VcvtUFixedFpD", "FpRegRegImmOp",
+            { "code": vcvtUFixedFpDCode,
+              "predicate_test": predicateTest,
+              "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegImmOpDeclare.subst(vcvtUFixedFpDIop);
     decoder_output += FpRegRegImmOpConstructor.subst(vcvtUFixedFpDIop);
     exec_output += PredOpExecute.subst(vcvtUFixedFpDIop);
@@ -1570,11 +1798,11 @@ let {{
         finishVfp(fpscr, state, fpscr.fz);
         FpscrExc = fpscr;
     '''
-    vcvtFpSHFixedSIop = InstObjParams("vcvt", "VcvtFpSHFixedS",
-                                      "FpRegRegImmOp",
-                                     { "code": vcvtFpSHFixedSCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
+    vcvtFpSHFixedSIop = ArmInstObjParams("vcvt", "VcvtFpSHFixedS",
+                                         "FpRegRegImmOp",
+                                         { "code": vcvtFpSHFixedSCode,
+                                           "predicate_test": predicateTest,
+                                           "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegImmOpDeclare.subst(vcvtFpSHFixedSIop);
     decoder_output += FpRegRegImmOpConstructor.subst(vcvtFpSHFixedSIop);
     exec_output += PredOpExecute.subst(vcvtFpSHFixedSIop);
@@ -1592,11 +1820,11 @@ let {{
         FpDestP1_uw = result >> 32;
         FpscrExc = fpscr;
     '''
-    vcvtFpSHFixedDIop = InstObjParams("vcvt", "VcvtFpSHFixedD",
-                                      "FpRegRegImmOp",
-                                     { "code": vcvtFpSHFixedDCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
+    vcvtFpSHFixedDIop = ArmInstObjParams("vcvt", "VcvtFpSHFixedD",
+                                         "FpRegRegImmOp",
+                                         { "code": vcvtFpSHFixedDCode,
+                                           "predicate_test": predicateTest,
+                                           "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegImmOpDeclare.subst(vcvtFpSHFixedDIop);
     decoder_output += FpRegRegImmOpConstructor.subst(vcvtFpSHFixedDIop);
     exec_output += PredOpExecute.subst(vcvtFpSHFixedDIop);
@@ -1611,11 +1839,11 @@ let {{
         finishVfp(fpscr, state, fpscr.fz);
         FpscrExc = fpscr;
     '''
-    vcvtFpUHFixedSIop = InstObjParams("vcvt", "VcvtFpUHFixedS",
-                                      "FpRegRegImmOp",
-                                     { "code": vcvtFpUHFixedSCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
+    vcvtFpUHFixedSIop = ArmInstObjParams("vcvt", "VcvtFpUHFixedS",
+                                         "FpRegRegImmOp",
+                                         { "code": vcvtFpUHFixedSCode,
+                                           "predicate_test": predicateTest,
+                                           "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegImmOpDeclare.subst(vcvtFpUHFixedSIop);
     decoder_output += FpRegRegImmOpConstructor.subst(vcvtFpUHFixedSIop);
     exec_output += PredOpExecute.subst(vcvtFpUHFixedSIop);
@@ -1633,11 +1861,11 @@ let {{
         FpDestP1_uw = mid >> 32;
         FpscrExc = fpscr;
     '''
-    vcvtFpUHFixedDIop = InstObjParams("vcvt", "VcvtFpUHFixedD",
-                                      "FpRegRegImmOp",
-                                     { "code": vcvtFpUHFixedDCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
+    vcvtFpUHFixedDIop = ArmInstObjParams("vcvt", "VcvtFpUHFixedD",
+                                         "FpRegRegImmOp",
+                                         { "code": vcvtFpUHFixedDCode,
+                                           "predicate_test": predicateTest,
+                                           "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegImmOpDeclare.subst(vcvtFpUHFixedDIop);
     decoder_output += FpRegRegImmOpConstructor.subst(vcvtFpUHFixedDIop);
     exec_output += PredOpExecute.subst(vcvtFpUHFixedDIop);
@@ -1651,11 +1879,11 @@ let {{
         finishVfp(fpscr, state, fpscr.fz);
         FpscrExc = fpscr;
     '''
-    vcvtSHFixedFpSIop = InstObjParams("vcvt", "VcvtSHFixedFpS",
-                                      "FpRegRegImmOp",
-                                     { "code": vcvtSHFixedFpSCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
+    vcvtSHFixedFpSIop = ArmInstObjParams("vcvt", "VcvtSHFixedFpS",
+                                         "FpRegRegImmOp",
+                                         { "code": vcvtSHFixedFpSCode,
+                                           "predicate_test": predicateTest,
+                                           "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegImmOpDeclare.subst(vcvtSHFixedFpSIop);
     decoder_output += FpRegRegImmOpConstructor.subst(vcvtSHFixedFpSIop);
     exec_output += PredOpExecute.subst(vcvtSHFixedFpSIop);
@@ -1672,11 +1900,11 @@ let {{
         FpDestP1_uw = dblHi(cDest);
         FpscrExc = fpscr;
     '''
-    vcvtSHFixedFpDIop = InstObjParams("vcvt", "VcvtSHFixedFpD",
-                                      "FpRegRegImmOp",
-                                     { "code": vcvtSHFixedFpDCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
+    vcvtSHFixedFpDIop = ArmInstObjParams("vcvt", "VcvtSHFixedFpD",
+                                         "FpRegRegImmOp",
+                                         { "code": vcvtSHFixedFpDCode,
+                                           "predicate_test": predicateTest,
+                                           "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegImmOpDeclare.subst(vcvtSHFixedFpDIop);
     decoder_output += FpRegRegImmOpConstructor.subst(vcvtSHFixedFpDIop);
     exec_output += PredOpExecute.subst(vcvtSHFixedFpDIop);
@@ -1690,11 +1918,11 @@ let {{
         finishVfp(fpscr, state, fpscr.fz);
         FpscrExc = fpscr;
     '''
-    vcvtUHFixedFpSIop = InstObjParams("vcvt", "VcvtUHFixedFpS",
-                                      "FpRegRegImmOp",
-                                     { "code": vcvtUHFixedFpSCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
+    vcvtUHFixedFpSIop = ArmInstObjParams("vcvt", "VcvtUHFixedFpS",
+                                         "FpRegRegImmOp",
+                                         { "code": vcvtUHFixedFpSCode,
+                                           "predicate_test": predicateTest,
+                                           "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegImmOpDeclare.subst(vcvtUHFixedFpSIop);
     decoder_output += FpRegRegImmOpConstructor.subst(vcvtUHFixedFpSIop);
     exec_output += PredOpExecute.subst(vcvtUHFixedFpSIop);
@@ -1711,11 +1939,11 @@ let {{
         FpDestP1_uw = dblHi(cDest);
         FpscrExc = fpscr;
     '''
-    vcvtUHFixedFpDIop = InstObjParams("vcvt", "VcvtUHFixedFpD",
-                                      "FpRegRegImmOp",
-                                     { "code": vcvtUHFixedFpDCode,
-                                       "predicate_test": predicateTest,
-                                       "op_class": "SimdFloatCvtOp" }, [])
+    vcvtUHFixedFpDIop = ArmInstObjParams("vcvt", "VcvtUHFixedFpD",
+                                         "FpRegRegImmOp",
+                                         { "code": vcvtUHFixedFpDCode,
+                                           "predicate_test": predicateTest,
+                                           "op_class": "SimdFloatCvtOp" }, [])
     header_output += FpRegRegImmOpDeclare.subst(vcvtUHFixedFpDIop);
     decoder_output += FpRegRegImmOpConstructor.subst(vcvtUHFixedFpDIop);
     exec_output += PredOpExecute.subst(vcvtUHFixedFpDIop);

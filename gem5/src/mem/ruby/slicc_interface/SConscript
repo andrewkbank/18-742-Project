@@ -25,17 +25,14 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Nathan Binkert
 
 Import('*')
 
-if env['PROTOCOL'] == 'None':
+if not env['CONF']['RUBY']:
     Return()
 
-SimObject('Controller.py')
+SimObject('Controller.py', sim_objects=['RubyController'])
 
 Source('AbstractController.cc')
-Source('AbstractEntry.cc')
 Source('AbstractCacheEntry.cc')
 Source('RubyRequest.cc')

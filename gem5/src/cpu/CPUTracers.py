@@ -23,26 +23,26 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Gabe Black
 
-from m5.SimObject import SimObject
+from m5.objects.InstTracer import InstTracer
 from m5.params import *
-from InstTracer import InstTracer
+from m5.SimObject import SimObject
+
 
 class ExeTracer(InstTracer):
-    type = 'ExeTracer'
-    cxx_class = 'Trace::ExeTracer'
+    type = "ExeTracer"
+    cxx_class = "gem5::trace::ExeTracer"
     cxx_header = "cpu/exetrace.hh"
 
+
 class IntelTrace(InstTracer):
-    type = 'IntelTrace'
-    cxx_class = 'Trace::IntelTrace'
+    type = "IntelTrace"
+    cxx_class = "gem5::trace::IntelTrace"
     cxx_header = "cpu/inteltrace.hh"
+
 
 class NativeTrace(ExeTracer):
     abstract = True
-    type = 'NativeTrace'
-    cxx_class = 'Trace::NativeTrace'
-    cxx_header = 'cpu/nativetrace.hh'
-
+    type = "NativeTrace"
+    cxx_class = "gem5::trace::NativeTrace"
+    cxx_header = "cpu/nativetrace.hh"

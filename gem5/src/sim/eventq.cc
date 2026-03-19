@@ -26,26 +26,24 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Steve Reinhardt
- *          Nathan Binkert
- *          Steve Raasch
  */
+
+#include "sim/eventq.hh"
 
 #include <cassert>
 #include <iostream>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
-#include "base/hashmap.hh"
-#include "base/misc.hh"
+#include "base/logging.hh"
 #include "base/trace.hh"
 #include "cpu/smt.hh"
 #include "debug/Checkpoint.hh"
-#include "sim/core.hh"
-#include "sim/eventq_impl.hh"
 
-using namespace std;
+namespace gem5
+{
 
 Tick simQuantum = 0;
 
@@ -56,7 +54,7 @@ Tick simQuantum = 0;
 // cycle, before the pipeline simulation is performed.
 //
 uint32_t numMainEventQueues = 0;
-vector<EventQueue *> mainEventQueue;
+std::vector<EventQueue *> mainEventQueue;
 __thread EventQueue *_curEventQueue = NULL;
 bool inParallelMode = false;
 
@@ -85,11 +83,7 @@ Event::~Event()
 const std::string
 Event::name() const
 {
-#ifndef NDEBUG
-    return csprintf("Event_%d", instance);
-#else
-    return csprintf("Event_%x", (uintptr_t)this);
-#endif
+    return csprintf("Event_%s", instanceString());
 }
 
 
@@ -112,6 +106,32 @@ Event::insertBefore(Event *event, Event *curr)
     }
 
     return event;
+}
+
+void
+Event::acquire()
+{
+    if (flags.isSet(Event::Managed))
+        acquireImpl();
+}
+
+void
+Event::release()
+{
+    if (flags.isSet(Event::Managed))
+        releaseImpl();
+}
+
+void
+Event::acquireImpl()
+{
+}
+
+void
+Event::releaseImpl()
+{
+    if (!scheduled())
+        delete this;
 }
 
 void
@@ -224,10 +244,11 @@ EventQueue::serviceOne()
     if (!event->squashed()) {
         // forward current cycle to the time when this event occurs.
         setCurTick(event->when());
-
+        if (debug::Event)
+            event->trace("executed");
         event->process();
         if (event->isExitEvent()) {
-            assert(!event->flags.isSet(Event::AutoDelete) ||
+            assert(!event->flags.isSet(Event::Managed) ||
                    !event->flags.isSet(Event::IsMainQueue)); // would be silly
             return event;
         }
@@ -235,8 +256,7 @@ EventQueue::serviceOne()
         event->flags.clear(Event::Squashed);
     }
 
-    if (event->flags.isSet(Event::AutoDelete) && !event->scheduled())
-        delete event;
+    event->release();
 
     return NULL;
 }
@@ -263,9 +283,9 @@ Event::unserialize(CheckpointIn &cp)
 
     // Old checkpoints had no concept of the Initialized flag
     // so restoring from old checkpoints always fail.
-    // Events are initialized on construction but original code 
-    // "flags = _flags" would just overwrite the initialization. 
-    // So, read in the checkpoint flags, but then set the Initialized 
+    // Events are initialized on construction but original code
+    // "flags = _flags" would just overwrite the initialization.
+    // So, read in the checkpoint flags, but then set the Initialized
     // flag on top of it in order to avoid failures.
     assert(initialized());
     flags = _flags;
@@ -319,7 +339,7 @@ EventQueue::dump() const
 bool
 EventQueue::debugVerify() const
 {
-    m5::hash_map<long, bool> map;
+    std::unordered_map<long, bool> map;
 
     Tick time = 0;
     short priority = 0;
@@ -384,16 +404,23 @@ Event::description() const
 void
 Event::trace(const char *action)
 {
-    // This DPRINTF is unconditional because calls to this function
-    // are protected by an 'if (DTRACE(Event))' in the inlined Event
-    // methods.
-    //
     // This is just a default implementation for derived classes where
     // it's not worth doing anything special.  If you want to put a
     // more informative message in the trace, override this method on
     // the particular subclass where you have the information that
     // needs to be printed.
-    DPRINTFN("%s event %s @ %d\n", description(), action, when());
+    DPRINTF(Event, "%s %s %s @ %d\n",
+            description(), instanceString(), action, when());
+}
+
+const std::string
+Event::instanceString() const
+{
+#ifndef NDEBUG
+    return csprintf("%d", instance);
+#else
+    return csprintf("%#x", (uintptr_t)this);
+#endif
 }
 
 void
@@ -414,7 +441,7 @@ Event::dump() const
     }
 }
 
-EventQueue::EventQueue(const string &n)
+EventQueue::EventQueue(const std::string &n)
     : objName(n), head(NULL), _curTick(0)
 {
 }
@@ -440,3 +467,5 @@ EventQueue::handleAsyncInsertions()
 
     async_queue_mutex.unlock();
 }
+
+} // namespace gem5

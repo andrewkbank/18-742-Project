@@ -1,3 +1,15 @@
+# Copyright (c) 2021 ARM Limited
+# All rights reserved.
+#
+# The license below extends only to copyright in the software and shall
+# not be construed as granting a license to any other intellectual
+# property including but not limited to intellectual property relating
+# to a hardware implementation of the functionality of the software
+# licensed hereunder.  You may use the software subject to the license
+# terms below provided that you ensure that this notice is replicated
+# unmodified and in its entirety in all distributions of the software,
+# modified or unmodified, in source code or in binary form.
+#
 # Copyright (c) 2009 The Hewlett-Packard Development Company
 # All rights reserved.
 #
@@ -24,15 +36,16 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from slicc.ast.AST import *
-
 # actual ASTs
 from slicc.ast.ActionDeclAST import *
 from slicc.ast.AssignStatementAST import *
+from slicc.ast.AST import *
 from slicc.ast.CheckAllocateStatementAST import *
 from slicc.ast.CheckNextCycleAST import *
+from slicc.ast.CheckProbeStatementAST import *
 from slicc.ast.DeclAST import *
 from slicc.ast.DeclListAST import *
+from slicc.ast.DeferEnqueueingStatementAST import *
 from slicc.ast.EnqueueStatementAST import *
 from slicc.ast.EnumDeclAST import *
 from slicc.ast.EnumExprAST import *
@@ -50,8 +63,8 @@ from slicc.ast.MachineAST import *
 from slicc.ast.MemberExprAST import *
 from slicc.ast.MethodCallExprAST import *
 from slicc.ast.NewExprAST import *
-from slicc.ast.OodAST import *
 from slicc.ast.ObjDeclAST import *
+from slicc.ast.OodAST import *
 from slicc.ast.OperatorExprAST import *
 from slicc.ast.OutPortDeclAST import *
 from slicc.ast.PairAST import *
@@ -70,3 +83,4 @@ from slicc.ast.TypeFieldAST import *
 from slicc.ast.TypeFieldEnumAST import *
 from slicc.ast.TypeFieldStateAST import *
 from slicc.ast.VarExprAST import *
+from slicc.ast.WakeupPortStatementAST import *

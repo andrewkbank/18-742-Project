@@ -1,4 +1,16 @@
 /*
+ * Copyright (c) 2018, 2020 ARM Limited
+ * All rights reserved
+ *
+ * The license below extends only to copyright in the software and shall
+ * not be construed as granting a license to any other intellectual
+ * property including but not limited to intellectual property relating
+ * to a hardware implementation of the functionality of the software
+ * licensed hereunder.  You may use the software subject to the license
+ * terms below provided that you ensure that this notice is replicated
+ * unmodified and in its entirety in all distributions of the software,
+ * modified or unmodified, in source code or in binary form.
+ *
  * Copyright (c) 2001-2006 The Regents of The University of Michigan
  * All rights reserved.
  *
@@ -24,31 +36,21 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Steve Reinhardt
- *          Nathan Binkert
- *          Lisa Hsu
- *          Kevin Lim
  */
+
+#include "cpu/simple_thread.hh"
 
 #include <string>
 
-#include "arch/isa_traits.hh"
-#include "arch/kernel_stats.hh"
-#include "arch/stacktrace.hh"
-#include "arch/utility.hh"
+#include "arch/generic/decoder.hh"
 #include "base/callback.hh"
+#include "base/compiler.hh"
 #include "base/cprintf.hh"
 #include "base/output.hh"
 #include "base/trace.hh"
-#include "config/the_isa.hh"
-#include "cpu/base.hh"
-#include "cpu/profile.hh"
-#include "cpu/quiesce_event.hh"
-#include "cpu/simple_thread.hh"
 #include "cpu/thread_context.hh"
-#include "mem/fs_translating_port_proxy.hh"
 #include "mem/se_translating_port_proxy.hh"
+#include "mem/translating_port_proxy.hh"
 #include "params/BaseCPU.hh"
 #include "sim/faults.hh"
 #include "sim/full_system.hh"
@@ -57,63 +59,45 @@
 #include "sim/sim_exit.hh"
 #include "sim/system.hh"
 
-using namespace std;
+namespace gem5
+{
 
 // constructor
 SimpleThread::SimpleThread(BaseCPU *_cpu, int _thread_num, System *_sys,
-                           Process *_process, TheISA::TLB *_itb,
-                           TheISA::TLB *_dtb, TheISA::ISA *_isa)
-    : ThreadState(_cpu, _thread_num, _process), isa(_isa),
-      predicate(false), system(_sys),
-      itb(_itb), dtb(_dtb)
+                           Process *_process, BaseMMU *_mmu,
+                           BaseISA *_isa, InstDecoder *_decoder)
+    : ThreadState(_cpu, _thread_num, _process),
+      regFiles{{
+          {*_isa->regClasses().at(IntRegClass)},
+          {*_isa->regClasses().at(FloatRegClass)},
+          {*_isa->regClasses().at(VecRegClass)},
+          {*_isa->regClasses().at(VecElemClass)},
+          {*_isa->regClasses().at(VecPredRegClass)},
+          {*_isa->regClasses().at(MatRegClass)},
+          {*_isa->regClasses().at(CCRegClass)}
+      }},
+      isa(_isa),
+      predicate(true), memAccPredicate(true),
+      comInstEventQueue("instruction-based event queue"),
+      system(_sys), mmu(_mmu), decoder(_decoder),
+      htmTransactionStarts(0), htmTransactionStops(0)
 {
     clearArchRegs();
-    tc = new ProxyThreadContext<SimpleThread>(this);
 }
 
 SimpleThread::SimpleThread(BaseCPU *_cpu, int _thread_num, System *_sys,
-                           TheISA::TLB *_itb, TheISA::TLB *_dtb,
-                           TheISA::ISA *_isa, bool use_kernel_stats)
-    : ThreadState(_cpu, _thread_num, NULL), isa(_isa), system(_sys), itb(_itb),
-      dtb(_dtb)
-{
-    tc = new ProxyThreadContext<SimpleThread>(this);
-
-    quiesceEvent = new EndQuiesceEvent(tc);
-
-    clearArchRegs();
-
-    if (baseCpu->params()->profile) {
-        profile = new FunctionProfile(system->kernelSymtab);
-        Callback *cb =
-            new MakeCallback<SimpleThread,
-            &SimpleThread::dumpFuncProfile>(this);
-        registerExitCallback(cb);
-    }
-
-    // let's fill with a dummy node for now so we don't get a segfault
-    // on the first cycle when there's no node available.
-    static ProfileNode dummyNode;
-    profileNode = &dummyNode;
-    profilePC = 3;
-
-    if (use_kernel_stats)
-        kernelStats = new TheISA::Kernel::Statistics(system);
-}
-
-SimpleThread::~SimpleThread()
-{
-    delete tc;
-}
+                           BaseMMU *_mmu, BaseISA *_isa, InstDecoder *_decoder)
+    : SimpleThread(_cpu, _thread_num, _sys, nullptr, _mmu, _isa, _decoder)
+{}
 
 void
 SimpleThread::takeOverFrom(ThreadContext *oldContext)
 {
-    ::takeOverFrom(*tc, *oldContext);
-    decoder.takeOverFrom(oldContext->getDecoderPtr());
+    gem5::takeOverFrom(*this, *oldContext);
+    decoder->takeOverFrom(oldContext->getDecoderPtr());
 
-    kernelStats = oldContext->getKernelStats();
-    funcExeInst = oldContext->readFuncExeInst();
+    isa->takeOverFrom(this, oldContext);
+
     storeCondFailures = 0;
 }
 
@@ -123,8 +107,6 @@ SimpleThread::copyState(ThreadContext *oldContext)
     // copy over functional state
     _status = oldContext->status();
     copyArchRegs(oldContext);
-    if (FullSystem)
-        funcExeInst = oldContext->readFuncExeInst();
 
     _threadId = oldContext->threadId();
     _contextId = oldContext->contextId();
@@ -134,7 +116,7 @@ void
 SimpleThread::serialize(CheckpointOut &cp) const
 {
     ThreadState::serialize(cp);
-    ::serialize(*tc, cp);
+    gem5::serialize(*this, cp);
 }
 
 
@@ -142,21 +124,7 @@ void
 SimpleThread::unserialize(CheckpointIn &cp)
 {
     ThreadState::unserialize(cp);
-    ::unserialize(*tc, cp);
-}
-
-void
-SimpleThread::startup()
-{
-    isa->startup(tc);
-}
-
-void
-SimpleThread::dumpFuncProfile()
-{
-    std::ostream *os = simout.create(csprintf("profile.%s.dat",
-                                              baseCpu->name()));
-    profile->dump(tc, *os);
+    gem5::unserialize(*this, cp);
 }
 
 void
@@ -193,32 +161,33 @@ SimpleThread::halt()
     baseCpu->haltContext(_threadId);
 }
 
-
-void
-SimpleThread::regStats(const string &name)
-{
-    if (FullSystem && kernelStats)
-        kernelStats->regStats(name + ".kern");
-}
-
 void
 SimpleThread::copyArchRegs(ThreadContext *src_tc)
 {
-    TheISA::copyRegs(src_tc, tc);
+    getIsaPtr()->copyRegsFrom(src_tc);
 }
 
-// The following methods are defined in src/arch/alpha/ev5.cc for
-// Alpha.
-#if THE_ISA != ALPHA_ISA
-Fault
-SimpleThread::hwrei()
+// hardware transactional memory
+void
+SimpleThread::htmAbortTransaction(uint64_t htm_uid, HtmFailureFaultCause cause)
 {
-    return NoFault;
+    baseCpu->htmSendAbortSignal(threadId(), htm_uid, cause);
+
+    // these must be reset after the abort signal has been sent
+    htmTransactionStarts = 0;
+    htmTransactionStops = 0;
 }
 
-bool
-SimpleThread::simPalCheck(int palFunc)
+BaseHTMCheckpointPtr&
+SimpleThread::getHtmCheckpointPtr()
 {
-    return true;
+    return _htmCheckpoint;
 }
-#endif
+
+void
+SimpleThread::setHtmCheckpointPtr(BaseHTMCheckpointPtr new_cpt)
+{
+    _htmCheckpoint = std::move(new_cpt);
+}
+
+} // namespace gem5

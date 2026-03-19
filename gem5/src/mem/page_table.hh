@@ -25,8 +25,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Steve Reinhardt
  */
 
 /**
@@ -38,74 +36,83 @@
 #define __MEM_PAGE_TABLE_HH__
 
 #include <string>
+#include <unordered_map>
 
-#include "arch/isa_traits.hh"
-#include "arch/tlb.hh"
-#include "base/hashmap.hh"
+#include "base/bitfield.hh"
+#include "base/intmath.hh"
 #include "base/types.hh"
-#include "config/the_isa.hh"
 #include "mem/request.hh"
+#include "mem/translation_gen.hh"
 #include "sim/serialize.hh"
-#include "sim/system.hh"
+
+namespace gem5
+{
 
 class ThreadContext;
 
-/**
- * Declaration of base class for page table
- */
-class PageTableBase : public Serializable
+class EmulationPageTable : public Serializable
 {
-  protected:
-    struct cacheElement {
-        bool valid;
-        Addr vaddr;
-        TheISA::TlbEntry entry;
+  public:
+    struct Entry
+    {
+        Addr paddr;
+        uint64_t flags;
+
+        Entry(Addr paddr, uint64_t flags) : paddr(paddr), flags(flags) {}
+        Entry() {}
     };
 
-    struct cacheElement pTableCache[3];
+  protected:
+    typedef std::unordered_map<Addr, Entry> PTable;
+    typedef PTable::iterator PTableItr;
+    PTable pTable;
 
-    const Addr pageSize;
+    const Addr _pageSize;
     const Addr offsetMask;
 
-    const uint64_t pid;
+    const uint64_t _pid;
     const std::string _name;
 
   public:
 
-    PageTableBase(const std::string &__name, uint64_t _pid,
-              Addr _pageSize = TheISA::PageBytes)
-            : pageSize(_pageSize), offsetMask(mask(floorLog2(_pageSize))),
-              pid(_pid), _name(__name)
+    EmulationPageTable(
+            const std::string &__name, uint64_t _pid, Addr _pageSize) :
+            _pageSize(_pageSize), offsetMask(mask(floorLog2(_pageSize))),
+            _pid(_pid), _name(__name), shared(false)
     {
-        assert(isPowerOf2(pageSize));
-        pTableCache[0].valid = false;
-        pTableCache[1].valid = false;
-        pTableCache[2].valid = false;
+        assert(isPowerOf2(_pageSize));
     }
 
-    virtual ~PageTableBase() {};
+    uint64_t pid() const { return _pid; };
+
+    virtual ~EmulationPageTable() {};
 
     /* generic page table mapping flags
      *              unset | set
      * bit 0 - no-clobber | clobber
-     * bit 1 - present    | not-present
      * bit 2 - cacheable  | uncacheable
      * bit 3 - read-write | read-only
      */
-    enum MappingFlags : uint32_t {
+    enum MappingFlags : uint32_t
+    {
         Clobber     = 1,
-        NotPresent  = 2,
         Uncacheable = 4,
         ReadOnly    = 8,
     };
 
-    virtual void initState(ThreadContext* tc) = 0;
+    // flag which marks the page table as shared among software threads
+    bool shared;
+
+    virtual void initState() {};
 
     // for DPRINTF compatibility
     const std::string name() const { return _name; }
 
     Addr pageAlign(Addr a)  { return (a & ~offsetMask); }
     Addr pageOffset(Addr a) { return (a &  offsetMask); }
+    // Page size can technically vary based on the virtual address, but we'll
+    // ignore that for now.
+    Addr pageSize()   { return _pageSize; }
 
     /**
      * Maps a virtual memory region to a physical memory region.
@@ -115,10 +122,9 @@ class PageTableBase : public Serializable
      * @param flags Generic mapping flags that can be set by or-ing values
      *              from MappingFlags enum.
      */
-    virtual void map(Addr vaddr, Addr paddr, int64_t size,
-                     uint64_t flags = 0) = 0;
-    virtual void remap(Addr vaddr, int64_t size, Addr new_vaddr) = 0;
-    virtual void unmap(Addr vaddr, int64_t size) = 0;
+    virtual void map(Addr vaddr, Addr paddr, int64_t size, uint64_t flags = 0);
+    virtual void remap(Addr vaddr, int64_t size, Addr new_vaddr);
+    virtual void unmap(Addr vaddr, int64_t size);
 
     /**
      * Check if any pages in a region are already allocated
@@ -126,14 +132,14 @@ class PageTableBase : public Serializable
      * @param size The length of the region.
      * @return True if no pages in the region are mapped.
      */
-    virtual bool isUnmapped(Addr vaddr, int64_t size) = 0;
+    virtual bool isUnmapped(Addr vaddr, int64_t size);
 
     /**
      * Lookup function
      * @param vaddr The virtual address.
-     * @return entry The page table entry corresponding to vaddr.
+     * @return The page table entry corresponding to vaddr.
      */
-    virtual bool lookup(Addr vaddr, TheISA::TlbEntry &entry) = 0;
+    const Entry *lookup(Addr vaddr);
 
     /**
      * Translate function
@@ -148,110 +154,52 @@ class PageTableBase : public Serializable
      * @param vaddr The virtual address.
      * @return True if translation exists
      */
-    bool translate(Addr vaddr) { Addr dummy; return translate(vaddr, dummy); }
+    bool
+    translate(Addr vaddr)
+    {
+        Addr dummy;
+        return translate(vaddr, dummy);
+    }
+
+    class PageTableTranslationGen : public TranslationGen
+    {
+      private:
+        EmulationPageTable *pt;
+
+        void translate(Range &range) const override;
+
+      public:
+        PageTableTranslationGen(EmulationPageTable *_pt, Addr vaddr,
+                Addr size) : TranslationGen(vaddr, size), pt(_pt)
+        {}
+    };
+
+    TranslationGenPtr
+    translateRange(Addr vaddr, Addr size)
+    {
+        return TranslationGenPtr(
+                new PageTableTranslationGen(this, vaddr, size));
+    }
 
     /**
      * Perform a translation on the memory request, fills in paddr
      * field of req.
      * @param req The memory request.
      */
-    Fault translate(RequestPtr req);
+    Fault translate(const RequestPtr &req);
 
     /**
-     * Update the page table cache.
-     * @param vaddr virtual address (page aligned) to check
-     * @param pte page table entry to return
+     * Dump all items in the pTable, to a concatenation of strings of the form
+     *    Addr:Entry;
      */
-    inline void updateCache(Addr vaddr, TheISA::TlbEntry entry)
-    {
-        pTableCache[2].entry = pTableCache[1].entry;
-        pTableCache[2].vaddr = pTableCache[1].vaddr;
-        pTableCache[2].valid = pTableCache[1].valid;
+    const std::string externalize() const;
 
-        pTableCache[1].entry = pTableCache[0].entry;
-        pTableCache[1].vaddr = pTableCache[0].vaddr;
-        pTableCache[1].valid = pTableCache[0].valid;
+    void getMappings(std::vector<std::pair<Addr, Addr>> *addr_mappings);
 
-        pTableCache[0].entry = entry;
-        pTableCache[0].vaddr = vaddr;
-        pTableCache[0].valid = true;
-    }
-
-    /**
-     * Erase an entry from the page table cache.
-     * @param vaddr virtual address (page aligned) to check
-     */
-    inline void eraseCacheEntry(Addr vaddr)
-    {
-        // Invalidate cached entries if necessary
-        if (pTableCache[0].valid && pTableCache[0].vaddr == vaddr) {
-            pTableCache[0].valid = false;
-        } else if (pTableCache[1].valid && pTableCache[1].vaddr == vaddr) {
-            pTableCache[1].valid = false;
-        } else if (pTableCache[2].valid && pTableCache[2].vaddr == vaddr) {
-            pTableCache[2].valid = false;
-        }
-    }
+    void serialize(CheckpointOut &cp) const override;
+    void unserialize(CheckpointIn &cp) override;
 };
 
-/**
- * Declaration of functional page table.
- */
-class FuncPageTable : public PageTableBase
-{
-  private:
-    typedef m5::hash_map<Addr, TheISA::TlbEntry> PTable;
-    typedef PTable::iterator PTableItr;
-    PTable pTable;
-
-  public:
-
-    FuncPageTable(const std::string &__name, uint64_t _pid,
-                  Addr _pageSize = TheISA::PageBytes);
-
-    ~FuncPageTable();
-
-    void initState(ThreadContext* tc)
-    {
-    }
-
-    void map(Addr vaddr, Addr paddr, int64_t size,
-             uint64_t flags = 0);
-    void remap(Addr vaddr, int64_t size, Addr new_vaddr);
-    void unmap(Addr vaddr, int64_t size);
-
-    /**
-     * Check if any pages in a region are already allocated
-     * @param vaddr The starting virtual address of the region.
-     * @param size The length of the region.
-     * @return True if no pages in the region are mapped.
-     */
-    bool isUnmapped(Addr vaddr, int64_t size);
-
-    /**
-     * Lookup function
-     * @param vaddr The virtual address.
-     * @return entry The page table entry corresponding to vaddr.
-     */
-    bool lookup(Addr vaddr, TheISA::TlbEntry &entry);
-
-    void serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE;
-    void unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE;
-};
-
-/**
- * Faux page table class indended to stop the usage of
- * an architectural page table, when there is none defined
- * for a particular ISA.
- */
-class NoArchPageTable : public FuncPageTable
-{
-  public:
-    NoArchPageTable(const std::string &__name, uint64_t _pid, System *_sys,
-              Addr _pageSize = TheISA::PageBytes) : FuncPageTable(__name, _pid)
-    {
-        fatal("No architectural page table defined for this ISA.\n");
-    }
-};
+} // namespace gem5
 
 #endif // __MEM_PAGE_TABLE_HH__

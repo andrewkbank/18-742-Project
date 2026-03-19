@@ -1,4 +1,16 @@
 /*
+ * Copyright (c) 2016-2018 ARM Limited
+ * All rights reserved
+ *
+ * The license below extends only to copyright in the software and shall
+ * not be construed as granting a license to any other intellectual
+ * property including but not limited to intellectual property relating
+ * to a hardware implementation of the functionality of the software
+ * licensed hereunder. You may use the software subject to the license
+ * terms below provided that you ensure that this notice is replicated
+ * unmodified and in its entirety in all distributions of the software,
+ * modified or unmodified, in source code or in binary form.
+ *
  * Copyright (c) 2004-2005 The Regents of The University of Michigan
  * Copyright (c) 2013 Advanced Micro Devices, Inc.
  * All rights reserved.
@@ -25,21 +37,29 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Kevin Lim
  */
 
 #ifndef __CPU_O3_FREE_LIST_HH__
 #define __CPU_O3_FREE_LIST_HH__
 
+#include <algorithm>
+#include <array>
 #include <iostream>
 #include <queue>
 
-#include "base/misc.hh"
+#include "base/logging.hh"
 #include "base/trace.hh"
 #include "cpu/o3/comm.hh"
 #include "cpu/o3/regfile.hh"
 #include "debug/FreeList.hh"
+
+namespace gem5
+{
+
+namespace o3
+{
+
+class UnifiedRenameMap;
 
 /**
  * Free list for a single class of registers (e.g., integer
@@ -53,20 +73,29 @@ class SimpleFreeList
   private:
 
     /** The actual free list */
-    std::queue<PhysRegIndex> freeRegs;
+    std::queue<PhysRegIdPtr> freeRegs;
 
   public:
 
     SimpleFreeList() {};
 
     /** Add a physical register to the free list */
-    void addReg(PhysRegIndex reg) { freeRegs.push(reg); }
+    void addReg(PhysRegIdPtr reg) { freeRegs.push(reg); }
+
+    /** Add physical registers to the free list */
+    template<class InputIt>
+    void
+    addRegs(InputIt first, InputIt last) {
+        std::for_each(first, last, [this](typename InputIt::value_type& reg) {
+            freeRegs.push(&reg);
+        });
+    }
 
     /** Get the next available register from the free list */
-    PhysRegIndex getReg()
+    PhysRegIdPtr getReg()
     {
         assert(!freeRegs.empty());
-        PhysRegIndex free_reg = freeRegs.front();
+        PhysRegIdPtr free_reg = freeRegs.front();
         freeRegs.pop();
         return free_reg;
     }
@@ -100,14 +129,7 @@ class UnifiedFreeList
      *  explicitly because Scoreboard is not a SimObject. */
     const std::string _name;
 
-    /** The list of free integer registers. */
-    SimpleFreeList intList;
-
-    /** The list of free floating point registers. */
-    SimpleFreeList floatList;
-
-    /** The list of free condition-code registers. */
-    SimpleFreeList ccList;
+    std::array<SimpleFreeList, CCRegClass + 1> freeLists;
 
     /**
      * The register file object is used only to distinguish integer
@@ -136,76 +158,40 @@ class UnifiedFreeList
     /** Gives the name of the freelist. */
     std::string name() const { return _name; };
 
-    /** Returns a pointer to the condition-code free list */
-    SimpleFreeList *getCCList() { return &ccList; }
-
-    /** Gets a free integer register. */
-    PhysRegIndex getIntReg() { return intList.getReg(); }
-
-    /** Gets a free fp register. */
-    PhysRegIndex getFloatReg() { return floatList.getReg(); }
-
-    /** Gets a free cc register. */
-    PhysRegIndex getCCReg() { return ccList.getReg(); }
+    /** Gets a free register of type type. */
+    PhysRegIdPtr getReg(RegClassType type) { return freeLists[type].getReg(); }
 
     /** Adds a register back to the free list. */
-    void addReg(PhysRegIndex freed_reg);
-
-    /** Adds an integer register back to the free list. */
-    void addIntReg(PhysRegIndex freed_reg) { intList.addReg(freed_reg); }
-
-    /** Adds a fp register back to the free list. */
-    void addFloatReg(PhysRegIndex freed_reg) { floatList.addReg(freed_reg); }
-
-    /** Adds a cc register back to the free list. */
-    void addCCReg(PhysRegIndex freed_reg) { ccList.addReg(freed_reg); }
-
-    /** Checks if there are any free integer registers. */
-    bool hasFreeIntRegs() const { return intList.hasFreeRegs(); }
-
-    /** Checks if there are any free fp registers. */
-    bool hasFreeFloatRegs() const { return floatList.hasFreeRegs(); }
-
-    /** Checks if there are any free cc registers. */
-    bool hasFreeCCRegs() const { return ccList.hasFreeRegs(); }
-
-    /** Returns the number of free integer registers. */
-    unsigned numFreeIntRegs() const { return intList.numFreeRegs(); }
-
-    /** Returns the number of free fp registers. */
-    unsigned numFreeFloatRegs() const { return floatList.numFreeRegs(); }
-
-    /** Returns the number of free cc registers. */
-    unsigned numFreeCCRegs() const { return ccList.numFreeRegs(); }
-};
-
-inline void
-UnifiedFreeList::addReg(PhysRegIndex freed_reg)
-{
-    DPRINTF(FreeList,"Freeing register %i.\n", freed_reg);
-    //Might want to add in a check for whether or not this register is
-    //already in there.  A bit vector or something similar would be useful.
-    if (regFile->isIntPhysReg(freed_reg)) {
-        intList.addReg(freed_reg);
-    } else if (regFile->isFloatPhysReg(freed_reg)) {
-        floatList.addReg(freed_reg);
-    } else {
-        assert(regFile->isCCPhysReg(freed_reg));
-        ccList.addReg(freed_reg);
+    template<class InputIt>
+    void
+    addRegs(InputIt first, InputIt last)
+    {
+        std::for_each(first, last, [this](auto &reg) { addReg(&reg); });
     }
 
-    // These assert conditions ensure that the number of free
-    // registers are not more than the # of total Physical  Registers.
-    // If this were false, it would mean that registers
-    // have been freed twice, overflowing the free register
-    // pool and potentially crashing SMT workloads.
-    // ----
-    // Comment out for now so as to not potentially break
-    // CMP and single-threaded workloads
-    // ----
-    // assert(freeIntRegs.size() <= numPhysicalIntRegs);
-    // assert(freeFloatRegs.size() <= numPhysicalFloatRegs);
-}
+    /** Adds a register back to the free list. */
+    void
+    addReg(PhysRegIdPtr freed_reg)
+    {
+        freeLists[freed_reg->classValue()].addReg(freed_reg);
+    }
 
+    /** Checks if there are any free registers of type type. */
+    bool
+    hasFreeRegs(RegClassType type) const
+    {
+        return freeLists[type].hasFreeRegs();
+    }
+
+    /** Returns the number of free registers of type type. */
+    unsigned
+    numFreeRegs(RegClassType type) const
+    {
+        return freeLists[type].numFreeRegs();
+    }
+};
+
+} // namespace o3
+} // namespace gem5
 
 #endif // __CPU_O3_FREE_LIST_HH__

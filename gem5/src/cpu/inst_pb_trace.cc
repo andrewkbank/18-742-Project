@@ -33,23 +33,24 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Ali Saidi
  */
 
 #include "cpu/inst_pb_trace.hh"
 
 #include "base/callback.hh"
 #include "base/output.hh"
-#include "config/the_isa.hh"
 #include "cpu/static_inst.hh"
 #include "cpu/thread_context.hh"
 #include "debug/ExecEnable.hh"
 #include "params/InstPBTrace.hh"
 #include "proto/inst.pb.h"
 #include "sim/core.hh"
+#include "sim/cur_tick.hh"
 
-namespace Trace {
+namespace gem5
+{
+
+namespace trace {
 
 ProtoOutputStream *InstPBTrace::traceStream;
 
@@ -60,7 +61,7 @@ InstPBTraceRecord::dump()
     // instructions that aren't macro-oped
     if ((macroStaticInst && staticInst->isFirstMicroop()) ||
             !staticInst->isMicroop()) {
-        tracer.traceInst(thread, staticInst, pc);
+        tracer.traceInst(thread, staticInst, *pc);
     }
 
     // If this instruction accessed memory lets record it
@@ -68,11 +69,11 @@ InstPBTraceRecord::dump()
         tracer.traceMem(staticInst, getAddr(), getSize(), getFlags());
 }
 
-InstPBTrace::InstPBTrace(const InstPBTraceParams *p)
-    : InstTracer(p), curMsg(nullptr)
+InstPBTrace::InstPBTrace(const InstPBTraceParams &p)
+    : InstTracer(p), buf(nullptr), bufSize(0), curMsg(nullptr)
 {
     // Create our output file
-    createTraceFile(p->file_name);
+    createTraceFile(p.file_name);
 }
 
 void
@@ -88,14 +89,12 @@ InstPBTrace::createTraceFile(std::string filename)
     ProtoMessage::InstHeader header_msg;
     header_msg.set_obj_id("gem5 generated instruction trace");
     header_msg.set_ver(0);
-    header_msg.set_tick_freq(SimClock::Frequency);
+    header_msg.set_tick_freq(sim_clock::Frequency);
     header_msg.set_has_mem(true);
     traceStream->write(header_msg);
 
     // get a callback when we exit so we can close the file
-    Callback *cb = new MakeCallback<InstPBTrace,
-             &InstPBTrace::closeStreams>(this);
-    registerExitCallback(cb);
+    registerExitCallback([this]() { closeStreams(); });
 }
 
 void
@@ -121,10 +120,10 @@ InstPBTrace::~InstPBTrace()
 
 InstPBTraceRecord*
 InstPBTrace::getInstRecord(Tick when, ThreadContext *tc, const StaticInstPtr si,
-                           TheISA::PCState pc, const StaticInstPtr mi)
+                           const PCStateBase &pc, const StaticInstPtr mi)
 {
-    // Only record the trace if Exec debugging in enabled
-    if (!Trace::enabled || !Debug::ExecEnable)
+    // Only record the trace if Exec debugging is enabled
+    if (!debug::ExecEnable)
         return NULL;
 
     return new InstPBTraceRecord(*this, when, tc, si, pc, mi);
@@ -132,24 +131,35 @@ InstPBTrace::getInstRecord(Tick when, ThreadContext *tc, const StaticInstPtr si,
 }
 
 void
-InstPBTrace::traceInst(ThreadContext *tc, StaticInstPtr si, TheISA::PCState pc)
+InstPBTrace::traceInst(ThreadContext *tc, StaticInstPtr si,
+        const PCStateBase &pc)
 {
     if (curMsg) {
-        /// @todo if we are running multi-threaded I assume we'd need a lock here
+        //TODO if we are running multi-threaded I assume we'd need a lock here
         traceStream->write(*curMsg);
         delete curMsg;
         curMsg = NULL;
     }
 
+    size_t instSize = si->asBytes(buf.get(), bufSize);
+    if (instSize > bufSize) {
+        bufSize = instSize;
+        buf.reset(new uint8_t[bufSize]);
+        instSize = si->asBytes(buf.get(), bufSize);
+    }
+
     // Create a new instruction message and fill out the fields
     curMsg = new ProtoMessage::Inst;
-    curMsg->set_pc(pc.pc());
-    curMsg->set_inst(static_cast<uint32_t>(bits(si->machInst, 31, 0)));
+    curMsg->set_pc(pc.instAddr());
+    if (instSize == sizeof(uint32_t)) {
+        curMsg->set_inst(letoh(*reinterpret_cast<uint32_t *>(buf.get())));
+    } else if (instSize) {
+        curMsg->set_inst_bytes(
+            std::string(reinterpret_cast<const char *>(buf.get()), bufSize));
+    }
     curMsg->set_cpuid(tc->cpuId());
     curMsg->set_tick(curTick());
     curMsg->set_type(static_cast<ProtoMessage::Inst_InstType>(si->opClass()));
-    curMsg->set_inst_flags(bits(si->machInst, 7, 0));
-
 }
 
 void
@@ -167,12 +177,5 @@ InstPBTrace::traceMem(StaticInstPtr si, Addr a, Addr s, unsigned f)
 
 }
 
-} // namespace Trace
-
-
-Trace::InstPBTrace*
-InstPBTraceParams::create()
-{
-    return new Trace::InstPBTrace(this);
-}
-
+} // namespace trace
+} // namespace gem5

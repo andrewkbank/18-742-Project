@@ -33,8 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andreas Sandberg
  */
 
 #ifndef __CPU_KVM_PERFEVENT_HH__
@@ -46,6 +44,9 @@
 #include <inttypes.h>
 
 #include "config/have_perf_attr_exclude_host.hh"
+
+namespace gem5
+{
 
 /**
  * PerfEvent counter configuration.
@@ -297,7 +298,7 @@ public:
      *
      * @param signal Signal to send upon overflow
      */
-    void enableSignals(int signal) { enableSignals(gettid(), signal); }
+    void enableSignals(int signal) { enableSignals(sysGettid(), signal); }
 
 private:
     // Disallow copying
@@ -312,7 +313,7 @@ private:
      *
      * @return Current thread's TID
      */
-    pid_t gettid();
+    pid_t sysGettid();
 
     /**
      * MMAP the PerfEvent file descriptor.
@@ -379,5 +380,7 @@ private:
     /** Cached host page size */
     long pageSize;
 };
+
+} // namespace gem5
 
 #endif

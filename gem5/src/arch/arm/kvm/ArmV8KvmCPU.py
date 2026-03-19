@@ -32,12 +32,12 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Andreas Sandberg
 
+from m5.objects.BaseArmKvmCPU import BaseArmKvmCPU
 from m5.params import *
-from BaseArmKvmCPU import BaseArmKvmCPU
+
 
 class ArmV8KvmCPU(BaseArmKvmCPU):
-    type = 'ArmV8KvmCPU'
+    type = "ArmV8KvmCPU"
     cxx_header = "arch/arm/kvm/armv8_cpu.hh"
+    cxx_class = "gem5::ArmV8KvmCPU"

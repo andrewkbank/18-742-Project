@@ -34,8 +34,6 @@
 // THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// Authors: Gabe Black
 
 //////////////////////////////////////////////////////////////////////////
 //
@@ -49,9 +47,23 @@ def format Inst(*opTypeSet) {{
      decode_block, exec_output) = blocks.makeList()
 }};
 
+def format Cpl0Inst(*opTypeSet) {{
+    blocks = specializeInst(Name, list(opTypeSet), EmulEnv())
+    (header_output, decoder_output,
+     decode_block, exec_output) = blocks.makeList()
+    decode_block = '''
+        if (emi.mode.cpl != 0) {
+            return new DecodeFaultInst("%(Name)s", emi,
+                    std::make_shared<GeneralProtection>(0));
+        } else {
+            %(decode_block)s
+        }
+    ''' % {'decode_block': decode_block, 'Name': Name}
+}};
+
 def format MultiInst(switchVal, *opTypeSets) {{
     switcher = {}
-    for (count, opTypeSet) in zip(xrange(len(opTypeSets)), opTypeSets):
+    for (count, opTypeSet) in zip(range(len(opTypeSets)), opTypeSets):
         switcher[count] = (specializeInst, Name, opTypeSet, EmulEnv())
     blocks = doSplitDecode(switchVal, switcher)
     (header_output, decoder_output,

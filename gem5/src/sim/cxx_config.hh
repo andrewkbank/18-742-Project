@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 ARM Limited
+ * Copyright (c) 2014, 2025 Arm Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -33,8 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andrew Bardsley
  */
 
 /**
@@ -57,9 +55,10 @@
 #include <string>
 #include <vector>
 
-#include "mem/port.hh"
-#include "params/SimObject.hh"
 #include "sim/sim_object.hh"
+
+namespace gem5
+{
 
 class CxxConfigParams;
 
@@ -80,13 +79,17 @@ class CxxConfigDirectoryEntry
         /* Is this a vector or singleton parameters/SimObject */
         const bool isVector;
 
+        /* Is this a dictionary */
+        const bool isDict;
+
         /** Is this a SimObject, and so is to be set with setSimObject...
          *  or another from-string parameter set with setParam... */
         const bool isSimObject;
 
         ParamDesc(const std::string &name_,
-            bool isVector_, bool isSimObject_) :
-            name(name_), isVector(isVector_), isSimObject(isSimObject_)
+            bool is_vector, bool is_dict, bool is_simobj)
+          : name(name_), isVector(is_vector),
+            isDict(is_dict), isSimObject(is_simobj)
         { }
     };
 
@@ -99,12 +102,12 @@ class CxxConfigDirectoryEntry
         /* Is this a vector or singleton parameters/SimObject */
         const bool isVector;
 
-        /** Is this a master or slave port */
-        const bool isMaster;
+        /** Is this a request or response port */
+        const bool isRequestor;
 
         PortDesc(const std::string &name_,
-            bool isVector_, bool isMaster_) :
-            name(name_), isVector(isVector_), isMaster(isMaster_)
+            bool isVector_, bool isRequestor_) :
+            name(name_), isVector(isVector_), isRequestor(isRequestor_)
         { }
     };
 
@@ -120,6 +123,9 @@ class CxxConfigDirectoryEntry
     virtual ~CxxConfigDirectoryEntry() { }
 };
 
+/** Directory of all SimObject classes config details */
+std::map<std::string, CxxConfigDirectoryEntry *> &cxxConfigDirectory();
+
 /** Base for peer classes of SimObjectParams derived classes with parameter
  *  modifying member functions. C++ configuration will offer objects of
  *  these classes to SimObjects as params rather than SimObjectParams
@@ -129,11 +135,23 @@ class CxxConfigParams
   private:
     static const std::string invalidName;
 
+  protected:
+    struct AddToConfigDir
+    {
+        AddToConfigDir(const std::string &name, CxxConfigDirectoryEntry *entry)
+        {
+            auto it_success = cxxConfigDirectory().insert({name, entry});
+            panic_if(!it_success.second,
+                    "Failed to insert config directory entry %s (duplicate?).",
+                    name);
+        }
+    };
+
   public:
     /** Flags passable to setParam... to smooth over any parsing difference
      *  between different config files */
     typedef uint32_t FlagsType;
-    typedef ::Flags<FlagsType> Flags;
+    typedef gem5::Flags<FlagsType> Flags;
 
     /** Example flag */
     /* static const FlagsType MY_NEW_FLAG = 0x00000001; */
@@ -165,10 +183,17 @@ class CxxConfigParams
         const std::string &value, const Flags flags)
     { return false; }
 
-    /** As setParamVector but for parameters given as vectors pre-separated
+    /** As setParam but for parameters given as vectors pre-separated
      *  into elements */
     virtual bool setParamVector(const std::string &name,
         const std::vector<std::string> &values, const Flags flags)
+    { return false; }
+
+    /** As setParamVector but for parameters given as dictionaries
+     * pre-separated into elements */
+    virtual bool setParamDict(const std::string &name,
+        const std::unordered_map<std::string, std::string> &values,
+        const Flags flags)
     { return false; }
 
     /** Set the number of connections expected for the named port.  Returns
@@ -204,6 +229,11 @@ class CxxConfigFileBase
         const std::string &param_name,
         std::vector<std::string> &values) const = 0;
 
+    /** Get a dictionary parameter */
+    virtual bool getParamDict(const std::string &object_name,
+        const std::string &param_name,
+        std::unordered_map<std::string, std::string> &values) const = 0;
+
     /** Get the peer (connected) ports of the named ports */
     virtual bool getPortPeers(const std::string &object_name,
         const std::string &port_name,
@@ -230,12 +260,6 @@ class CxxConfigFileBase
     virtual CxxConfigParams::Flags getFlags() const { return 0; }
 };
 
-/** Directory of all SimObject classes config details */
-extern std::map<std::string, CxxConfigDirectoryEntry *>
-    cxx_config_directory;
-
-/** Initialise cxx_config_directory.  This is defined in the
- *  auto-generated .../cxx_config/init.cc */
-void cxxConfigInit();
+} // namespace gem5
 
 #endif // __SIM_CXX_CONFIG_HH__

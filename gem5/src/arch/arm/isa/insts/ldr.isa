@@ -1,6 +1,6 @@
 // -*- mode:c++ -*-
 
-// Copyright (c) 2010-2011 ARM Limited
+// Copyright (c) 2010-2011,2019-2020 ARM Limited
 // All rights reserved
 //
 // The license below extends only to copyright in the software and shall
@@ -34,8 +34,6 @@
 // THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// Authors: Gabe Black
 
 let {{
     import math
@@ -49,7 +47,7 @@ let {{
 
         def __init__(self, mnem, post, add, writeback,
                      size=4, sign=False, user=False, flavor="normal"):
-            super(LoadInst, self).__init__()
+            super().__init__()
 
             self.name = mnem
             self.post = post
@@ -66,10 +64,11 @@ let {{
             else:
                 self.op = " -"
 
-            self.memFlags = ["ArmISA::TLB::MustBeOne"]
+            self.memFlags = []
             self.codeBlobs = {"postacc_code" : ""}
 
-        def emitHelper(self, base = 'Memory', wbDecl = None, instFlags = [], pcDecl = None):
+        def emitHelper(self, base='Memory', wbDecl=None, instFlags=[],
+                       pcDecl=None):
 
             global header_output, decoder_output, exec_output
 
@@ -90,10 +89,10 @@ let {{
         decConstBase = 'Rfe'
 
         def __init__(self, mnem, post, add, writeback):
-            super(RfeInst, self).__init__(mnem, post, add, writeback)
+            super().__init__(mnem, post, add, writeback)
             self.Name = "RFE_" + loadImmClassName(post, add, writeback, 8)
 
-            self.memFlags.append("ArmISA::TLB::AlignWord")
+            self.memFlags.append("ArmISA::MMU::AlignWord")
 
         def emit(self):
             offset = 0
@@ -119,7 +118,8 @@ let {{
             self.codeBlobs["memacc_code"] = accCode
 
             wbDecl = None
-            pcDecl = "MicroUopSetPCCPSR(machInst, INTREG_UREG0, INTREG_UREG1, INTREG_UREG2);"
+            pcDecl = "MicroUopSetPCCPSR(machInst, int_reg::Ureg0, " \
+                     "int_reg::Ureg1, int_reg::Ureg2);"
 
             if self.writeback:
                 wbDecl = "MicroAddiUop(machInst, base, base, %d);" % wbDiff
@@ -127,7 +127,7 @@ let {{
 
     class LoadImmInst(LoadInst):
         def __init__(self, *args, **kargs):
-            super(LoadImmInst, self).__init__(*args, **kargs)
+            super().__init__(*args, **kargs)
             self.offset = self.op + " imm"
 
             if self.add:
@@ -141,7 +141,7 @@ let {{
 
     class LoadRegInst(LoadInst):
         def __init__(self, *args, **kargs):
-            super(LoadRegInst, self).__init__(*args, **kargs)
+            super().__init__(*args, **kargs)
             self.offset = self.op + " shift_rm_imm(Index, shiftAmt," + \
                                     " shiftType, OptShiftRmCondCodesC)"
             if self.add:
@@ -155,7 +155,7 @@ let {{
 
     class LoadSingle(LoadInst):
         def __init__(self, *args, **kargs):
-            super(LoadSingle, self).__init__(*args, **kargs)
+            super().__init__(*args, **kargs)
 
             # Build the default class name
             self.Name = self.nameFunc(self.post, self.add, self.writeback,
@@ -164,7 +164,7 @@ let {{
             # Add memory request flags where necessary
             self.memFlags.append("%d" % int(math.log(self.size, 2)))
             if self.user:
-                self.memFlags.append("ArmISA::TLB::UserMode")
+                self.memFlags.append("ArmISA::MMU::UserMode")
 
             self.instFlags = []
             if self.flavor == "dprefetch":
@@ -173,10 +173,15 @@ let {{
             elif self.flavor == "iprefetch":
                 self.memFlags.append("Request::PREFETCH")
                 self.instFlags = ['IsInstPrefetch']
-            elif self.flavor == "exclusive":
-                self.memFlags.append("Request::LLSC")
             elif self.flavor == "normal":
-                self.memFlags.append("ArmISA::TLB::AllowUnaligned")
+                self.memFlags.append("ArmISA::MMU::AllowUnaligned")
+
+            if self.flavor in ("exclusive", "acex"):
+                self.memFlags.append("Request::LLSC")
+
+            if self.flavor in ("acquire", "acex"):
+                self.instFlags.extend(["IsWriteBarrier", "IsReadBarrier"])
+                self.memFlags.append("Request::ACQUIRE")
 
             # Disambiguate the class name for different flavors of loads
             if self.flavor != "normal":
@@ -202,6 +207,12 @@ let {{
             else:
                 accCode = "IWDest = cSwap(Mem%s, ((CPSR)Cpsr).e);"
             accCode = accCode % buildMemSuffix(self.sign, self.size)
+
+            if self.flavor in ('exclusive', 'acex'):
+                accCode += '''
+                SelfDebug *sd = ArmISA::ISA::getSelfDebug(xc->tcBase());
+                sd->getSstep()->setLdx();
+              '''
 
             self.codeBlobs["memacc_code"] = accCode
 
@@ -230,21 +241,26 @@ let {{
 
     class LoadDouble(LoadInst):
         def __init__(self, *args, **kargs):
-            super(LoadDouble, self).__init__(*args, **kargs)
+            super().__init__(*args, **kargs)
 
             # Build the default class name
             self.Name = self.nameFunc(self.post, self.add, self.writeback)
 
+            self.instFlags = []
             # Add memory request flags where necessary
-            if self.flavor == "exclusive":
+            if self.flavor in ("exclusive", "acex"):
                 self.memFlags.append("Request::LLSC")
-                self.memFlags.append("ArmISA::TLB::AlignDoubleWord")
+                self.memFlags.append("ArmISA::MMU::AlignDoubleWord")
             else:
-                self.memFlags.append("ArmISA::TLB::AlignWord")
+                self.memFlags.append("ArmISA::MMU::AlignWord")
 
             # Disambiguate the class name for different flavors of loads
             if self.flavor != "normal":
                 self.Name = "%s_%s" % (self.name.upper(), self.Name)
+
+            if self.flavor in ("acquire", "acex"):
+                self.instFlags.extend(["IsWriteBarrier", "IsReadBarrier"])
+                self.memFlags.append("Request::ACQUIRE")
 
         def emit(self):
             # Address computation code
@@ -271,6 +287,11 @@ let {{
                 FpDest_uw = (uint32_t)swappedMem;
                 FpDest2_uw = (uint32_t)(swappedMem >> 32);
                 '''
+            if self.flavor in ('exclusive', 'acex'):
+                accCode += '''
+                SelfDebug *sd = ArmISA::ISA::getSelfDebug(xc->tcBase());
+                sd->getSstep()->setLdx();
+             '''
 
             self.codeBlobs["memacc_code"] = accCode
 
@@ -279,7 +300,7 @@ let {{
             wbDecl = None
             if self.writeback:
                 wbDecl = self.wbDecl
-            self.emitHelper(base, wbDecl)
+            self.emitHelper(base, wbDecl, self.instFlags)
 
     def loadDoubleImmClassName(post, add, writeback):
         return memClassName("LOAD_IMMD", post, add, writeback, 4, False, False)
@@ -364,6 +385,14 @@ let {{
     LoadImm("ldrexh", False, True, False, size=2, flavor="exclusive").emit()
     LoadImm("ldrexb", False, True, False, size=1, flavor="exclusive").emit()
     LoadDoubleImm("ldrexd", False, True, False, flavor="exclusive").emit()
+
+    LoadImm("lda", False, True, False, size=4, flavor="acquire").emit()
+    LoadImm("ldah", False, True, False, size=2, flavor="acquire").emit()
+    LoadImm("ldab", False, True, False, size=1, flavor="acquire").emit()
+    LoadImm("ldaex", False, True, False, size=4, flavor="acex").emit()
+    LoadImm("ldaexh", False, True, False, size=2, flavor="acex").emit()
+    LoadImm("ldaexb", False, True, False, size=1, flavor="acex").emit()
+    LoadDoubleImm("ldaexd", False, True, False, flavor="acex").emit()
 
     LoadImm("vldr", False, True, False, size=4, flavor="fp").emit()
     LoadImm("vldr", False, False, False, size=4, flavor="fp").emit()

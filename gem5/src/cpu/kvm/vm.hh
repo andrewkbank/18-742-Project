@@ -34,20 +34,28 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andreas Sandberg
  */
 
 #ifndef __CPU_KVM_KVMVM_HH__
 #define __CPU_KVM_KVMVM_HH__
 
+#include <unordered_map>
 #include <vector>
 
 #include "base/addr_range.hh"
 #include "sim/sim_object.hh"
 
+struct kvm_cpuid_entry2;
+struct kvm_cpuid2;
+struct kvm_msr_list;
+struct kvm_vcpu_init;
+
+namespace gem5
+{
+
 // forward declarations
 struct KvmVMParams;
+class BaseKvmCPU;
 class System;
 
 /**
@@ -138,6 +146,10 @@ class Kvm
 
     /** Support for getting and setting the kvm_xsave structure. */
     bool capXSave() const;
+
+    /** Support for ARM IRQ line layout 2 **/
+    bool capIRQLineLayout2() const;
+
     /** @} */
 
 #if defined(__i386__) || defined(__x86_64__)
@@ -292,8 +304,10 @@ class KvmVM : public SimObject
     friend class BaseKvmCPU;
 
   public:
-    KvmVM(KvmVMParams *params);
+    KvmVM(const KvmVMParams &params);
     virtual ~KvmVM();
+
+    void notifyFork();
 
     /**
      * Setup a shared three-page memory region used by the internals
@@ -348,6 +362,15 @@ class KvmVM : public SimObject
      * Is in-kernel IRQ chip emulation enabled?
      */
     bool hasKernelIRQChip() const { return _hasKernelIRQChip; }
+
+    /**
+     * Tell the VM and VCPUs to use an in-kernel IRQ chip for
+     * interrupt delivery.
+     *
+     * @note This is set automatically if the IRQ chip is created
+     * using the KvmVM::createIRQChip() API.
+     */
+    void enableKernelIRQChip() { _hasKernelIRQChip = true; }
     /** @} */
 
     struct MemSlot
@@ -396,7 +419,15 @@ class KvmVM : public SimObject
     int createDevice(uint32_t type, uint32_t flags = 0);
 
     /** Global KVM interface */
-    Kvm kvm;
+    Kvm *kvm;
+
+    /** Verify gem5 configuration will support KVM emulation */
+    bool validEnvironment() const;
+
+    /**
+      * Get the VCPUID for a given context
+      */
+    long contextIdToVCpuId(ContextID ctx) const;
 
 #if defined(__aarch64__)
   public: // ARM-specific
@@ -504,7 +535,7 @@ class KvmVM : public SimObject
     System *system;
 
     /** KVM VM file descriptor */
-    const int vmFD;
+    int vmFD;
 
     /** Has delayedStartup() already been called? */
     bool started;
@@ -527,6 +558,18 @@ class KvmVM : public SimObject
     };
     std::vector<MemorySlot> memorySlots;
     uint32_t maxMemorySlot;
+
+    struct Deleter
+    {
+        void
+        operator()(void *ptr) const
+        {
+            free(ptr);
+        }
+    };
+    std::unordered_map<uint32_t, std::unique_ptr<void, Deleter>> _slotPad;
 };
+
+} // namespace gem5
 
 #endif

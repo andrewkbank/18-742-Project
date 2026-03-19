@@ -25,26 +25,20 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Steve Reinhardt
- *          Nathan Binkert
  */
+
+#include "sim/sim_object.hh"
 
 #include <cassert>
 
-#include "base/callback.hh"
-#include "base/inifile.hh"
+#include "base/logging.hh"
 #include "base/match.hh"
-#include "base/misc.hh"
 #include "base/trace.hh"
-#include "base/types.hh"
 #include "debug/Checkpoint.hh"
 #include "sim/probe/probe.hh"
-#include "sim/sim_object.hh"
-#include "sim/stats.hh"
 
-using namespace std;
-
+namespace gem5
+{
 
 ////////////////////////////////////////////////////////////////////////
 //
@@ -56,18 +50,18 @@ using namespace std;
 // static list of all SimObjects, used for initialization etc.
 //
 SimObject::SimObjectList SimObject::simObjectList;
+SimObjectResolver *SimObject::_objNameResolver = NULL;
 
 //
 // SimObject constructor: used to maintain static simObjectList
 //
-SimObject::SimObject(const Params *p)
-    : EventManager(getEventQueue(p->eventq_index)), _params(p)
+SimObject::SimObject(const Params &p)
+    : EventManager(getEventQueue(p.eventq_index)),
+      statistics::Group(nullptr), Named(p.name),
+      _params(p)
 {
-#ifdef DEBUG
-    doDebugBreak = false;
-#endif
     simObjectList.push_back(this);
-    probeManager = new ProbeManager(this);
+    probeManager = new ProbeManager(name());
 }
 
 SimObject::~SimObject()
@@ -103,19 +97,6 @@ SimObject::startup()
 {
 }
 
-//
-// no default statistics, so nothing to do in base implementation
-//
-void
-SimObject::regStats()
-{
-}
-
-void
-SimObject::resetStats()
-{
-}
-
 /**
  * No probe points by default, so do nothing in base.
  */
@@ -138,12 +119,21 @@ SimObject::getProbeManager()
     return probeManager;
 }
 
+Port &
+SimObject::getPort(const std::string &if_name, PortID idx)
+{
+    fatal("%s does not have any port named %s\n", name(), if_name);
+}
+
 //
 // static function: serialize all SimObjects.
 //
 void
-SimObject::serializeAll(CheckpointOut &cp)
+SimObject::serializeAll(const std::string &cpt_dir)
 {
+    std::ofstream cp;
+    Serializable::generateCheckpointOut(cpt_dir, cp);
+
     SimObjectList::reverse_iterator ri = simObjectList.rbegin();
     SimObjectList::reverse_iterator rend = simObjectList.rend();
 
@@ -151,34 +141,9 @@ SimObject::serializeAll(CheckpointOut &cp)
         SimObject *obj = *ri;
         // This works despite name() returning a fully qualified name
         // since we are at the top level.
-        obj->serializeSectionOld(cp, obj->name());
+        obj->serializeSection(cp, obj->name());
    }
 }
-
-
-#ifdef DEBUG
-//
-// static function: flag which objects should have the debugger break
-//
-void
-SimObject::debugObjectBreak(const string &objs)
-{
-    SimObjectList::const_iterator i = simObjectList.begin();
-    SimObjectList::const_iterator end = simObjectList.end();
-
-    ObjectMatch match(objs);
-    for (; i != end; ++i) {
-        SimObject *obj = *i;
-        obj->doDebugBreak = match.match(obj->name());
-   }
-}
-
-void
-debugObjectBreak(const char *objs)
-{
-    SimObject::debugObjectBreak(string(objs));
-}
-#endif
 
 SimObject *
 SimObject::find(const char *name)
@@ -194,3 +159,36 @@ SimObject::find(const char *name)
 
     return NULL;
 }
+
+void
+SimObject::setSimObjectResolver(SimObjectResolver *resolver)
+{
+    assert(!_objNameResolver);
+    _objNameResolver = resolver;
+}
+
+SimObjectResolver *
+SimObject::getSimObjectResolver()
+{
+    assert(_objNameResolver);
+    return _objNameResolver;
+}
+
+void
+objParamIn(CheckpointIn &cp, const std::string &name, SimObject * &param)
+{
+    const std::string &section(Serializable::currentSection());
+    std::string path;
+    if (!cp.find(section, name, path)) {
+        fatal("Can't unserialize '%s:%s'\n", section, name);
+    }
+    param = SimObject::getSimObjectResolver()->resolveSimObject(path);
+}
+
+void
+debug_serialize(const std::string &cpt_dir)
+{
+    SimObject::serializeAll(cpt_dir);
+}
+
+} // namespace gem5

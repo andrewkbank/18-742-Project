@@ -1,4 +1,16 @@
 /*
+ * Copyright (c) 2022 Arm Limited
+ * All rights reserved
+ *
+ * The license below extends only to copyright in the software and shall
+ * not be construed as granting a license to any other intellectual
+ * property including but not limited to intellectual property relating
+ * to a hardware implementation of the functionality of the software
+ * licensed hereunder.  You may use the software subject to the license
+ * terms below provided that you ensure that this notice is replicated
+ * unmodified and in its entirety in all distributions of the software,
+ * modified or unmodified, in source code or in binary form.
+ *
  * Copyright (c) 2002-2004 The Regents of The University of Michigan
  * All rights reserved.
  *
@@ -24,129 +36,131 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nathan Binkert
- *          Steve Reinhardt
  */
 
-#include <sys/mman.h>
-#include <sys/types.h>
-#include <fcntl.h>
-#include <unistd.h>
-
-#include <cstdio>
-#include <list>
-#include <string>
-
-#include "base/loader/aout_object.hh"
-#include "base/loader/dtb_object.hh"
-#include "base/loader/ecoff_object.hh"
-#include "base/loader/elf_object.hh"
 #include "base/loader/object_file.hh"
-#include "base/loader/raw_object.hh"
-#include "base/loader/symtab.hh"
-#include "base/cprintf.hh"
-#include "mem/port_proxy.hh"
 
-using namespace std;
+#include <string>
+#include <vector>
 
-ObjectFile::ObjectFile(const string &_filename,
-                       size_t _len, uint8_t *_data,
-                       Arch _arch, OpSys _opSys)
-    : filename(_filename), fileData(_data), len(_len),
-      arch(_arch), opSys(_opSys), entry(0), globalPtr(0),
-      text{0, nullptr, 0}, data{0, nullptr, 0}, bss{0, nullptr, 0}
+#include "base/loader/raw_image.hh"
+
+namespace gem5
 {
-}
 
-
-ObjectFile::~ObjectFile()
+namespace loader
 {
-    close();
-}
 
+ObjectFile::ObjectFile(ImageFileDataPtr ifd) : ImageFile(ifd) {}
 
-bool
-ObjectFile::loadSection(Section *sec, PortProxy& memProxy, Addr addrMask, Addr offset)
+const char *
+archToString(Arch arch)
 {
-    if (sec->size != 0) {
-        Addr addr = (sec->baseAddr & addrMask) + offset;
-        if (sec->fileImage) {
-            memProxy.writeBlob(addr, sec->fileImage, sec->size);
-        }
-        else {
-            // no image: must be bss
-            memProxy.memsetBlob(addr, 0, sec->size);
-        }
-    }
-    return true;
-}
-
-
-bool
-ObjectFile::loadSections(PortProxy& memProxy, Addr addrMask, Addr offset)
-{
-    return (loadSection(&text, memProxy, addrMask, offset)
-            && loadSection(&data, memProxy, addrMask, offset)
-            && loadSection(&bss, memProxy, addrMask, offset));
-}
-
-
-void
-ObjectFile::close()
-{
-    if (fileData) {
-        ::munmap((char*)fileData, len);
-        fileData = NULL;
+    switch (arch) {
+      case UnknownArch:
+        return "unknown";
+      case SPARC64:
+        return "sparc64";
+      case SPARC32:
+        return "sparc32";
+      case Mips:
+        return "mips";
+      case X86_64:
+        return "x86_64";
+      case I386:
+        return "i386";
+      case Arm64:
+        return "arm64";
+      case Arm:
+        return "arm";
+      case Thumb:
+        return "thumb";
+      case Power:
+        return "power";
+      case Power64:
+        return "power64";
+      case Riscv64:
+        return "riscv64";
+      case Riscv32:
+        return "riscv32";
+      default:
+        panic("Unrecognized arch %d.", arch);
     }
 }
 
+const char *
+opSysToString(OpSys op_sys)
+{
+    switch (op_sys) {
+      case UnknownOpSys:
+        return "unknown";
+      case Tru64:
+        return "tru64";
+      case Linux:
+      case LinuxPower64ABIv1:
+      case LinuxPower64ABIv2:
+        return "linux";
+      case Solaris:
+        return "solaris";
+      case LinuxArmOABI:
+        return "linux_arm_OABI";
+      case FreeBSD:
+        return "freebsd";
+      default:
+        panic("Unrecognized operating system %d.", op_sys);
+    }
+}
+
+namespace
+{
+
+typedef std::vector<ObjectFileFormat *> ObjectFileFormatList;
+
+ObjectFileFormatList &
+object_file_formats()
+{
+    static ObjectFileFormatList formats;
+    return formats;
+}
+
+} // anonymous namespace
+
+ObjectFileFormat::ObjectFileFormat()
+{
+    object_file_formats().emplace_back(this);
+}
 
 ObjectFile *
-createObjectFile(const string &fname, bool raw)
+createObjectFile(const std::string &fname, bool raw)
 {
-    // open the file
-    int fd = open(fname.c_str(), O_RDONLY);
-    if (fd < 0) {
-        return NULL;
-    }
+    ImageFileDataPtr ifd(new ImageFileData(fname));
 
-    // find the length of the file by seeking to the end
-    off_t off = lseek(fd, 0, SEEK_END);
-    fatal_if(off < 0, "Failed to determine size of object file %s\n", fname);
-    size_t len = static_cast<size_t>(off);
-
-    // mmap the whole shebang
-    uint8_t *fileData =
-        (uint8_t *)mmap(NULL, len, PROT_READ, MAP_SHARED, fd, 0);
-    close(fd);
-    if (fileData == MAP_FAILED) {
-        return NULL;
-    }
-
-    ObjectFile *fileObj = NULL;
-
-    // figure out what we have here
-    if ((fileObj = ElfObject::tryFile(fname, len, fileData)) != NULL) {
-        return fileObj;
-    }
-
-    if ((fileObj = EcoffObject::tryFile(fname, len, fileData)) != NULL) {
-        return fileObj;
-    }
-
-    if ((fileObj = AoutObject::tryFile(fname, len, fileData)) != NULL) {
-        return fileObj;
-    }
-
-    if ((fileObj = DtbObject::tryFile(fname, len, fileData)) != NULL) {
-        return fileObj;
+    for (auto &format: object_file_formats()) {
+        ObjectFile *file_obj = format->load(ifd);
+        if (file_obj)
+            return file_obj;
     }
 
     if (raw)
-        return RawObject::tryFile(fname, len, fileData);
+        return new RawImage(ifd);
 
-    // don't know what it is
-    munmap((char*)fileData, len);
-    return NULL;
+    return nullptr;
 }
+
+bool
+archIs64Bit(const loader::Arch arch)
+{
+    switch (arch) {
+      case SPARC64:
+      case X86_64:
+      case Arm64:
+      case Power64:
+      case Riscv64:
+        return true;
+      default:
+        return false;
+    }
+}
+
+} // namespace loader
+} // namespace gem5

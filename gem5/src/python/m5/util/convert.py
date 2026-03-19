@@ -1,3 +1,15 @@
+# Copyright (c) 2021 Arm Limited
+# All rights reserved.
+#
+# The license below extends only to copyright in the software and shall
+# not be construed as granting a license to any other intellectual
+# property including but not limited to intellectual property relating
+# to a hardware implementation of the functionality of the software
+# licensed hereunder.  You may use the software subject to the license
+# terms below provided that you ensure that this notice is replicated
+# unmodified and in its entirety in all distributions of the software,
+# modified or unmodified, in source code or in binary form.
+#
 # Copyright (c) 2005 The Regents of The University of Michigan
 # Copyright (c) 2010 Advanced Micro Devices, Inc.
 # All rights reserved.
@@ -24,24 +36,23 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Nathan Binkert
-#          Gabe Black
 
 # metric prefixes
-exa  = 1.0e18
-peta = 1.0e15
-tera = 1.0e12
-giga = 1.0e9
-mega = 1.0e6
-kilo = 1.0e3
+from typing import Optional
 
-milli = 1.0e-3
-micro = 1.0e-6
-nano  = 1.0e-9
-pico  = 1.0e-12
+atto = 1.0e-18
 femto = 1.0e-15
-atto  = 1.0e-18
+pico = 1.0e-12
+nano = 1.0e-9
+micro = 1.0e-6
+milli = 1.0e-3
+
+kilo = 1.0e3
+mega = 1.0e6
+giga = 1.0e9
+tera = 1.0e12
+peta = 1.0e15
+exa = 1.0e18
 
 # power of 2 prefixes
 kibi = 1024
@@ -51,231 +62,274 @@ tebi = gibi * 1024
 pebi = tebi * 1024
 exbi = pebi * 1024
 
-# memory size configuration stuff
-def toFloat(value):
+metric_prefixes = {
+    "Ei": exbi,
+    "E": exa,
+    "Pi": pebi,
+    "P": peta,
+    "Ti": tebi,
+    "T": tera,
+    "Gi": gibi,
+    "G": giga,
+    "M": mega,
+    "Ki": kibi,
+    "k": kilo,
+    "Mi": mebi,
+    "m": milli,
+    "u": micro,
+    "n": nano,
+    "p": pico,
+    "f": femto,
+    "a": atto,
+}
+
+binary_prefixes = {
+    "Ei": exbi,
+    "E": exbi,
+    "Pi": pebi,
+    "P": pebi,
+    "Ti": tebi,
+    "T": tebi,
+    "Gi": gibi,
+    "G": gibi,
+    "Mi": mebi,
+    "M": mebi,
+    "Ki": kibi,
+    "k": kibi,
+}
+
+base_10_to_2 = {
+    "k": "Ki",
+    "M": "Mi",
+    "G": "Gi",
+    "T": "Ti",
+    "P": "Pi",
+    "E": "Ei",
+}
+
+
+def assertStr(value):
     if not isinstance(value, str):
-        raise TypeError, "wrong type '%s' should be str" % type(value)
+        raise TypeError(f"wrong type '{type(value)}' should be str")
 
-    if value.endswith('Ei'):
-        return float(value[:-2]) * exbi
-    elif value.endswith('Pi'):
-        return float(value[:-2]) * pebi
-    elif value.endswith('Ti'):
-        return float(value[:-2]) * tebi
-    elif value.endswith('Gi'):
-        return float(value[:-2]) * gibi
-    elif value.endswith('Mi'):
-        return float(value[:-2]) * mebi
-    elif value.endswith('ki'):
-        return float(value[:-2]) * kibi
-    elif value.endswith('E'):
-        return float(value[:-1]) * exa
-    elif value.endswith('P'):
-        return float(value[:-1]) * peta
-    elif value.endswith('T'):
-        return float(value[:-1]) * tera
-    elif value.endswith('G'):
-        return float(value[:-1]) * giga
-    elif value.endswith('M'):
-        return float(value[:-1]) * mega
-    elif value.endswith('k'):
-        return float(value[:-1]) * kilo
-    elif value.endswith('m'):
-        return float(value[:-1]) * milli
-    elif value.endswith('u'):
-        return float(value[:-1]) * micro
-    elif value.endswith('n'):
-        return float(value[:-1]) * nano
-    elif value.endswith('p'):
-        return float(value[:-1]) * pico
-    elif value.endswith('f'):
-        return float(value[:-1]) * femto
+
+def _split_suffix(value, suffixes):
+    """Split a string based on a suffix from a list of suffixes.
+
+    :param value: String value to test for a matching suffix.
+    :param suffixes: Container of suffixes to test.
+
+    :returns: A tuple of (value, suffix). Suffix is the empty string
+              if there is no match.
+
+    """
+    matches = [sfx for sfx in suffixes if value.endswith(sfx)]
+    assert len(matches) <= 1
+
+    return (value[: -len(matches[0])], matches[0]) if matches else (value, "")
+
+
+def toNum(value, target_type, units, prefixes, converter):
+    """Convert a string using units and prefixes to (typically) a float or
+    integer.
+
+    String values are assumed to either be a naked magnitude without a
+    unit or prefix, or a magnitude with a unit and an optional prefix.
+
+    :param value: String value to convert.
+    :param target_type: Type name for error messages.
+    :param units: Unit (string) or list of valid units.
+    :param prefixes: Mapping of prefixes to multipliers.
+    :param converter: Helper function to convert magnitude to native
+                      type.
+
+    :returns: Tuple of (converted value, unit)
+
+    """
+    assertStr(value)
+
+    def convert(val):
+        try:
+            return converter(val)
+        except ValueError:
+            raise ValueError(f"cannot convert '{value}' to {target_type}")
+
+    # Units can be None, the empty string, or a list/tuple. Convert
+    # to a tuple for consistent handling.
+    if not units:
+        units = tuple()
+    elif isinstance(units, str):
+        units = (units,)
     else:
-        return float(value)
+        units = tuple(units)
 
-def toInteger(value):
-    value = toFloat(value)
-    result = long(value)
-    if value != result:
-        raise ValueError, "cannot convert '%s' to integer" % value
+    magnitude_prefix, unit = _split_suffix(value, units)
 
-    return result
+    # We only allow a prefix if there is a unit
+    if unit:
+        magnitude, prefix = _split_suffix(magnitude_prefix, prefixes)
+        scale = prefixes[prefix] if prefix else 1
+    else:
+        magnitude, prefix, scale = magnitude_prefix, "", 1
 
-_bool_dict = {
-    'true' : True,   't' : True,  'yes' : True, 'y' : True,  '1' : True,
-    'false' : False, 'f' : False, 'no' : False, 'n' : False, '0' : False
-    }
+    return convert(magnitude) * scale, unit
+
+
+def toFloat(value, target_type="float", units=None, prefixes=[]):
+    return toNum(value, target_type, units, prefixes, float)[0]
+
+
+def toMetricFloat(value, target_type="float", units=None):
+    return toFloat(value, target_type, units, metric_prefixes)
+
+
+def toBinaryFloat(value, target_type="float", units=None):
+    return toFloat(value, target_type, units, binary_prefixes)
+
+
+def toInteger(value, target_type="integer", units=None, prefixes=[]):
+    return toNum(value, target_type, units, prefixes, lambda x: int(x, 0))[0]
+
+
+def toMetricInteger(value, target_type="integer", units=None):
+    return toInteger(value, target_type, units, metric_prefixes)
+
+
+def toBinaryInteger(value, target_type="integer", units=None):
+    return toInteger(value, target_type, units, binary_prefixes)
+
 
 def toBool(value):
-    if not isinstance(value, str):
-        raise TypeError, "wrong type '%s' should be str" % type(value)
+    assertStr(value)
 
     value = value.lower()
-    result = _bool_dict.get(value, None)
-    if result == None:
-        raise ValueError, "cannot convert '%s' to bool" % value
-    return result
+    if value in ("true", "t", "yes", "y", "1"):
+        return True
+    if value in ("false", "f", "no", "n", "0"):
+        return False
+    raise ValueError(f"cannot convert '{value}' to bool")
+
 
 def toFrequency(value):
-    if not isinstance(value, str):
-        raise TypeError, "wrong type '%s' should be str" % type(value)
+    return toMetricFloat(value, "frequency", "Hz")
 
-    if value.endswith('THz'):
-        return float(value[:-3]) * tera
-    elif value.endswith('GHz'):
-        return float(value[:-3]) * giga
-    elif value.endswith('MHz'):
-        return float(value[:-3]) * mega
-    elif value.endswith('kHz'):
-        return float(value[:-3]) * kilo
-    elif value.endswith('Hz'):
-        return float(value[:-2])
-
-    raise ValueError, "cannot convert '%s' to frequency" % value
 
 def toLatency(value):
-    if not isinstance(value, str):
-        raise TypeError, "wrong type '%s' should be str" % type(value)
+    return toMetricFloat(value, "latency", "s")
 
-    if value.endswith('ps'):
-        return float(value[:-2]) * pico
-    elif value.endswith('ns'):
-        return float(value[:-2]) * nano
-    elif value.endswith('us'):
-        return float(value[:-2]) * micro
-    elif value.endswith('ms'):
-        return float(value[:-2]) * milli
-    elif value.endswith('s'):
-        return float(value[:-1])
-
-    raise ValueError, "cannot convert '%s' to latency" % value
 
 def anyToLatency(value):
-    """result is a clock period"""
+    """Convert a magnitude and unit to a clock period."""
 
-    if not isinstance(value, str):
-        raise TypeError, "wrong type '%s' should be str" % type(value)
+    magnitude, unit = toNum(
+        value,
+        target_type="latency",
+        units=("Hz", "s"),
+        prefixes=metric_prefixes,
+        converter=float,
+    )
+    if unit == "s":
+        return magnitude
+    elif unit == "Hz":
+        try:
+            return 1.0 / magnitude
+        except ZeroDivisionError:
+            raise ValueError(f"cannot convert '{value}' to clock period")
+    else:
+        raise ValueError(f"'{value}' needs a valid unit to be unambiguous.")
 
-    try:
-        val = toFrequency(value)
-        if val != 0:
-            val = 1 / val
-        return val
-    except ValueError:
-        pass
-
-    try:
-        val = toLatency(value)
-        return val
-    except ValueError:
-        pass
-
-    raise ValueError, "cannot convert '%s' to clock period" % value
 
 def anyToFrequency(value):
-    """result is a clock period"""
+    """Convert a magnitude and unit to a clock frequency."""
 
-    if not isinstance(value, str):
-        raise TypeError, "wrong type '%s' should be str" % type(value)
+    magnitude, unit = toNum(
+        value,
+        target_type="frequency",
+        units=("Hz", "s"),
+        prefixes=metric_prefixes,
+        converter=float,
+    )
+    if unit == "Hz":
+        return magnitude
+    elif unit == "s":
+        try:
+            return 1.0 / magnitude
+        except ZeroDivisionError:
+            raise ValueError(f"cannot convert '{value}' to frequency")
+    else:
+        raise ValueError(f"'{value}' needs a valid unit to be unambiguous.")
 
-    try:
-        val = toFrequency(value)
-        return val
-    except ValueError:
-        pass
-
-    try:
-        val = toLatency(value)
-        if val != 0:
-            val = 1 / val
-        return val
-    except ValueError:
-        pass
-
-    raise ValueError, "cannot convert '%s' to clock period" % value
 
 def toNetworkBandwidth(value):
-    if not isinstance(value, str):
-        raise TypeError, "wrong type '%s' should be str" % type(value)
+    return toMetricFloat(value, "network bandwidth", "bps")
 
-    if value.endswith('Tbps'):
-        return float(value[:-4]) * tera
-    elif value.endswith('Gbps'):
-        return float(value[:-4]) * giga
-    elif value.endswith('Mbps'):
-        return float(value[:-4]) * mega
-    elif value.endswith('kbps'):
-        return float(value[:-4]) * kilo
-    elif value.endswith('bps'):
-        return float(value[:-3])
-    else:
-        return float(value)
-
-    raise ValueError, "cannot convert '%s' to network bandwidth" % value
 
 def toMemoryBandwidth(value):
-    if not isinstance(value, str):
-        raise TypeError, "wrong type '%s' should be str" % type(value)
+    checkBaseConversion(value, "B/s")
+    return toBinaryFloat(value, "memory bandwidth", "B/s")
 
-    if value.endswith('PB/s'):
-        return float(value[:-4]) * pebi
-    elif value.endswith('TB/s'):
-        return float(value[:-4]) * tebi
-    elif value.endswith('GB/s'):
-        return float(value[:-4]) * gibi
-    elif value.endswith('MB/s'):
-        return float(value[:-4]) * mebi
-    elif value.endswith('kB/s'):
-        return float(value[:-4]) * kibi
-    elif value.endswith('B/s'):
-        return float(value[:-3])
 
-    raise ValueError, "cannot convert '%s' to memory bandwidth" % value
+def _base_10_to_2(value: str, unit: str) -> Optional[str]:
+    """Convert a base 10 memory/cache size SI prefix strings to base 2. Used
+    in `checkBaseConversion` to provide a warning message to the user. Will
+    return None if no conversion is required.
+
+    This function is intentionally separate from `checkBaseConversion` to aid
+    in testing."""
+    size_and_prefix, _ = _split_suffix(value, [unit])
+    size, prefix = _split_suffix(size_and_prefix, binary_prefixes)
+    if prefix in base_10_to_2.keys():
+        return f"{size}{base_10_to_2[prefix]}"
+    return None
+
+
+def checkBaseConversion(value, unit):
+    if type(value) is str:
+        new_value = _base_10_to_2(value, unit)
+        if new_value:
+            from m5.util import warn
+
+            warn(
+                f"Base 10 memory/cache size {value} will be cast to base 2"
+                + f" size {new_value}{unit}."
+            )
+
 
 def toMemorySize(value):
-    if not isinstance(value, str):
-        raise TypeError, "wrong type '%s' should be str" % type(value)
+    checkBaseConversion(value, "B")
+    return toBinaryInteger(value, "memory size", "B")
 
-    if value.endswith('PB'):
-        return long(value[:-2]) * pebi
-    elif value.endswith('TB'):
-        return long(value[:-2]) * tebi
-    elif value.endswith('GB'):
-        return long(value[:-2]) * gibi
-    elif value.endswith('MB'):
-        return long(value[:-2]) * mebi
-    elif value.endswith('kB'):
-        return long(value[:-2]) * kibi
-    elif value.endswith('B'):
-        return long(value[:-1])
-
-    raise ValueError, "cannot convert '%s' to memory size" % value
 
 def toIpAddress(value):
     if not isinstance(value, str):
-        raise TypeError, "wrong type '%s' should be str" % type(value)
+        raise TypeError(f"wrong type '{type(value)}' should be str")
 
-    bytes = value.split('.')
+    bytes = value.split(".")
     if len(bytes) != 4:
-        raise ValueError, 'invalid ip address %s' % value
+        raise ValueError(f"invalid ip address {value}")
 
     for byte in bytes:
-        if not 0 <= int(byte) <= 0xff:
-            raise ValueError, 'invalid ip address %s' % value
+        if not 0 <= int(byte) <= 0xFF:
+            raise ValueError(f"invalid ip address {value}")
 
-    return (int(bytes[0]) << 24) | (int(bytes[1]) << 16) | \
-           (int(bytes[2]) << 8)  | (int(bytes[3]) << 0)
+    return (
+        (int(bytes[0]) << 24)
+        | (int(bytes[1]) << 16)
+        | (int(bytes[2]) << 8)
+        | (int(bytes[3]) << 0)
+    )
+
 
 def toIpNetmask(value):
     if not isinstance(value, str):
-        raise TypeError, "wrong type '%s' should be str" % type(value)
+        raise TypeError(f"wrong type '{type(value)}' should be str")
 
-    (ip, netmask) = value.split('/')
+    (ip, netmask) = value.split("/")
     ip = toIpAddress(ip)
-    netmaskParts = netmask.split('.')
+    netmaskParts = netmask.split(".")
     if len(netmaskParts) == 1:
         if not 0 <= int(netmask) <= 32:
-            raise ValueError, 'invalid netmask %s' % netmask
+            raise ValueError(f"invalid netmask {netmask}")
         return (ip, int(netmask))
     elif len(netmaskParts) == 4:
         netmaskNum = toIpAddress(netmask)
@@ -283,39 +337,57 @@ def toIpNetmask(value):
             return (ip, 0)
         testVal = 0
         for i in range(32):
-            testVal |= (1 << (31 - i))
+            testVal |= 1 << (31 - i)
             if testVal == netmaskNum:
                 return (ip, i + 1)
-        raise ValueError, 'invalid netmask %s' % netmask
+        raise ValueError(f"invalid netmask {netmask}")
     else:
-        raise ValueError, 'invalid netmask %s' % netmask
+        raise ValueError(f"invalid netmask {netmask}")
+
 
 def toIpWithPort(value):
     if not isinstance(value, str):
-        raise TypeError, "wrong type '%s' should be str" % type(value)
+        raise TypeError(f"wrong type '{type(value)}' should be str")
 
-    (ip, port) = value.split(':')
+    (ip, port) = value.split(":")
     ip = toIpAddress(ip)
-    if not 0 <= int(port) <= 0xffff:
-        raise ValueError, 'invalid port %s' % port
+    if not 0 <= int(port) <= 0xFFFF:
+        raise ValueError(f"invalid port {port}")
     return (ip, int(port))
 
+
 def toVoltage(value):
-    if not isinstance(value, str):
-        raise TypeError, "wrong type '%s' should be str" % type(value)
+    return toMetricFloat(value, "voltage", "V")
 
-    if value.endswith('mV'):
-        return float(value[:-2]) * milli
-    elif value.endswith('V'):
-        return float(value[:-1])
-
-    raise ValueError, "cannot convert '%s' to voltage" % value
 
 def toCurrent(value):
-    if not isinstance(value, str):
-        raise TypeError, "wrong type '%s' should be str" % type(value)
+    return toMetricFloat(value, "current", "A")
 
-    if value.endswith('A'):
-        return toFloat(value[:-1])
 
-    raise ValueError, "cannot convert '%s' to current" % value
+def toEnergy(value):
+    return toMetricFloat(value, "energy", "J")
+
+
+def toTemperature(value):
+    """Convert a string value specified to a temperature in Kelvin"""
+
+    magnitude, unit = toNum(
+        value,
+        target_type="temperature",
+        units=("K", "C", "F"),
+        prefixes=metric_prefixes,
+        converter=float,
+    )
+    if unit == "K":
+        kelvin = magnitude
+    elif unit == "C":
+        kelvin = magnitude + 273.15
+    elif unit == "F":
+        kelvin = (magnitude + 459.67) / 1.8
+    else:
+        raise ValueError(f"'{value}' needs a valid temperature unit.")
+
+    if kelvin < 0:
+        raise ValueError(f"{value} is an invalid temperature")
+
+    return kelvin

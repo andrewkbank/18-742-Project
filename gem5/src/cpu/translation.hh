@@ -37,16 +37,17 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Gabe Black
- *          Timothy M. Jones
  */
 
 #ifndef __CPU_TRANSLATION_HH__
 #define __CPU_TRANSLATION_HH__
 
+#include "arch/generic/mmu.hh"
 #include "arch/generic/tlb.hh"
 #include "sim/faults.hh"
+
+namespace gem5
+{
 
 /**
  * This class captures the state of an address translation.  A translation
@@ -76,20 +77,21 @@ class WholeTranslationState
     RequestPtr sreqSrc2;
     uint8_t *data;
     uint64_t *res;
-    BaseTLB::Mode mode;
+    BaseMMU::Mode mode;
 
     /**
      * Single translation state.  We set the number of outstanding
      * translations to one and indicate that it is not split.
      */
-    WholeTranslationState(RequestPtr _req, uint8_t *_data, uint64_t *_res,
-                          BaseTLB::Mode _mode)
+    WholeTranslationState(const RequestPtr &_req, uint8_t *_data,
+                          uint64_t *_res, BaseMMU::Mode _mode)
         : outstanding(1), delay(false), isSplit(false), isRowOp(false),
-          mainReq(_req), sreqLow(NULL), sreqHigh(NULL), sreqDest(NULL),
-          sreqSrc1(NULL), sreqSrc2(NULL), data(_data), res(_res), mode(_mode)
+          mainReq(_req), sreqLow(nullptr), sreqHigh(nullptr),
+          sreqDest(nullptr), sreqSrc1(nullptr), sreqSrc2(nullptr),
+          data(_data), res(_res), mode(_mode)
     {
         faults[0] = faults[1] = faults[2] = NoFault;
-        assert(mode == BaseTLB::Read || mode == BaseTLB::Write);
+        assert(mode == BaseMMU::Read || mode == BaseMMU::Write);
     }
 
     /**
@@ -97,31 +99,31 @@ class WholeTranslationState
      * number of outstanding translations to two and then mark this as a
      * split translation.
      */
-    WholeTranslationState(RequestPtr _req, RequestPtr _sreqLow,
-                          RequestPtr _sreqHigh, uint8_t *_data, uint64_t *_res,
-                          BaseTLB::Mode _mode)
+    WholeTranslationState(const RequestPtr &_req, const RequestPtr &_sreqLow,
+                          const RequestPtr &_sreqHigh, uint8_t *_data,
+                          uint64_t *_res, BaseMMU::Mode _mode)
         : outstanding(2), delay(false), isSplit(true), isRowOp(false),
-          mainReq(_req), sreqLow(_sreqLow), sreqHigh(_sreqHigh), sreqDest(NULL),
-          sreqSrc1(NULL), sreqSrc2(NULL), data(_data), res(_res), mode(_mode)
-    {
-        faults[0] = faults[1] = faults[2] = NoFault;
-        assert(mode == BaseTLB::Read || mode == BaseTLB::Write);
-    }
-
-    /**
-     * Triple (or double) translation state for row op.
-     */
-    WholeTranslationState(RequestPtr _req, RequestPtr _sreqDest,
-                          RequestPtr _sreqSrc1, RequestPtr _sreqSrc2,
-                          uint8_t *_data, uint64_t *_res,
-                          BaseTLB::Mode _mode)
-        : outstanding(_sreqSrc1 == NULL? 1 : (_sreqSrc2 == NULL? 2 : 3)), delay(false), isSplit(false),
-          isRowOp(true), mainReq(_req), sreqLow(NULL), sreqHigh(NULL),
-          sreqDest(_sreqDest), sreqSrc1(_sreqSrc1), sreqSrc2(_sreqSrc2),
+          mainReq(_req), sreqLow(_sreqLow), sreqHigh(_sreqHigh),
+          sreqDest(nullptr), sreqSrc1(nullptr), sreqSrc2(nullptr),
           data(_data), res(_res), mode(_mode)
     {
         faults[0] = faults[1] = faults[2] = NoFault;
-        assert(mode == BaseTLB::Write);
+        assert(mode == BaseMMU::Read || mode == BaseMMU::Write);
+    }
+
+    WholeTranslationState(const RequestPtr &_req, const RequestPtr &_sreqDest,
+                          const RequestPtr &_sreqSrc1,
+                          const RequestPtr &_sreqSrc2, uint8_t *_data,
+                          uint64_t *_res, BaseMMU::Mode _mode)
+        : outstanding(_sreqSrc1 == nullptr ? 1 :
+                      (_sreqSrc2 == nullptr ? 2 : 3)),
+          delay(false), isSplit(false), isRowOp(true), mainReq(_req),
+          sreqLow(nullptr), sreqHigh(nullptr), sreqDest(_sreqDest),
+          sreqSrc1(_sreqSrc1), sreqSrc2(_sreqSrc2), data(_data), res(_res),
+          mode(_mode)
+    {
+        faults[0] = faults[1] = faults[2] = NoFault;
+        assert(mode == BaseMMU::Write);
     }
 
     /**
@@ -147,24 +149,24 @@ class WholeTranslationState
             mainReq->setFlags(sreqHigh->getFlags());
         }
         if (isRowOp && outstanding == 0) {
-            Request::RowOpPayload* addrs = (Request::RowOpPayload*) data;
+            auto *addrs = reinterpret_cast<Request::RowOpPayload *>(data);
             if (faults[0] == NoFault) {
                 addrs->dest = sreqDest->getPaddr();
+                mainReq->setPaddr(sreqDest->getPaddr());
             }
             mainReq->setFlags(sreqDest->getFlags());
-			if (sreqSrc1 != NULL) {
-            	if (faults[1] == NoFault) {
-                	addrs->src1 = sreqSrc1->getPaddr();
-            	}
-				mainReq->setFlags(sreqSrc1->getFlags());
-			}
-            if (sreqSrc2 != NULL) {
+            if (sreqSrc1 != nullptr) {
+                if (faults[1] == NoFault) {
+                    addrs->src1 = sreqSrc1->getPaddr();
+                }
+                mainReq->setFlags(sreqSrc1->getFlags());
+            }
+            if (sreqSrc2 != nullptr) {
                 if (faults[2] == NoFault) {
                     addrs->src2 = sreqSrc2->getPaddr();
                 }
                 mainReq->setFlags(sreqSrc2->getFlags());
             }
-            mainReq->setPaddr(0);
         }
         return outstanding == 0;
     }
@@ -176,7 +178,7 @@ class WholeTranslationState
     Fault
     getFault() const
     {
-        if (!isSplit)
+        if (!isSplit && !isRowOp)
             return faults[0];
         else if (faults[0] != NoFault)
             return faults[0];
@@ -229,7 +231,7 @@ class WholeTranslationState
      * the main request because the flags will have been copied here on a
      * split translation.
      */
-    unsigned
+    Request::Flags
     getFlags()
     {
         return mainReq->getFlags();
@@ -239,15 +241,15 @@ class WholeTranslationState
     void
     deleteReqs()
     {
-        delete mainReq;
+        mainReq.reset();
         if (isSplit) {
-            delete sreqLow;
-            delete sreqHigh;
+            sreqLow.reset();
+            sreqHigh.reset();
         }
         if (isRowOp) {
-            delete sreqDest;
-            delete sreqSrc1;
-            delete sreqSrc2;
+            sreqDest.reset();
+            sreqSrc1.reset();
+            sreqSrc2.reset();
         }
     }
 };
@@ -263,7 +265,7 @@ class WholeTranslationState
  * then the execution context is informed.
  */
 template <class ExecContextPtr>
-class DataTranslation : public BaseTLB::Translation
+class DataTranslation : public BaseMMU::Translation
 {
   protected:
     ExecContextPtr xc;
@@ -297,8 +299,8 @@ class DataTranslation : public BaseTLB::Translation
      * translation is complete if the state says so.
      */
     void
-    finish(const Fault &fault, RequestPtr req, ThreadContext *tc,
-           BaseTLB::Mode mode)
+    finish(const Fault &fault, const RequestPtr &req, ThreadContext *tc,
+           BaseMMU::Mode mode)
     {
         assert(state);
         assert(mode == state->mode);
@@ -318,5 +320,7 @@ class DataTranslation : public BaseTLB::Translation
         return xc->isSquashed();
     }
 };
+
+} // namespace gem5
 
 #endif // __CPU_TRANSLATION_HH__

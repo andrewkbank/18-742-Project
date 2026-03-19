@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2014 ARM Limited
+ * Copyright (c) 2011-2014,2017-2019 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -37,304 +37,247 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Steve Reinhardt
- *          Lisa Hsu
- *          Nathan Binkert
- *          Ali Saidi
- *          Rick Strong
  */
 
-#include "arch/remote_gdb.hh"
-#include "arch/utility.hh"
+#include "sim/system.hh"
+
+#include <algorithm>
+
+#include "base/compiler.hh"
+#include "base/cprintf.hh"
 #include "base/loader/object_file.hh"
 #include "base/loader/symtab.hh"
 #include "base/str.hh"
 #include "base/trace.hh"
+#include "cpu/base.hh"
 #include "cpu/thread_context.hh"
 #include "debug/Loader.hh"
+#include "debug/Quiesce.hh"
 #include "debug/WorkItems.hh"
 #include "mem/abstract_mem.hh"
 #include "mem/physical.hh"
 #include "params/System.hh"
 #include "sim/byteswap.hh"
 #include "sim/debug.hh"
-#include "sim/full_system.hh"
-#include "sim/system.hh"
+#include "sim/redirect_path.hh"
+#include "sim/serialize_handlers.hh"
 
-/**
- * To avoid linking errors with LTO, only include the header if we
- * actually have a definition.
- */
-#if THE_ISA != NULL_ISA
-#include "kern/kernel_stats.hh"
-#endif
+namespace gem5
+{
 
-using namespace std;
-using namespace TheISA;
+std::vector<System *> System::systemList;
 
-vector<System *> System::systemList;
+void
+System::Threads::Thread::resume()
+{
+    DPRINTFS(Quiesce, context->getCpuPtr(), "activating\n");
+    context->activate();
+}
+
+std::string
+System::Threads::Thread::name() const
+{
+    assert(context);
+    return csprintf("%s.threads[%d]", context->getSystemPtr()->name(),
+            context->contextId());
+}
+
+void
+System::Threads::Thread::quiesce() const
+{
+    context->suspend();
+    context->getSystemPtr()->workload->recordQuiesce();
+}
+
+void
+System::Threads::insert(ThreadContext *tc)
+{
+    ContextID id = size();
+    tc->setContextId(id);
+
+    auto &t = threads.emplace_back();
+    t.context = tc;
+    // Look up this thread again on resume, in case the threads vector has
+    // been reallocated.
+    t.resumeEvent = new EventFunctionWrapper(
+            [this, id](){ thread(id).resume(); },
+            tc->getSystemPtr()->name());
+}
+
+void
+System::Threads::replace(ThreadContext *tc, ContextID id)
+{
+    auto &t = thread(id);
+    panic_if(!t.context, "Can't replace a context which doesn't exist.");
+    if (t.resumeEvent->scheduled()) {
+        Tick when = t.resumeEvent->when();
+        t.context->getCpuPtr()->deschedule(t.resumeEvent);
+        tc->getCpuPtr()->schedule(t.resumeEvent, when);
+    }
+    t.context = tc;
+}
+
+ThreadContext *
+System::Threads::findFree()
+{
+    for (auto &thread: threads) {
+        if (thread.context->status() == ThreadContext::Halted)
+            return thread.context;
+    }
+    return nullptr;
+}
+
+int
+System::Threads::numRunning() const
+{
+    int count = 0;
+    for (auto &thread: threads) {
+        auto status = thread.context->status();
+        if (status != ThreadContext::Halted &&
+                status != ThreadContext::Halting) {
+            count++;
+        }
+    }
+    return count;
+}
+
+void
+System::Threads::quiesce(ContextID id)
+{
+    auto &t = thread(id);
+    [[maybe_unused]] BaseCPU *cpu = t.context->getCpuPtr();
+    DPRINTFS(Quiesce, cpu, "quiesce()\n");
+    t.quiesce();
+}
+
+void
+System::Threads::quiesceTick(ContextID id, Tick when)
+{
+    auto &t = thread(id);
+    BaseCPU *cpu = t.context->getCpuPtr();
+
+    DPRINTFS(Quiesce, cpu, "quiesceTick until %u\n", when);
+    t.quiesce();
+
+    cpu->reschedule(t.resumeEvent, when, true);
+}
 
 int System::numSystemsRunning = 0;
 
-System::System(Params *p)
-    : MemObject(p), _systemPort("system_port", this),
-      _numContexts(0),
-      pagePtr(0),
-      init_param(p->init_param),
-      physProxy(_systemPort, p->cache_line_size),
-      kernelSymtab(nullptr),
-      kernel(nullptr),
-      loadAddrMask(p->load_addr_mask),
-      loadAddrOffset(p->load_offset),
-      nextPID(0),
-      physmem(name() + ".physmem", p->memories, p->mmap_using_noreserve),
-      memoryMode(p->mem_mode),
-      _cacheLineSize(p->cache_line_size),
-      workItemsBegin(0),
-      workItemsEnd(0),
-      numWorkIds(p->num_work_ids),
-      _params(p),
-      totalNumInsts(0),
-      instEventQueue("system instruction-based event queue")
+System::System(const Params &p)
+    : SimObject(p), _systemPort("system_port"),
+      externalMemRanges(p.external_memory_ranges.begin(),
+                         p.external_memory_ranges.end()),
+      multiThread(p.multi_thread),
+      init_param(p.init_param),
+      physProxy(_systemPort, p.cache_line_size),
+      workload(p.workload),
+      physmem(name() + ".physmem", p.memories, p.mmap_using_noreserve,
+              p.shared_backstore, p.auto_unlink_shared_backstore),
+      ShadowRomRanges(p.shadow_rom_ranges.begin(),
+                      p.shadow_rom_ranges.end()),
+      memoryMode(p.mem_mode),
+      _cacheLineSize(p.cache_line_size),
+      numWorkIds(p.num_work_ids),
+      thermalModel(p.thermal_model),
+      _m5opRange(p.m5ops_base ?
+                 RangeSize(p.m5ops_base, 0x10000) :
+                 AddrRange(1, 0)), // Create an empty range if disabled
+      redirectPaths(p.redirect_paths)
 {
+    panic_if(!workload, "No workload set for system %s "
+            "(could use StubWorkload?).", name());
+    workload->setSystem(this);
+
     // add self to global system list
     systemList.push_back(this);
 
-    if (FullSystem) {
-        kernelSymtab = new SymbolTable;
-        if (!debugSymbolTable)
-            debugSymbolTable = new SymbolTable;
-    }
-
     // check if the cache line size is a value known to work
-    if (!(_cacheLineSize == 16 || _cacheLineSize == 32 ||
-          _cacheLineSize == 64 || _cacheLineSize == 128))
+    if (_cacheLineSize != 16 && _cacheLineSize != 32 &&
+        _cacheLineSize != 64 && _cacheLineSize != 128) {
         warn_once("Cache line size is neither 16, 32, 64 nor 128 bytes.\n");
-
-    // Get the generic system master IDs
-    MasterID tmp_id M5_VAR_USED;
-    tmp_id = getMasterId("writebacks");
-    assert(tmp_id == Request::wbMasterId);
-    tmp_id = getMasterId("functional");
-    assert(tmp_id == Request::funcMasterId);
-    tmp_id = getMasterId("interrupt");
-    assert(tmp_id == Request::intMasterId);
-
-    if (FullSystem) {
-        if (params()->kernel == "") {
-            inform("No kernel set for full system simulation. "
-                   "Assuming you know what you're doing\n");
-        } else {
-            // Get the kernel code
-            kernel = createObjectFile(params()->kernel);
-            inform("kernel located at: %s", params()->kernel);
-
-            if (kernel == NULL)
-                fatal("Could not load kernel file %s", params()->kernel);
-
-            // setup entry points
-            kernelStart = kernel->textBase();
-            kernelEnd = kernel->bssBase() + kernel->bssSize();
-            kernelEntry = kernel->entryPoint();
-
-            // load symbols
-            if (!kernel->loadGlobalSymbols(kernelSymtab))
-                fatal("could not load kernel symbols\n");
-
-            if (!kernel->loadLocalSymbols(kernelSymtab))
-                fatal("could not load kernel local symbols\n");
-
-            if (!kernel->loadGlobalSymbols(debugSymbolTable))
-                fatal("could not load kernel symbols\n");
-
-            if (!kernel->loadLocalSymbols(debugSymbolTable))
-                fatal("could not load kernel local symbols\n");
-
-            // Loading only needs to happen once and after memory system is
-            // connected so it will happen in initState()
-        }
     }
 
-    // increment the number of running systms
+    // Get the generic system requestor IDs
+    [[maybe_unused]] RequestorID tmp_id;
+    tmp_id = getRequestorId(this, "writebacks");
+    assert(tmp_id == Request::wbRequestorId);
+    tmp_id = getRequestorId(this, "functional");
+    assert(tmp_id == Request::funcRequestorId);
+    tmp_id = getRequestorId(this, "interrupt");
+    assert(tmp_id == Request::intRequestorId);
+
+    // increment the number of running systems
     numSystemsRunning++;
 
     // Set back pointers to the system in all memories
-    for (int x = 0; x < params()->memories.size(); x++)
-        params()->memories[x]->system(this);
+    for (int x = 0; x < params().memories.size(); x++)
+        params().memories[x]->system(this);
 }
 
 System::~System()
 {
-    delete kernelSymtab;
-    delete kernel;
-
     for (uint32_t j = 0; j < numWorkIds; j++)
         delete workItemStats[j];
 }
 
-void
-System::init()
-{
-    // check that the system port is connected
-    if (!_systemPort.isConnected())
-        panic("System port on %s is not connected.\n", name());
-}
-
-BaseMasterPort&
-System::getMasterPort(const std::string &if_name, PortID idx)
+Port &
+System::getPort(const std::string &if_name, PortID idx)
 {
     // no need to distinguish at the moment (besides checking)
     return _systemPort;
 }
 
 void
-System::setMemoryMode(Enums::MemoryMode mode)
+System::setMemoryMode(enums::MemoryMode mode)
 {
     assert(drainState() == DrainState::Drained);
     memoryMode = mode;
 }
 
-bool System::breakpoint()
-{
-    if (remoteGDB.size())
-        return remoteGDB[0]->breakpoint();
-    return false;
-}
-
-/**
- * Setting rgdb_wait to a positive integer waits for a remote debugger to
- * connect to that context ID before continuing.  This should really
-   be a parameter on the CPU object or something...
- */
-int rgdb_wait = -1;
-
-ContextID
-System::registerThreadContext(ThreadContext *tc, ContextID assigned)
-{
-    int id;
-    if (assigned == InvalidContextID) {
-        for (id = 0; id < threadContexts.size(); id++) {
-            if (!threadContexts[id])
-                break;
-        }
-
-        if (threadContexts.size() <= id)
-            threadContexts.resize(id + 1);
-    } else {
-        if (threadContexts.size() <= assigned)
-            threadContexts.resize(assigned + 1);
-        id = assigned;
-    }
-
-    if (threadContexts[id])
-        fatal("Cannot have two CPUs with the same id (%d)\n", id);
-
-    threadContexts[id] = tc;
-    _numContexts++;
-
-#if THE_ISA != NULL_ISA
-    int port = getRemoteGDBPort();
-    if (port) {
-        RemoteGDB *rgdb = new RemoteGDB(this, tc);
-        GDBListener *gdbl = new GDBListener(rgdb, port + id);
-        gdbl->listen();
-
-        if (rgdb_wait != -1 && rgdb_wait == id)
-            gdbl->accept();
-
-        if (remoteGDB.size() <= id) {
-            remoteGDB.resize(id + 1);
-        }
-
-        remoteGDB[id] = rgdb;
-    }
-#endif
-
-    activeCpus.push_back(false);
-
-    return id;
-}
-
-int
-System::numRunningContexts()
-{
-    int running = 0;
-    for (int i = 0; i < _numContexts; ++i) {
-        if (threadContexts[i]->status() != ThreadContext::Halted)
-            ++running;
-    }
-    return running;
-}
-
 void
-System::initState()
+System::registerThreadContext(ThreadContext *tc)
 {
-    if (FullSystem) {
-        for (int i = 0; i < threadContexts.size(); i++)
-            TheISA::startupCPU(threadContexts[i], i);
-        // Moved from the constructor to here since it relies on the
-        // address map being resolved in the interconnect
-        /**
-         * Load the kernel code into memory
-         */
-        if (params()->kernel != "")  {
-            if (params()->kernel_addr_check) {
-                // Validate kernel mapping before loading binary
-                if (!(isMemAddr((kernelStart & loadAddrMask) +
-                                loadAddrOffset) &&
-                      isMemAddr((kernelEnd & loadAddrMask) +
-                                loadAddrOffset))) {
-                    fatal("Kernel is mapped to invalid location (not memory). "
-                          "kernelStart 0x(%x) - kernelEnd 0x(%x) %#x:%#x\n",
-                          kernelStart,
-                          kernelEnd, (kernelStart & loadAddrMask) +
-                          loadAddrOffset,
-                          (kernelEnd & loadAddrMask) + loadAddrOffset);
-                }
-            }
-            // Load program sections into memory
-            kernel->loadSections(physProxy, loadAddrMask, loadAddrOffset);
+    threads.insert(tc);
 
-            DPRINTF(Loader, "Kernel start = %#x\n", kernelStart);
-            DPRINTF(Loader, "Kernel end   = %#x\n", kernelEnd);
-            DPRINTF(Loader, "Kernel entry = %#x\n", kernelEntry);
-            DPRINTF(Loader, "Kernel loaded...\n");
-        }
-    }
+    workload->registerThreadContext(tc);
+
+    for (auto *e: liveEvents)
+        tc->schedule(e);
+}
+
+bool
+System::schedule(PCEvent *event)
+{
+    bool all = true;
+    liveEvents.push_back(event);
+    for (auto *tc: threads)
+        all = tc->schedule(event) && all;
+    return all;
+}
+
+bool
+System::remove(PCEvent *event)
+{
+    bool all = true;
+    liveEvents.remove(event);
+    for (auto *tc: threads)
+        all = tc->remove(event) && all;
+    return all;
 }
 
 void
 System::replaceThreadContext(ThreadContext *tc, ContextID context_id)
 {
-    if (context_id >= threadContexts.size()) {
-        panic("replaceThreadContext: bad id, %d >= %d\n",
-              context_id, threadContexts.size());
+    auto *otc = threads[context_id];
+    threads.replace(tc, context_id);
+
+    workload->replaceThreadContext(tc);
+
+    for (auto *e: liveEvents) {
+        otc->remove(e);
+        tc->schedule(e);
     }
-
-    threadContexts[context_id] = tc;
-    if (context_id < remoteGDB.size())
-        remoteGDB[context_id]->replaceThreadContext(tc);
-}
-
-Addr
-System::allocPhysPages(int npages)
-{
-    Addr return_addr = pagePtr << PageShift;
-    pagePtr += npages;
-
-    Addr next_return_addr = pagePtr << PageShift;
-
-    AddrRange m5opRange(0xffff0000, 0xffffffff);
-    if (m5opRange.contains(next_return_addr)) {
-        warn("Reached m5ops MMIO region\n");
-        return_addr = 0xffffffff;
-        pagePtr = 0xffffffff >> PageShift;
-    }
-
-    if ((pagePtr << PageShift) > physmem.totalSize())
-        fatal("Out of memory, please increase size of physical memory.");
-    return return_addr;
 }
 
 Addr
@@ -343,32 +286,67 @@ System::memSize() const
     return physmem.totalSize();
 }
 
-Addr
-System::freeMemSize() const
-{
-   return physmem.totalSize() - (pagePtr << PageShift);
-}
-
 bool
 System::isMemAddr(Addr addr) const
 {
-    return physmem.isMemAddr(addr);
+    if (physmem.isMemAddr(addr)) {
+        return true;
+    } else {
+        // Check the external memory ranges as well
+        for (const auto& range : externalMemRanges) {
+            if (range.contains(addr)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }
 
 void
-System::drainResume()
+System::addDeviceMemory(RequestorID requestor_id,
+    memory::AbstractMemory *deviceMemory)
 {
-    totalNumInsts = 0;
+    deviceMemMap[requestor_id].push_back(deviceMemory);
+}
+
+bool
+System::isDeviceMemAddr(const PacketPtr& pkt) const
+{
+    if (!deviceMemMap.count(pkt->requestorId())) {
+        return false;
+    }
+
+    return (getDeviceMemory(pkt) != nullptr);
+}
+
+memory::AbstractMemory *
+System::getDeviceMemory(const PacketPtr& pkt) const
+{
+    const RequestorID& rid = pkt->requestorId();
+
+    panic_if(!deviceMemMap.count(rid),
+             "No device memory found for Requestor %d\n", rid);
+
+    for (auto& mem : deviceMemMap.at(rid)) {
+        if (pkt->getAddrRange().isSubset(mem->getAddrRange())) {
+            return mem;
+        }
+    }
+
+    return nullptr;
 }
 
 void
 System::serialize(CheckpointOut &cp) const
 {
-    if (FullSystem)
-        kernelSymtab->serialize("kernel_symtab", cp);
-    SERIALIZE_SCALAR(pagePtr);
-    SERIALIZE_SCALAR(nextPID);
-    serializeSymtab(cp);
+    for (auto &t: threads.threads) {
+        Tick when = 0;
+        if (t.resumeEvent && t.resumeEvent->scheduled())
+            when = t.resumeEvent->when();
+        ContextID id = t.context->contextId();
+        paramOut(cp, csprintf("quiesceEndTick_%d", id), when);
+    }
 
     // also serialize the memories in the system
     physmem.serializeSection(cp, "physmem");
@@ -378,11 +356,15 @@ System::serialize(CheckpointOut &cp) const
 void
 System::unserialize(CheckpointIn &cp)
 {
-    if (FullSystem)
-        kernelSymtab->unserialize("kernel_symtab", cp);
-    UNSERIALIZE_SCALAR(pagePtr);
-    UNSERIALIZE_SCALAR(nextPID);
-    unserializeSymtab(cp);
+    for (auto &t: threads.threads) {
+        Tick when = 0;
+        ContextID id = t.context->contextId();
+        if (!optParamIn(cp, csprintf("quiesceEndTick_%d", id), when) ||
+                !when || !t.resumeEvent) {
+            continue;
+        }
+        t.context->getCpuPtr()->schedule(t.resumeEvent, when);
+    }
 
     // also unserialize the memories in the system
     physmem.unserializeSection(cp, "physmem");
@@ -391,12 +373,14 @@ System::unserialize(CheckpointIn &cp)
 void
 System::regStats()
 {
+    SimObject::regStats();
+
     for (uint32_t j = 0; j < numWorkIds ; j++) {
-        workItemStats[j] = new Stats::Histogram();
-        stringstream namestr;
+        workItemStats[j] = new statistics::Histogram(this);
+        std::stringstream namestr;
         ccprintf(namestr, "work_item_type%d", j);
         workItemStats[j]->init(20)
-                         .name(name() + "." + namestr.str())
+                         .name(namestr.str())
                          .desc("Run time stat for" + namestr.str())
                          .prereq(*workItemStats[j]);
     }
@@ -419,19 +403,26 @@ System::workItemEnd(uint32_t tid, uint32_t workid)
     lastWorkItemStarted.erase(p);
 }
 
+bool
+System::trapToGdb(GDBSignal signal, ContextID ctx_id) const
+{
+    return workload->trapToGdb(signal, ctx_id);
+}
+
 void
 System::printSystems()
 {
-    ios::fmtflags flags(cerr.flags());
+    std::ios::fmtflags flags(std::cerr.flags());
 
-    vector<System *>::iterator i = systemList.begin();
-    vector<System *>::iterator end = systemList.end();
+    std::vector<System *>::iterator i = systemList.begin();
+    std::vector<System *>::iterator end = systemList.end();
     for (; i != end; ++i) {
         System *sys = *i;
-        cerr << "System " << sys->name() << ": " << hex << sys << endl;
+        std::cerr << "System " << sys->name() << ": " << std::hex << sys
+                  << std::endl;
     }
 
-    cerr.flags(flags);
+    std::cerr.flags(flags);
 }
 
 void
@@ -440,16 +431,75 @@ printSystems()
     System::printSystems();
 }
 
-MasterID
-System::getMasterId(std::string master_name)
+std::string
+System::stripSystemName(const std::string& requestor_name) const
 {
-    // strip off system name if the string starts with it
-    if (startswith(master_name, name()))
-        master_name = master_name.erase(0, name().size() + 1);
+    if (startswith(requestor_name, name())) {
+        return requestor_name.substr(name().size() + 1);
+    } else {
+        return requestor_name;
+    }
+}
+
+RequestorID
+System::lookupRequestorId(const SimObject* obj) const
+{
+    RequestorID id = Request::invldRequestorId;
+
+    // number of occurrences of the SimObject pointer
+    // in the requestor list.
+    auto obj_number = 0;
+
+    for (int i = 0; i < requestors.size(); i++) {
+        if (requestors[i].obj == obj) {
+            id = i;
+            obj_number++;
+        }
+    }
+
+    fatal_if(obj_number > 1,
+        "Cannot lookup RequestorID by SimObject pointer: "
+        "More than one requestor is sharing the same SimObject\n");
+
+    return id;
+}
+
+RequestorID
+System::lookupRequestorId(const std::string& requestor_name) const
+{
+    std::string name = stripSystemName(requestor_name);
+
+    for (int i = 0; i < requestors.size(); i++) {
+        if (requestors[i].req_name == name) {
+            return i;
+        }
+    }
+
+    return Request::invldRequestorId;
+}
+
+RequestorID
+System::getGlobalRequestorId(const std::string& requestor_name)
+{
+    return _getRequestorId(nullptr, requestor_name);
+}
+
+RequestorID
+System::getRequestorId(const SimObject* requestor, std::string subrequestor)
+{
+    auto requestor_name = leafRequestorName(requestor, subrequestor);
+    return _getRequestorId(requestor, requestor_name);
+}
+
+RequestorID
+System::_getRequestorId(const SimObject* requestor,
+                     const std::string& requestor_name)
+{
+    std::string name = stripSystemName(requestor_name);
 
     // CPUs in switch_cpus ask for ids again after switching
-    for (int i = 0; i < masterIds.size(); i++) {
-        if (masterIds[i] == master_name) {
+    for (int i = 0; i < requestors.size(); i++) {
+        if (requestors[i].req_name == name) {
             return i;
         }
     }
@@ -458,27 +508,41 @@ System::getMasterId(std::string master_name)
     // Otherwise objects will have sized their stat buckets and
     // they will be too small
 
-    if (Stats::enabled()) {
-        fatal("Can't request a masterId after regStats(). "
+    if (statistics::enabled()) {
+        fatal("Can't request a requestorId after regStats(). "
                 "You must do so in init().\n");
     }
 
-    masterIds.push_back(master_name);
+    // Generate a new RequestorID incrementally
+    RequestorID requestor_id = requestors.size();
 
-    return masterIds.size() - 1;
+    // Append the new Requestor metadata to the group of system Requestors.
+    requestors.emplace_back(requestor, name, requestor_id);
+
+    return requestors.back().id;
 }
 
 std::string
-System::getMasterName(MasterID master_id)
+System::leafRequestorName(const SimObject* requestor,
+                       const std::string& subrequestor)
 {
-    if (master_id >= masterIds.size())
-        fatal("Invalid master_id passed to getMasterName()\n");
-
-    return masterIds[master_id];
+    if (subrequestor.empty()) {
+        return requestor->name();
+    } else {
+        // Get the full requestor name by appending the subrequestor name to
+        // the root SimObject requestor name
+        return requestor->name() + "." + subrequestor;
+    }
 }
 
-System *
-SystemParams::create()
+std::string
+System::getRequestorName(RequestorID requestor_id)
 {
-    return new System(this);
+    if (requestor_id >= requestors.size())
+        fatal("Invalid requestor_id passed to getRequestorName()\n");
+
+    const auto& requestor_info = requestors[requestor_id];
+    return requestor_info.req_name;
 }
+
+} // namespace gem5

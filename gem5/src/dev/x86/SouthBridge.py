@@ -23,96 +23,88 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Gabe Black
 
+from m5.objects.Cmos import Cmos
+from m5.objects.I8042 import I8042
+from m5.objects.I8237 import I8237
+from m5.objects.I8254 import I8254
+from m5.objects.I8259 import I8259
+from m5.objects.I82094AA import I82094AA
+from m5.objects.PciDevice import (
+    PciIoBar,
+    PciLegacyIoBar,
+)
+from m5.objects.PcSpeaker import PcSpeaker
+from m5.objects.X86Ide import X86IdeController
 from m5.params import *
 from m5.proxy import *
-from Cmos import Cmos
-from I8042 import I8042
-from I82094AA import I82094AA
-from I8237 import I8237
-from I8254 import I8254
-from I8259 import I8259
-from Ide import IdeController
-from PcSpeaker import PcSpeaker
-from X86IntPin import X86IntLine
 from m5.SimObject import SimObject
+
 
 def x86IOAddress(port):
     IO_address_space_base = 0x8000000000000000
-    return IO_address_space_base + port;
+    return IO_address_space_base + port
+
 
 class SouthBridge(SimObject):
-    type = 'SouthBridge'
+    type = "SouthBridge"
     cxx_header = "dev/x86/south_bridge.hh"
-    platform = Param.Platform(Parent.any, "Platform this device is part of")
+    cxx_class = "gem5::SouthBridge"
 
-    _pic1 = I8259(pio_addr=x86IOAddress(0x20), mode='I8259Master')
-    _pic2 = I8259(pio_addr=x86IOAddress(0xA0), mode='I8259Slave')
-    _cmos = Cmos(pio_addr=x86IOAddress(0x70))
-    _dma1 = I8237(pio_addr=x86IOAddress(0x0))
-    _keyboard = I8042(data_port=x86IOAddress(0x60), \
-            command_port=x86IOAddress(0x64))
-    _pit = I8254(pio_addr=x86IOAddress(0x40))
-    _speaker = PcSpeaker(pio_addr=x86IOAddress(0x61))
-    _io_apic = I82094AA(pio_addr=0xFEC00000)
-
-    pic1 = Param.I8259(_pic1, "Master PIC")
-    pic2 = Param.I8259(_pic2, "Slave PIC")
-    cmos = Param.Cmos(_cmos, "CMOS memory and real time clock device")
-    dma1 = Param.I8237(_dma1, "The first dma controller")
-    keyboard = Param.I8042(_keyboard, "The keyboard controller")
-    pit = Param.I8254(_pit, "Programmable interval timer")
-    speaker = Param.PcSpeaker(_speaker, "PC speaker")
-    io_apic = Param.I82094AA(_io_apic, "I/O APIC")
+    pic1 = Param.I8259(
+        I8259(pio_addr=x86IOAddress(0x20), mode="I8259Master"), "Master PIC"
+    )
+    pic2 = Param.I8259(
+        I8259(pio_addr=x86IOAddress(0xA0), mode="I8259Slave"), "Slave PIC"
+    )
+    cmos = Param.Cmos(
+        Cmos(pio_addr=x86IOAddress(0x70)),
+        "CMOS memory and real time clock device",
+    )
+    dma1 = Param.I8237(
+        I8237(pio_addr=x86IOAddress(0x0)), "The first dma controller"
+    )
+    keyboard = Param.I8042(
+        I8042(data_port=x86IOAddress(0x60), command_port=x86IOAddress(0x64)),
+        "The keyboard controller",
+    )
+    pit = Param.I8254(
+        I8254(pio_addr=x86IOAddress(0x40)), "Programmable interval timer"
+    )
+    speaker = Param.PcSpeaker(
+        PcSpeaker(pio_addr=x86IOAddress(0x61)), "PC speaker"
+    )
+    io_apic = Param.I82094AA(I82094AA(pio_addr=0xFEC00000), "I/O APIC")
 
     # IDE controller
-    ide = IdeController(disks=[], pci_func=0, pci_dev=4, pci_bus=0)
-    ide.BAR0 = 0x1f0
-    ide.BAR0LegacyIO = True
-    ide.BAR1 = 0x3f4
-    ide.BAR1Size = '3B'
-    ide.BAR1LegacyIO = True
-    ide.BAR2 = 0x170
-    ide.BAR2LegacyIO = True
-    ide.BAR3 = 0x374
-    ide.BAR3Size = '3B'
-    ide.BAR3LegacyIO = True
-    ide.BAR4 = 1
-    ide.Command = 0
-    ide.ProgIF = 0x80
-    ide.InterruptLine = 14
-    ide.InterruptPin = 1
-    ide.LegacyIOBase = x86IOAddress(0)
+    ide = X86IdeController(disks=[], pci_func=0, pci_dev=4)
 
-    def attachIO(self, bus, dma_ports):
-        # Route interupt signals
-        self.int_lines = \
-          [X86IntLine(source=self.pic1.output, sink=self.io_apic.pin(0)),
-           X86IntLine(source=self.pic2.output, sink=self.pic1.pin(2)),
-           X86IntLine(source=self.cmos.int_pin, sink=self.pic2.pin(0)),
-           X86IntLine(source=self.pit.int_pin, sink=self.pic1.pin(0)),
-           X86IntLine(source=self.pit.int_pin, sink=self.io_apic.pin(2)),
-           X86IntLine(source=self.keyboard.keyboard_int_pin,
-                      sink=self.io_apic.pin(1)),
-           X86IntLine(source=self.keyboard.mouse_int_pin,
-                      sink=self.io_apic.pin(12))]
+    def attachIO(self, bus, pci_bus, dma_ports):
+        # Route interrupt signals
+        self.pic1.output = self.io_apic.inputs[0]
+        self.pic2.output = self.pic1.inputs[2]
+        self.cmos.int_pin = self.pic2.inputs[0]
+        self.pit.int_pin = self.pic1.inputs[0]
+        self.pit.int_pin = self.io_apic.inputs[2]
+        self.keyboard.keyboard_int_pin = self.io_apic.inputs[1]
+        self.keyboard.mouse_int_pin = self.io_apic.inputs[12]
+        self.ide.int_primary = self.pic2.inputs[6]
+        self.ide.int_primary = self.io_apic.inputs[14]
+        self.ide.int_secondary = self.pic2.inputs[7]
+        self.ide.int_secondary = self.io_apic.inputs[15]
         # Tell the devices about each other
         self.pic1.slave = self.pic2
         self.speaker.i8254 = self.pit
-        self.io_apic.external_int_pic = self.pic1
         # Connect to the bus
-        self.cmos.pio = bus.master
-        self.dma1.pio = bus.master
-        self.ide.pio = bus.master
-        self.ide.config = bus.master
-        if dma_ports.count(self.ide.dma) == 0:
-                self.ide.dma = bus.slave
-        self.keyboard.pio = bus.master
-        self.pic1.pio = bus.master
-        self.pic2.pio = bus.master
-        self.pit.pio = bus.master
-        self.speaker.pio = bus.master
-        self.io_apic.pio = bus.master
-        self.io_apic.int_master = bus.slave
+        self.cmos.pio = bus.mem_side_ports
+        self.dma1.pio = bus.mem_side_ports
+        self.keyboard.pio = bus.mem_side_ports
+        self.pic1.pio = bus.mem_side_ports
+        self.pic2.pio = bus.mem_side_ports
+        self.pit.pio = bus.mem_side_ports
+        self.speaker.pio = bus.mem_side_ports
+        self.io_apic.pio = bus.mem_side_ports
+        self.io_apic.int_requestor = bus.cpu_side_ports
+        # Connect PCI devices
+        self.ide.pio = pci_bus.mem_side_ports
+        self.ide.dma = pci_bus.cpu_side_ports

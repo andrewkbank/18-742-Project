@@ -25,29 +25,29 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Gabe Black
- *          Korey Sewell
- *          Jaidev Patwardhan
- *          Zhengxing Li
- *          Deyuan Guo
  */
 
 #ifndef __MIPS_FAULTS_HH__
 #define __MIPS_FAULTS_HH__
 
 #include "arch/mips/pra_constants.hh"
+#include "arch/mips/regs/misc.hh"
+#include "cpu/null_static_inst.hh"
 #include "cpu/thread_context.hh"
 #include "debug/MipsPRA.hh"
 #include "sim/faults.hh"
 #include "sim/full_system.hh"
 
+namespace gem5
+{
+
 namespace MipsISA
 {
 
-typedef const Addr FaultVect;
+typedef Addr FaultVect;
 
-enum ExcCode {
+enum ExcCode
+{
     // A dummy value to use when the code isn't defined or doesn't matter.
     ExcCodeDummy = 0,
 
@@ -89,9 +89,9 @@ class MipsFaultBase : public FaultBase
     virtual ExcCode code() const = 0;
     virtual FaultVect base(ThreadContext *tc) const
     {
-        StatusReg status = tc->readMiscReg(MISCREG_STATUS);
+        StatusReg status = tc->readMiscReg(misc_reg::Status);
         if (!status.bev)
-            return tc->readMiscReg(MISCREG_EBASE);
+            return tc->readMiscReg(misc_reg::Ebase);
         else
             return 0xbfc00200;
     }
@@ -103,7 +103,7 @@ class MipsFaultBase : public FaultBase
     }
 
     void invoke(ThreadContext * tc, const StaticInstPtr &inst =
-                StaticInst::nullStaticInstPtr);
+                nullStaticInstPtr);
 };
 
 template <typename T>
@@ -135,7 +135,7 @@ class ResetFault : public MipsFault<ResetFault>
 {
   public:
     void invoke(ThreadContext * tc, const StaticInstPtr &inst =
-                StaticInst::nullStaticInstPtr);
+                nullStaticInstPtr);
 
 };
 
@@ -143,14 +143,14 @@ class SoftResetFault : public MipsFault<SoftResetFault>
 {
   public:
     void invoke(ThreadContext * tc, const StaticInstPtr &inst =
-                StaticInst::nullStaticInstPtr);
+                nullStaticInstPtr);
 };
 
 class NonMaskableInterrupt : public MipsFault<NonMaskableInterrupt>
 {
   public:
     void invoke(ThreadContext * tc, const StaticInstPtr &inst =
-                StaticInst::nullStaticInstPtr);
+                nullStaticInstPtr);
 };
 
 class CoprocessorUnusableFault : public MipsFault<CoprocessorUnusableFault>
@@ -163,13 +163,13 @@ class CoprocessorUnusableFault : public MipsFault<CoprocessorUnusableFault>
 
     void
     invoke(ThreadContext * tc, const StaticInstPtr &inst =
-           StaticInst::nullStaticInstPtr)
+           nullStaticInstPtr)
     {
         MipsFault<CoprocessorUnusableFault>::invoke(tc, inst);
         if (FullSystem) {
-            CauseReg cause = tc->readMiscReg(MISCREG_CAUSE);
+            CauseReg cause = tc->readMiscReg(misc_reg::Cause);
             cause.ce = coProcID;
-            tc->setMiscRegNoEffect(MISCREG_CAUSE, cause);
+            tc->setMiscRegNoEffect(misc_reg::Cause, cause);
         }
     }
 };
@@ -180,7 +180,7 @@ class InterruptFault : public MipsFault<InterruptFault>
     FaultVect
     offset(ThreadContext *tc) const
     {
-        CauseReg cause = tc->readMiscRegNoEffect(MISCREG_CAUSE);
+        CauseReg cause = tc->readMiscRegNoEffect(misc_reg::Cause);
         // offset 0x200 for release 2, 0x180 for release 1.
         return cause.iv ? 0x200 : 0x180;
     }
@@ -198,11 +198,11 @@ class AddressFault : public MipsFault<T>
 
     void
     invoke(ThreadContext * tc, const StaticInstPtr &inst =
-           StaticInst::nullStaticInstPtr)
+           nullStaticInstPtr)
     {
         MipsFault<T>::invoke(tc, inst);
         if (FullSystem)
-            tc->setMiscRegNoEffect(MISCREG_BADVADDR, vaddr);
+            tc->setMiscRegNoEffect(misc_reg::Badvaddr, vaddr);
     }
 };
 
@@ -237,21 +237,21 @@ class TlbFault : public AddressFault<T>
     {
         this->setExceptionState(tc, excCode);
 
-        tc->setMiscRegNoEffect(MISCREG_BADVADDR, this->vaddr);
-        EntryHiReg entryHi = tc->readMiscReg(MISCREG_ENTRYHI);
+        tc->setMiscRegNoEffect(misc_reg::Badvaddr, this->vaddr);
+        EntryHiReg entryHi = tc->readMiscReg(misc_reg::Entryhi);
         entryHi.asid = this->asid;
         entryHi.vpn2 = this->vpn >> 2;
         entryHi.vpn2x = this->vpn & 0x3;
-        tc->setMiscRegNoEffect(MISCREG_ENTRYHI, entryHi);
+        tc->setMiscRegNoEffect(misc_reg::Entryhi, entryHi);
 
-        ContextReg context = tc->readMiscReg(MISCREG_CONTEXT);
+        ContextReg context = tc->readMiscReg(misc_reg::Context);
         context.badVPN2 = this->vpn >> 2;
-        tc->setMiscRegNoEffect(MISCREG_CONTEXT, context);
+        tc->setMiscRegNoEffect(misc_reg::Context, context);
     }
 
     void
     invoke(ThreadContext * tc, const StaticInstPtr &inst =
-           StaticInst::nullStaticInstPtr)
+           nullStaticInstPtr)
     {
         if (FullSystem) {
             DPRINTF(MipsPRA, "Fault %s encountered.\n", this->name());
@@ -280,7 +280,7 @@ class TlbRefillFault : public TlbFault<TlbRefillFault>
     FaultVect
     offset(ThreadContext *tc) const
     {
-        StatusReg status = tc->readMiscReg(MISCREG_STATUS);
+        StatusReg status = tc->readMiscReg(misc_reg::Status);
         return status.exl ? 0x180 : 0x000;
     }
 };
@@ -303,6 +303,31 @@ class TlbModifiedFault : public TlbFault<TlbModifiedFault>
     ExcCode code() const { return MipsFault<TlbModifiedFault>::code(); }
 };
 
+/*
+ * Explicitly declare template static member variables to avoid warnings
+ * in some clang versions
+ */
+template<> MipsFaultBase::FaultVals MipsFault<SystemCallFault>::vals;
+template<> MipsFaultBase::FaultVals MipsFault<ReservedInstructionFault>::vals;
+template<> MipsFaultBase::FaultVals MipsFault<ThreadFault>::vals;
+template<> MipsFaultBase::FaultVals MipsFault<IntegerOverflowFault>::vals;
+template<> MipsFaultBase::FaultVals MipsFault<TrapFault>::vals;
+template<> MipsFaultBase::FaultVals MipsFault<BreakpointFault>::vals;
+template<> MipsFaultBase::FaultVals MipsFault<DspStateDisabledFault>::vals;
+template<> MipsFaultBase::FaultVals MipsFault<MachineCheckFault>::vals;
+template<> MipsFaultBase::FaultVals MipsFault<ResetFault>::vals;
+template<> MipsFaultBase::FaultVals MipsFault<SoftResetFault>::vals;
+template<> MipsFaultBase::FaultVals MipsFault<NonMaskableInterrupt>::vals;
+template<> MipsFaultBase::FaultVals MipsFault<CoprocessorUnusableFault>::vals;
+template<> MipsFaultBase::FaultVals MipsFault<InterruptFault>::vals;
+template<> MipsFaultBase::FaultVals MipsFault<AddressErrorFault>::vals;
+template<> MipsFaultBase::FaultVals MipsFault<TlbInvalidFault>::vals;
+template<> MipsFaultBase::FaultVals MipsFault<TlbRefillFault>::vals;
+template<> MipsFaultBase::FaultVals MipsFault<TlbModifiedFault>::vals;
+
+
+
 } // namespace MipsISA
+} // namespace gem5
 
 #endif // __MIPS_FAULTS_HH__

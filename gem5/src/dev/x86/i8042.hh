@@ -24,8 +24,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Gabe Black
  */
 
 #ifndef __DEV_X86_I8042_HH__
@@ -33,130 +31,19 @@
 
 #include <deque>
 
-#include "dev/x86/intdev.hh"
+#include "base/bitunion.hh"
+#include "dev/intpin.hh"
 #include "dev/io_device.hh"
+#include "dev/ps2/device.hh"
 #include "params/I8042.hh"
+
+namespace gem5
+{
 
 namespace X86ISA
 {
 
-class IntPin;
-
-class PS2Device
-{
-  protected:
-    std::deque<uint8_t> outBuffer;
-
-    static const uint16_t NoCommand = (uint16_t)(-1);
-
-    uint16_t lastCommand;
-    void bufferData(const uint8_t *data, int size);
-    void ack();
-    void nack();
-
-  public:
-    virtual ~PS2Device()
-    {};
-
-    PS2Device() : lastCommand(NoCommand)
-    {}
-
-    virtual void serialize(const std::string &base, CheckpointOut &cp) const;
-    virtual void unserialize(const std::string &base, CheckpointIn &cp);
-
-    bool hasData()
-    {
-        return !outBuffer.empty();
-    }
-
-    uint8_t getData()
-    {
-        uint8_t data = outBuffer.front();
-        outBuffer.pop_front();
-        return data;
-    }
-
-    virtual bool processData(uint8_t data) = 0;
-};
-
-class PS2Mouse : public PS2Device
-{
-  protected:
-    static const uint8_t ID[];
-
-    enum Command
-    {
-        Scale1to1 = 0xE6,
-        Scale2to1 = 0xE7,
-        SetResolution = 0xE8,
-        GetStatus = 0xE9,
-        ReadData = 0xEB,
-        ResetWrapMode = 0xEC,
-        WrapMode = 0xEE,
-        RemoteMode = 0xF0,
-        ReadID = 0xF2,
-        SampleRate = 0xF3,
-        EnableReporting = 0xF4,
-        DisableReporting = 0xF5,
-        DefaultsAndDisable = 0xF6,
-        Resend = 0xFE,
-        Reset = 0xFF
-    };
-
-    BitUnion8(Status)
-        Bitfield<6> remote;
-        Bitfield<5> enabled;
-        Bitfield<4> twoToOne;
-        Bitfield<2> leftButton;
-        Bitfield<0> rightButton;
-    EndBitUnion(Status)
-
-    Status status;
-    uint8_t resolution;
-    uint8_t sampleRate;
-  public:
-    PS2Mouse() : PS2Device(), status(0), resolution(4), sampleRate(100)
-    {}
-
-    bool processData(uint8_t data);
-
-    void serialize(const std::string &base,
-                   CheckpointOut &cp) const M5_ATTR_OVERRIDE;
-    void unserialize(const std::string &base,
-                     CheckpointIn &cp) M5_ATTR_OVERRIDE;
-};
-
-class PS2Keyboard : public PS2Device
-{
-  protected:
-    static const uint8_t ID[];
-
-    enum Command
-    {
-        LEDWrite = 0xED,
-        DiagnosticEcho = 0xEE,
-        AlternateScanCodes = 0xF0,
-        ReadID = 0xF2,
-        TypematicInfo = 0xF3,
-        Enable = 0xF4,
-        Disable = 0xF5,
-        DefaultsAndDisable = 0xF6,
-        AllKeysToTypematic = 0xF7,
-        AllKeysToMakeRelease = 0xF8,
-        AllKeysToMake = 0xF9,
-        AllKeysToTypematicMakeRelease = 0xFA,
-        KeyToTypematic = 0xFB,
-        KeyToMakeRelease = 0xFC,
-        KeyToMakeOnly = 0xFD,
-        Resend = 0xFE,
-        Reset = 0xFF
-    };
-
-  public:
-    bool processData(uint8_t data);
-};
-
-class I8042 : public BasicPioDevice
+class I8042 : public PioDevice
 {
   protected:
     enum Command
@@ -211,48 +98,54 @@ class I8042 : public BasicPioDevice
         Bitfield<0> keyboardFullInt;
     EndBitUnion(CommandByte)
 
-    Tick latency;
-    Addr dataPort;
-    Addr commandPort;
+    Tick latency = 0;
+    Addr dataPort = 0;
+    Addr commandPort = 0;
 
-    StatusReg statusReg;
-    CommandByte commandByte;
+    StatusReg statusReg = 0;
+    CommandByte commandByte = 0;
 
-    uint8_t dataReg;
+    uint8_t dataReg = 0;
 
-    static const uint16_t NoCommand = (uint16_t)(-1);
-    uint16_t lastCommand;
+    static inline const uint16_t NoCommand = (uint16_t)(-1);
+    uint16_t lastCommand = NoCommand;
 
-    IntSourcePin *mouseIntPin;
-    IntSourcePin *keyboardIntPin;
+    std::vector<IntSourcePin<I8042> *> mouseIntPin;
+    std::vector<IntSourcePin<I8042> *> keyboardIntPin;
 
-    PS2Mouse mouse;
-    PS2Keyboard keyboard;
+    ps2::Device *mouse = nullptr;
+    ps2::Device *keyboard = nullptr;
 
-    void writeData(uint8_t newData, bool mouse = false);
+    void writeData(uint8_t newData, bool mouse=false);
     uint8_t readDataOut();
 
   public:
-    typedef I8042Params Params;
+    using Params = I8042Params;
 
-    const Params *
-    params() const
+    I8042(const Params &p);
+
+    Port &
+    getPort(const std::string &if_name, PortID idx=InvalidPortID) override
     {
-        return dynamic_cast<const Params *>(_params);
+        if (if_name == "mouse_int_pin")
+            return *mouseIntPin.at(idx);
+        else if (if_name == "keyboard_int_pin")
+            return *keyboardIntPin.at(idx);
+        else
+            return PioDevice::getPort(if_name, idx);
     }
 
-    I8042(Params *p);
+    AddrRangeList getAddrRanges() const override;
 
-    AddrRangeList getAddrRanges() const;
+    Tick read(PacketPtr pkt) override;
 
-    Tick read(PacketPtr pkt);
+    Tick write(PacketPtr pkt) override;
 
-    Tick write(PacketPtr pkt);
-
-    void serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE;
-    void unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE;
+    void serialize(CheckpointOut &cp) const override;
+    void unserialize(CheckpointIn &cp) override;
 };
 
 } // namespace X86ISA
+} // namespace gem5
 
 #endif //__DEV_X86_I8042_HH__

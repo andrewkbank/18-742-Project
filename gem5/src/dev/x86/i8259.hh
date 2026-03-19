@@ -24,73 +24,87 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Gabe Black
  */
 
 #ifndef __DEV_X86_I8259_HH__
 #define __DEV_X86_I8259_HH__
 
-#include "dev/x86/intdev.hh"
+#include "dev/intpin.hh"
 #include "dev/io_device.hh"
 #include "enums/X86I8259CascadeMode.hh"
 #include "params/I8259.hh"
 
+namespace gem5
+{
+
 namespace X86ISA
 {
 
-class I8259 : public BasicPioDevice, public IntDevice
+class I8259 : public BasicPioDevice
 {
   protected:
-    static const int NumLines = 8;
-    bool pinStates[NumLines];
+    static const inline int NumLines = 8;
+    bool pinStates[NumLines] = {};
+
+    void init() override;
 
     Tick latency;
-    IntSourcePin *output;
-    Enums::X86I8259CascadeMode mode;
-    I8259 * slave;
+    std::vector<IntSourcePin<I8259> *> output;
+    std::vector<IntSinkPin<I8259> *> inputs;
+    enums::X86I8259CascadeMode mode;
+    I8259 *slave = nullptr;
 
     // Interrupt Request Register
-    uint8_t IRR;
+    uint8_t IRR = 0;
     // In Service Register
-    uint8_t ISR;
+    uint8_t ISR = 0;
     // Interrupt Mask Register
-    uint8_t IMR;
+    uint8_t IMR = 0;
 
     // The higher order bits of the vector to return
-    uint8_t vectorOffset;
+    uint8_t vectorOffset = 0;
 
-    bool cascadeMode;
-    // A bit vector of lines with slaves attached, or the slave id, depending
-    // on if this is a master or slave PIC.
-    uint8_t cascadeBits;
+    bool cascadeMode = false;
+    // A bit vector of lines with responders attached, or the
+    // responder id, depending
+    // on if this is a requestor or responder PIC.
+    uint8_t cascadeBits = 0;
 
-    bool edgeTriggered;
-    bool readIRR;
+    bool edgeTriggered = true;
+    bool readIRR = true;
 
     // State machine information for reading in initialization control words.
-    bool expectICW4;
-    int initControlWord;
+    bool expectICW4 = false;
+    int initControlWord = 0;
 
     // Whether or not the PIC is in auto EOI mode.
-    bool autoEOI;
+    bool autoEOI = false;
 
     void requestInterrupt(int line);
     void handleEOI(int line);
 
-  public:
-    typedef I8259Params Params;
+    int getVector();
 
-    const Params *
-    params() const
+  public:
+    using Params = I8259Params;
+
+    I8259(const Params &p);
+
+    Port &
+    getPort(const std::string &if_name, PortID idx=InvalidPortID) override
     {
-        return dynamic_cast<const Params *>(_params);
+        if (if_name == "inputs")
+            return *inputs.at(idx);
+        else if (if_name == "output")
+            return *output.at(idx);
+        else
+            return BasicPioDevice::getPort(if_name, idx);
     }
 
-    I8259(Params * p);
+    AddrRangeList getAddrRanges() const override;
 
-    Tick read(PacketPtr pkt);
-    Tick write(PacketPtr pkt);
+    Tick read(PacketPtr pkt) override;
+    Tick write(PacketPtr pkt) override;
 
     void
     maskAll()
@@ -107,12 +121,12 @@ class I8259 : public BasicPioDevice, public IntDevice
     void signalInterrupt(int line);
     void raiseInterruptPin(int number);
     void lowerInterruptPin(int number);
-    int getVector();
 
-    void serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE;
-    void unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE;
+    void serialize(CheckpointOut &cp) const override;
+    void unserialize(CheckpointIn &cp) override;
 };
 
 } // namespace X86ISA
+} // namespace gem5
 
 #endif //__DEV_X86_I8259_HH__

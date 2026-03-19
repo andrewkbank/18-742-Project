@@ -27,8 +27,13 @@
 
 #include "arch/mips/linux/aligned.hh"
 
-namespace Linux {
-    struct pcb_struct {
+namespace gem5
+{
+
+namespace linux
+{
+    struct pcb_struct
+    {
         uint64_ta rpb_ksp;
         uint64_ta rpb_usp;
         uint64_ta rpb_ptbr;
@@ -38,5 +43,7 @@ namespace Linux {
         uint64_ta rpb_fen;
         uint64_ta res1, res2;
     };
-}
+} // namespace linux
+} // namespace gem5
+
 #endif // __ARCH_MIPS_LINUX_HWRPB_HH__

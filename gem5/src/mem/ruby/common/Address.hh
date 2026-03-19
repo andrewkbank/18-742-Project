@@ -29,24 +29,23 @@
 #ifndef __MEM_RUBY_COMMON_ADDRESS_HH__
 #define __MEM_RUBY_COMMON_ADDRESS_HH__
 
-#include <cassert>
-#include <iomanip>
-#include <iostream>
-
-#include "base/hashmap.hh"
 #include "base/types.hh"
 
-const uint32_t ADDRESS_WIDTH = 64; // address width in bytes
+namespace gem5
+{
+
+namespace ruby
+{
 
 // selects bits inclusive
 Addr bitSelect(Addr addr, unsigned int small, unsigned int big);
-Addr bitRemove(Addr addr, unsigned int small, unsigned int big);
 Addr maskLowOrderBits(Addr addr, unsigned int number);
-Addr maskHighOrderBits(Addr addr, unsigned int number);
-Addr shiftLowOrderBits(Addr addr, unsigned int number);
-Addr getOffset(Addr addr);
-Addr makeLineAddress(Addr addr);
-Addr makeNextStrideAddress(Addr addr, int stride);
-std::string printAddress(Addr addr);
+Addr getOffset(Addr addr, int cacheLineBits);
+Addr makeLineAddress(Addr addr, int cacheLineBits);
+Addr makeNextStrideAddress(Addr addr, int stride, int cacheLineBytes);
+std::string printAddress(Addr addr, int cacheLineBits);
+
+} // namespace ruby
+} // namespace gem5
 
 #endif // __MEM_RUBY_COMMON_ADDRESS_HH__

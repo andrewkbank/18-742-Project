@@ -24,8 +24,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Gabe Black
  */
 
 #ifndef __ARCH_X86_INTMESSAGE_HH__
@@ -33,10 +31,15 @@
 
 #include "arch/x86/x86_traits.hh"
 #include "base/bitunion.hh"
+#include "base/compiler.hh"
 #include "base/types.hh"
+#include "dev/x86/intdev.hh"
 #include "mem/packet.hh"
 #include "mem/packet_access.hh"
 #include "mem/request.hh"
+
+namespace gem5
+{
 
 namespace X86ISA
 {
@@ -49,9 +52,10 @@ namespace X86ISA
         Bitfield<21> trigger;
     EndBitUnion(TriggerIntMessage)
 
-    namespace DeliveryMode
+    namespace delivery_mode
     {
-        enum IntDeliveryMode {
+        enum IntDeliveryMode
+        {
             Fixed = 0,
             LowestPriority = 1,
             SMI = 2,
@@ -72,42 +76,29 @@ namespace X86ISA
         {
             return mode == 3;
         }
-    }
+    } // namespace delivery_mode
 
     static const Addr TriggerIntOffset = 0;
 
     static inline PacketPtr
-    prepIntRequest(const uint8_t id, Addr offset, Addr size)
+    buildIntTriggerPacket(int id, TriggerIntMessage message)
     {
-        RequestPtr req = new Request(x86InterruptAddress(id, offset),
-                                     size, Request::UNCACHEABLE,
-                                     Request::intMasterId);
-        PacketPtr pkt = new Packet(req, MemCmd::MessageReq);
+        Addr addr = x86InterruptAddress(id, TriggerIntOffset);
+        return buildIntPacket(addr, message);
+    }
+
+    static inline PacketPtr
+    buildIntAcknowledgePacket()
+    {
+        RequestPtr req = std::make_shared<Request>(
+                PhysAddrIntA, 1, Request::UNCACHEABLE,
+                Request::intRequestorId);
+        PacketPtr pkt = new Packet(req, MemCmd::ReadReq);
         pkt->allocate();
         return pkt;
     }
 
-    template<class T>
-    PacketPtr
-    buildIntRequest(const uint8_t id, T payload, Addr offset, Addr size)
-    {
-        PacketPtr pkt = prepIntRequest(id, offset, size);
-        pkt->set<T>(payload);
-        return pkt;
-    }
-
-    static inline PacketPtr
-    buildIntRequest(const uint8_t id, TriggerIntMessage payload)
-    {
-        return buildIntRequest(id, payload, TriggerIntOffset,
-                sizeof(TriggerIntMessage));
-    }
-
-    static inline PacketPtr
-    buildIntResponse()
-    {
-        panic("buildIntResponse not implemented.\n");
-    }
-}
+} // namespace X86ISA
+} // namespace gem5
 
 #endif

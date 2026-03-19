@@ -33,13 +33,14 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andrew Bardsley
  */
 
 #include "cpu/minor/pipe_data.hh"
 
-namespace Minor
+namespace gem5
+{
+
+namespace minor
 {
 
 std::ostream &
@@ -71,9 +72,6 @@ operator <<(std::ostream &os, BranchData::Reason reason)
       case BranchData::SuspendThread:
         os << "SuspendThread";
         break;
-      case BranchData::WakeupFetch:
-        os << "WakeupFetch";
-        break;
       case BranchData::HaltFetch:
         os << "HaltFetch";
         break;
@@ -102,7 +100,6 @@ BranchData::isStreamChange(const BranchData::Reason reason)
       case BadlyPredictedBranch:
       case SuspendThread:
       case Interrupt:
-      case WakeupFetch:
       case HaltFetch:
         ret = true;
         break;
@@ -123,7 +120,6 @@ BranchData::isBranch(const BranchData::Reason reason)
       case CorrectlyPredictedBranch:
       case SuspendThread:
       case Interrupt:
-      case WakeupFetch:
       case HaltFetch:
         ret = false;
         break;
@@ -148,7 +144,7 @@ BranchData::reportData(std::ostream &os) const
     } else {
         os << reason
             << ';' << newStreamSeqNum << '.' << newPredictionSeqNum
-            << ";0x" << std::hex << target.instAddr() << std::dec
+            << ";0x" << std::hex << target->instAddr() << std::dec
             << ';';
         inst->reportData(os);
     }
@@ -158,7 +154,7 @@ std::ostream &
 operator <<(std::ostream &os, const BranchData &branch)
 {
     os << branch.reason << " target: 0x"
-        << std::hex << branch.target.instAddr() << std::dec
+        << std::hex << branch.target->instAddr() << std::dec
         << ' ' << *branch.inst
         << ' ' << branch.newStreamSeqNum << "(stream)."
         << branch.newPredictionSeqNum << "(pred)";
@@ -228,8 +224,8 @@ ForwardLineData::reportData(std::ostream &os) const
         os << id;
 }
 
-ForwardInstData::ForwardInstData(unsigned int width) :
-    numInsts(width)
+ForwardInstData::ForwardInstData(unsigned int width, ThreadID tid) :
+    numInsts(width), threadId(tid)
 {
     bubbleFill();
 }
@@ -291,4 +287,5 @@ ForwardInstData::reportData(std::ostream &os) const
     }
 }
 
-}
+} // namespace minor
+} // namespace gem5

@@ -33,8 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andrew Bardsley
  */
 
 /**
@@ -46,9 +44,15 @@
 #ifndef __SIM_CXX_CONFIG_INI_HH__
 #define __SIM_CXX_CONFIG_INI_HH__
 
+#include <string>
+#include <unordered_map>
+#include <vector>
+
 #include "base/inifile.hh"
-#include "base/str.hh"
 #include "sim/cxx_config.hh"
+
+namespace gem5
+{
 
 /** CxxConfigManager interface for using .ini files */
 class CxxIniFile : public CxxConfigFileBase
@@ -69,6 +73,15 @@ class CxxIniFile : public CxxConfigFileBase
         const std::string &param_name,
         std::vector<std::string> &values) const;
 
+    /**
+     * Finds the dictionary parameter of the object in the ini file
+     * and unserializes it into the values argument which is
+     * passed by reference.
+     */
+    bool getParamDict(const std::string &object_name,
+        const std::string &param_name,
+        std::unordered_map<std::string, std::string> &values) const;
+
     bool getPortPeers(const std::string &object_name,
         const std::string &port_name,
         std::vector<std::string> &peers) const;
@@ -83,5 +96,7 @@ class CxxIniFile : public CxxConfigFileBase
 
     bool load(const std::string &filename);
 };
+
+} // namespace gem5
 
 #endif // __SIM_CXX_CONFIG_INI_HH__

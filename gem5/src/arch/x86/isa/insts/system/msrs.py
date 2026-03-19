@@ -35,10 +35,8 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Gabe Black
 
-microcode = '''
+microcode = """
 def macroop RDMSR
 {
     ld t2, intseg, [8, rcx, t0], "IntAddrPrefixMSR << 3", \
@@ -50,7 +48,7 @@ def macroop RDMSR
 
 def macroop WRMSR
 {
-    .serializing
+    .serialize_after
     mov t2, t2, rax, dataSize=4
     slli t3, rdx, 32, dataSize=8
     or t2, t2, t3, dataSize=8
@@ -60,9 +58,19 @@ def macroop WRMSR
 
 def macroop RDTSC
 {
+    .serialize_before
     rdtsc t1
     mov rax, rax, t1, dataSize=4
-    srli t1, t1, 32, dataSize=8
-    mov rdx, rdx, t1, dataSize=4
+    srli rdx, t1, 32, dataSize=8
 };
-'''
+
+def macroop RDTSCP
+{
+    .serialize_before
+    mfence
+    rdtsc t1
+    mov rax, rax, t1, dataSize=4
+    srli rdx, t1, 32, dataSize=8
+    rdval rcx, ctrlRegIdx("misc_reg::TscAux"), dataSize=4
+};
+"""

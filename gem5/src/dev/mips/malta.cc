@@ -24,35 +24,24 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Ali Saidi
- *          Rick Strong
  */
 
 /** @file
  * Implementation of Malta platform.
  */
 
-#include <deque>
-#include <string>
-#include <vector>
-
-#include "config/the_isa.hh"
-#include "cpu/intr_control.hh"
-#include "debug/Malta.hh"
 #include "dev/mips/malta.hh"
+
+#include "debug/Malta.hh"
 #include "dev/mips/malta_cchip.hh"
 #include "dev/mips/malta_io.hh"
-#include "dev/mips/malta_pchip.hh"
-#include "dev/terminal.hh"
 #include "params/Malta.hh"
-#include "sim/system.hh"
 
-using namespace std;
-using namespace TheISA;
+namespace gem5
+{
 
-Malta::Malta(const Params *p)
-    : Platform(p), system(p->system)
+Malta::Malta(const Params &p)
+    : Platform(p)
 {
     for (int i = 0; i < Malta::Max_CPUs; i++)
         intr_sum_type[i] = 0;
@@ -84,12 +73,6 @@ Malta::clearPciInt(int line)
     panic("Malta::clearPciInt() has not been implemented.");
 }
 
-Addr
-Malta::pciToDma(Addr pciAddr) const
-{
-    panic("Malta::pciToDma() has not been implemented.");
-}
-
 void
 Malta::serialize(CheckpointOut &cp) const
 {
@@ -102,8 +85,4 @@ Malta::unserialize(CheckpointIn &cp)
     UNSERIALIZE_ARRAY(intr_sum_type, Malta::Max_CPUs);
 }
 
-Malta *
-MaltaParams::create()
-{
-    return new Malta(this);
-}
+} // namespace gem5

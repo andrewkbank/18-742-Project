@@ -34,18 +34,23 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Andreas Sandberg
 
 Import('*')
 
-SimObject('BaseMemProbe.py')
+SimObject('BaseMemProbe.py', sim_objects=['BaseMemProbe'])
 Source('base.cc')
 
-SimObject('StackDistProbe.py')
+SimObject('StackDistProbe.py', sim_objects=['StackDistProbe'])
 Source('stack_dist.cc')
 
+SimObject('MemFootprintProbe.py', sim_objects=['MemFootprintProbe'])
+Source('mem_footprint.cc')
+
 # Packet tracing requires protobuf support
-if env['HAVE_PROTOBUF']:
-    SimObject('MemTraceProbe.py')
-    Source('mem_trace.cc')
+if env['CONF']['HAVE_PROTOBUF']:
+    SimObject(
+        'MemTraceProbe.py',
+        sim_objects=['MemTraceProbe'],
+        tags=['protobuf']
+    )
+    Source('mem_trace.cc', tags=['protobuf'])

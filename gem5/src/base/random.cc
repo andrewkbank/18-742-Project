@@ -36,23 +36,15 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nathan Binkert
- *          Ali Saidi
- *          Andreas Hansson
  */
 
+#include "base/random.hh"
+
+#include <algorithm>
 #include <sstream>
 
-#include "base/misc.hh"
-#include "base/random.hh"
-#include "sim/serialize.hh"
-
-Random::Random()
+namespace gem5
 {
-    // default random seed
-    init(5489);
-}
 
 Random::Random(uint32_t s)
 {
@@ -61,6 +53,21 @@ Random::Random(uint32_t s)
 
 Random::~Random()
 {
+    if (instances) {
+        // Remove expired weak pointers
+        instances->erase(
+            std::remove_if(instances->begin(), instances->end(),
+                [](const std::weak_ptr<Random>& ptr) {
+                    return ptr.expired();
+                }),
+            instances->end());
+
+        // Clean up instances if empty
+        if (instances->empty()) {
+            delete instances;
+            instances = nullptr;
+        }
+    }
 }
 
 void
@@ -69,31 +76,7 @@ Random::init(uint32_t s)
     gen.seed(s);
 }
 
-void
-Random::serialize(CheckpointOut &cp) const
-{
-    panic("Currently not used anywhere.\n");
+uint64_t Random::globalSeed = 5489;
+Random::Instances* Random::instances = nullptr;
 
-    // get the state from the generator
-    std::ostringstream oss;
-    oss << gen;
-    std::string state = oss.str();
-    paramOut(cp, "mt_state", state);
-}
-
-void
-Random::unserialize(CheckpointIn &cp)
-{
-    panic("Currently not used anywhere.\n");
-
-    // the random generator state did not use to be part of the
-    // checkpoint state, so be forgiving in the unserialization and
-    // keep on going if the parameter is not there
-    std::string state;
-    if (optParamIn(cp, "mt_state", state)) {
-        std::istringstream iss(state);
-        iss >> gen;
-    }
-}
-
-Random random_mt;
+} // namespace gem5

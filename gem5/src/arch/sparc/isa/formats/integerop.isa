@@ -23,122 +23,11 @@
 // THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// Authors: Ali Saidi
-//          Gabe Black
-//          Steve Reinhardt
 
 ////////////////////////////////////////////////////////////////////
 //
 // Integer operate instructions
 //
-
-output header {{
-        /**
-         * Base class for integer operations.
-         */
-        class IntOp : public SparcStaticInst
-        {
-          protected:
-            // Constructor
-            IntOp(const char *mnem, ExtMachInst _machInst,
-                    OpClass __opClass) :
-                SparcStaticInst(mnem, _machInst, __opClass)
-            {
-            }
-
-            std::string generateDisassembly(Addr pc,
-                const SymbolTable *symtab) const;
-
-            virtual bool printPseudoOps(std::ostream &os, Addr pc,
-                    const SymbolTable *symtab) const;
-        };
-
-        /**
-         * Base class for immediate integer operations.
-         */
-        class IntOpImm : public IntOp
-        {
-          protected:
-            // Constructor
-            IntOpImm(const char *mnem, ExtMachInst _machInst,
-                    OpClass __opClass) :
-                IntOp(mnem, _machInst, __opClass)
-            {
-            }
-
-            int64_t imm;
-
-            std::string generateDisassembly(Addr pc,
-                const SymbolTable *symtab) const;
-
-            virtual bool printPseudoOps(std::ostream &os, Addr pc,
-                    const SymbolTable *symtab) const;
-        };
-
-        /**
-         * Base class for 10 bit immediate integer operations.
-         */
-        class IntOpImm10 : public IntOpImm
-        {
-          protected:
-            // Constructor
-            IntOpImm10(const char *mnem, ExtMachInst _machInst,
-                    OpClass __opClass) :
-                IntOpImm(mnem, _machInst, __opClass)
-            {
-                imm = sext<10>(SIMM10);
-            }
-        };
-
-        /**
-         * Base class for 11 bit immediate integer operations.
-         */
-        class IntOpImm11 : public IntOpImm
-        {
-          protected:
-            // Constructor
-            IntOpImm11(const char *mnem, ExtMachInst _machInst,
-                    OpClass __opClass) :
-                IntOpImm(mnem, _machInst, __opClass)
-            {
-                imm = sext<11>(SIMM11);
-            }
-        };
-
-        /**
-         * Base class for 13 bit immediate integer operations.
-         */
-        class IntOpImm13 : public IntOpImm
-        {
-          protected:
-            // Constructor
-            IntOpImm13(const char *mnem, ExtMachInst _machInst,
-                    OpClass __opClass) :
-                IntOpImm(mnem, _machInst, __opClass)
-            {
-                imm = sext<13>(SIMM13);
-            }
-        };
-
-        /**
-         * Base class for sethi.
-         */
-        class SetHi : public IntOpImm
-        {
-          protected:
-            // Constructor
-            SetHi(const char *mnem, ExtMachInst _machInst,
-                    OpClass __opClass) :
-                IntOpImm(mnem, _machInst, __opClass)
-            {
-                imm = (IMM22 & 0x3FFFFF) << 10;
-            }
-
-            std::string generateDisassembly(Addr pc,
-                const SymbolTable *symtab) const;
-        };
-}};
 
 def template SetHiDecode {{
     {
@@ -149,96 +38,9 @@ def template SetHiDecode {{
     }
 }};
 
-output decoder {{
-
-        bool
-        IntOp::printPseudoOps(std::ostream &os, Addr pc,
-                const SymbolTable *symbab) const
-        {
-            if (!std::strcmp(mnemonic, "or") && _srcRegIdx[0] == 0) {
-                printMnemonic(os, "mov");
-                printSrcReg(os, 1);
-                ccprintf(os, ", ");
-                printDestReg(os, 0);
-                return true;
-            }
-            return false;
-        }
-
-        bool
-        IntOpImm::printPseudoOps(std::ostream &os, Addr pc,
-                const SymbolTable *symbab) const
-        {
-            if (!std::strcmp(mnemonic, "or")) {
-                if (_numSrcRegs > 0 && _srcRegIdx[0] == 0) {
-                    if (imm == 0) {
-                        printMnemonic(os, "clr");
-                    } else {
-                        printMnemonic(os, "mov");
-                        ccprintf(os, " 0x%x, ", imm);
-                    }
-                    printDestReg(os, 0);
-                    return true;
-                } else if (imm == 0) {
-                    printMnemonic(os, "mov");
-                    printSrcReg(os, 0);
-                    ccprintf(os, ", ");
-                    printDestReg(os, 0);
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        std::string
-        IntOp::generateDisassembly(Addr pc, const SymbolTable *symtab) const
-        {
-            std::stringstream response;
-
-            if (printPseudoOps(response, pc, symtab))
-                return response.str();
-            printMnemonic(response, mnemonic);
-            printRegArray(response, _srcRegIdx, _numSrcRegs);
-            if (_numDestRegs && _numSrcRegs)
-                response << ", ";
-            printDestReg(response, 0);
-            return response.str();
-        }
-
-        std::string
-        IntOpImm::generateDisassembly(Addr pc,
-                const SymbolTable *symtab) const
-        {
-            std::stringstream response;
-
-            if (printPseudoOps(response, pc, symtab))
-                return response.str();
-            printMnemonic(response, mnemonic);
-            printRegArray(response, _srcRegIdx, _numSrcRegs);
-            if (_numSrcRegs > 0)
-                response << ", ";
-            ccprintf(response, "0x%x", imm);
-            if (_numDestRegs > 0)
-                response << ", ";
-            printDestReg(response, 0);
-            return response.str();
-        }
-
-        std::string
-        SetHi::generateDisassembly(Addr pc, const SymbolTable *symtab) const
-        {
-            std::stringstream response;
-
-            printMnemonic(response, mnemonic);
-            ccprintf(response, "%%hi(0x%x), ", imm);
-            printDestReg(response, 0);
-            return response.str();
-        }
-}};
-
 def template IntOpExecute {{
-        Fault %(class_name)s::execute(CPU_EXEC_CONTEXT *xc,
-                Trace::InstRecord *traceData) const
+        Fault %(class_name)s::execute(ExecContext *xc,
+                trace::InstRecord *traceData) const
         {
             Fault fault = NoFault;
 
@@ -257,15 +59,14 @@ def template IntOpExecute {{
 
 let {{
     def doIntFormat(code, ccCode, name, Name, opt_flags):
-        (usesImm, code, immCode,
-         rString, iString) = splitOutImm(code)
+        code, immCode, iString = splitOutImm(code)
         iop = InstObjParams(name, Name, 'IntOp',
                 {"code": code, "cc_code": ccCode},
                 opt_flags)
         header_output = BasicDeclare.subst(iop)
         decoder_output = BasicConstructor.subst(iop)
         exec_output = IntOpExecute.subst(iop)
-        if usesImm:
+        if immCode is not None:
             imm_iop = InstObjParams(name, Name + 'Imm', 'IntOpImm' + iString,
                     {"code": immCode, "cc_code": ccCode}, opt_flags)
             header_output += BasicDeclare.subst(imm_iop)
@@ -327,26 +128,20 @@ def format IntOpCc(code, ic=default_ic, iv=default_iv,
                          xc=default_xc, xv=default_xv,
                          sub=False, *opt_flags) {{
 
-    if sub == "False":
-        (def_ic, def_iv, def_xc, def_xv) = \
-            (default_ic, default_iv, default_xc, default_xv)
-    else:
-        (def_ic, def_iv, def_xc, def_xv) = \
-            (default_sub_ic, default_sub_iv, default_sub_xc, default_sub_xv)
+    sub = sub != 'False'
     if ic == "default_ic":
-        ic = def_ic
+        ic = default_sub_ic if sub else default_ic
     if iv == "default_iv":
-        iv = def_iv
+        iv = default_sub_iv if sub else default_iv
     if xc == "default_xc":
-        xc = def_xc
+        xc = default_sub_xc if sub else default_xc
     if xv == "default_xv":
-        xv = def_xv
+        xv = default_sub_xv if sub else default_xv
     ccCode = calcCcCode % vars()
     (header_output,
      decoder_output,
      exec_output,
-     decode_block) = doIntFormat(code, ccCode,
-                                 name, Name, opt_flags)
+     decode_block) = doIntFormat(code, ccCode, name, Name, opt_flags)
 }};
 
 // Primary format for integer operate instructions:
@@ -367,4 +162,3 @@ def format SetHi(code, *opt_flags) {{
     exec_output = IntOpExecute.subst(iop)
     decode_block = SetHiDecode.subst(iop)
 }};
-

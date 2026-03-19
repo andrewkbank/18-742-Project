@@ -24,8 +24,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Steve Reinhardt
  */
 
 #ifndef __SIM_SYSCALL_EMUL_BUF_HH__
@@ -42,6 +40,9 @@
 #include "base/types.hh"
 #include "mem/se_translating_port_proxy.hh"
 
+namespace gem5
+{
+
 /**
  * Base class for BufferArg and TypedBufferArg, Not intended to be
  * used directly.
@@ -53,7 +54,8 @@
  * and copyOut() methods copy the user-space buffer to and from the
  * simulator-space buffer, respectively.
  */
-class BaseBufferArg {
+class BaseBufferArg
+{
 
   public:
 
@@ -61,7 +63,7 @@ class BaseBufferArg {
      * Allocate a buffer of size 'size' representing the memory at
      * target address 'addr'.
      */
-    BaseBufferArg(Addr _addr, int _size)
+    BaseBufferArg(Addr _addr, uint64_t _size)
         : addr(_addr), size(_size), bufPtr(new uint8_t[size])
     {
         // clear out buffer: in case we only partially populate this,
@@ -75,7 +77,8 @@ class BaseBufferArg {
     /**
      * copy data into simulator space (read from target memory)
      */
-    bool copyIn(SETranslatingPortProxy &memproxy)
+    bool
+    copyIn(const PortProxy &memproxy)
     {
         memproxy.readBlob(addr, bufPtr, size);
         return true;    // no EFAULT detection for now
@@ -84,7 +87,8 @@ class BaseBufferArg {
     /**
      * copy data out of simulator space (write to target memory)
      */
-    bool copyOut(SETranslatingPortProxy &memproxy)
+    bool
+    copyOut(const PortProxy &memproxy)
     {
         memproxy.writeBlob(addr, bufPtr, size);
         return true;    // no EFAULT detection for now
@@ -92,7 +96,7 @@ class BaseBufferArg {
 
   protected:
     const Addr addr;        ///< address of buffer in target address space
-    const int size;         ///< buffer size
+    const uint64_t size;         ///< buffer size
     uint8_t * const bufPtr; ///< pointer to buffer in simulator space
 };
 
@@ -107,7 +111,7 @@ class BufferArg : public BaseBufferArg
      * Allocate a buffer of size 'size' representing the memory at
      * target address 'addr'.
      */
-    BufferArg(Addr _addr, int _size) : BaseBufferArg(_addr, _size) { }
+    BufferArg(Addr _addr, uint64_t _size) : BaseBufferArg(_addr, _size) { }
 
     /**
      * Return a pointer to the internal simulator-space buffer.
@@ -134,7 +138,7 @@ class TypedBufferArg : public BaseBufferArg
      * number of bytes to allocate to deal with structs that have
      * variable-size arrays at the end.
      */
-    TypedBufferArg(Addr _addr, int _size = sizeof(T))
+    TypedBufferArg(Addr _addr, uint64_t _size = sizeof(T))
         : BaseBufferArg(_addr, _size)
     { }
 
@@ -164,5 +168,6 @@ class TypedBufferArg : public BaseBufferArg
     T &operator[](int i) { return ((T *)bufPtr)[i]; }
 };
 
+} // namespace gem5
 
 #endif // __SIM_SYSCALL_EMUL_BUF_HH__

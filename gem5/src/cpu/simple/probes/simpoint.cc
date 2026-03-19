@@ -33,24 +33,25 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Dam Sunwoo
- *          Curtis Dunham
  */
 
-#include "base/output.hh"
 #include "cpu/simple/probes/simpoint.hh"
 
-SimPoint::SimPoint(const SimPointParams *p)
+#include "base/output.hh"
+
+namespace gem5
+{
+
+SimPoint::SimPoint(const SimPointParams &p)
     : ProbeListenerObject(p),
-      intervalSize(p->interval),
+      intervalSize(p.interval),
       intervalCount(0),
       intervalDrift(0),
       simpointStream(NULL),
       currentBBV(0, 0),
       currentBBVInstCount(0)
 {
-    simpointStream = simout.create(p->profile_file, false);
+    simpointStream = simout.create(p.profile_file, false);
     if (!simpointStream)
         fatal("unable to open SimPoint profile_file");
 }
@@ -67,14 +68,13 @@ SimPoint::init()
 void
 SimPoint::regProbeListeners()
 {
-    typedef ProbeListenerArg<SimPoint, std::pair<SimpleThread*,StaticInstPtr>>
-        SimPointListener;
-    listeners.push_back(new SimPointListener(this, "Commit",
-                                             &SimPoint::profile));
+    typedef ProbeListenerArg<SimPoint, std::pair<SimpleThread*,
+                             const StaticInstPtr>> SimPointListener;
+    connectListener<SimPointListener>(this, "Commit", &SimPoint::profile);
 }
 
 void
-SimPoint::profile(const std::pair<SimpleThread*, StaticInstPtr>& p)
+SimPoint::profile(const std::pair<SimpleThread*, const StaticInstPtr>& p)
 {
     SimpleThread* thread = p.first;
     const StaticInstPtr &inst = p.second;
@@ -95,7 +95,8 @@ SimPoint::profile(const std::pair<SimpleThread*, StaticInstPtr>& p)
         auto map_itr = bbMap.find(currentBBV);
         if (map_itr == bbMap.end()){
             // If a new (previously unseen) basic block is found,
-            // add a new unique id, record num of insts and insert into bbMap.
+            // add a new unique id, record num of insts and insert
+            // into bbMap.
             BBInfo info;
             info.id = bbMap.size() + 1;
             info.insts = currentBBVInstCount;
@@ -126,13 +127,13 @@ SimPoint::profile(const std::pair<SimpleThread*, StaticInstPtr>& p)
             std::sort(counts.begin(), counts.end());
 
             // Print output BBV info
-            *simpointStream << "T";
+            *simpointStream->stream() << "T";
             for (auto cnt_itr = counts.begin(); cnt_itr != counts.end();
                     ++cnt_itr) {
-                *simpointStream << ":" << cnt_itr->first
+                *simpointStream->stream() << ":" << cnt_itr->first
                                 << ":" << cnt_itr->second << " ";
             }
-            *simpointStream << "\n";
+            *simpointStream->stream() << "\n";
 
             intervalDrift = (intervalCount + intervalDrift) - intervalSize;
             intervalCount = 0;
@@ -140,9 +141,4 @@ SimPoint::profile(const std::pair<SimpleThread*, StaticInstPtr>& p)
     }
 }
 
-/** SimPoint SimObject */
-SimPoint*
-SimPointParams::create()
-{
-    return new SimPoint(this);
-}
+} // namespace gem5

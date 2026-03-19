@@ -34,42 +34,55 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andreas Sandberg
  */
 
+#include "cpu/kvm/vm.hh"
+
+#include <fcntl.h>
 #include <linux/kvm.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <fcntl.h>
 #include <unistd.h>
 
 #include <cerrno>
 #include <memory>
 
-#include "cpu/kvm/vm.hh"
+#include "cpu/kvm/base.hh"
 #include "debug/Kvm.hh"
+#include "mem/physical.hh"
 #include "params/KvmVM.hh"
 #include "sim/system.hh"
 
-#define EXPECTED_KVM_API_VERSION 12
+namespace gem5
+{
 
-#if EXPECTED_KVM_API_VERSION != KVM_API_VERSION
-#error Unsupported KVM version
-#endif
+namespace
+{
+
+constexpr int ExpectedKvmApiVersion = 12;
+static_assert(KVM_API_VERSION == ExpectedKvmApiVersion,
+        "Unsupported KVM version");
+
+} // anonymous namespace
 
 Kvm *Kvm::instance = NULL;
 
 Kvm::Kvm()
     : kvmFD(-1), apiVersion(-1), vcpuMMapSize(0)
 {
+    static bool created = false;
+    if (created)
+        warn_once("Use of multiple KvmVMs is currently untested!");
+
+    created = true;
+
     kvmFD = ::open("/dev/kvm", O_RDWR);
     if (kvmFD == -1)
         fatal("KVM: Failed to open /dev/kvm\n");
 
     apiVersion = ioctl(KVM_GET_API_VERSION);
-    if (apiVersion != EXPECTED_KVM_API_VERSION)
+    if (apiVersion != ExpectedKvmApiVersion)
         fatal("KVM: Incompatible API version\n");
 
     vcpuMMapSize = ioctl(KVM_GET_VCPU_MMAP_SIZE);
@@ -191,6 +204,15 @@ Kvm::capXSave() const
 #endif
 }
 
+bool
+Kvm::capIRQLineLayout2() const
+{
+#if defined(KVM_CAP_ARM_IRQ_LINE_LAYOUT_2)
+    return checkExtension(KVM_CAP_ARM_IRQ_LINE_LAYOUT_2) != 0;
+#else
+    return false;
+#endif
+}
 
 #if defined(__i386__) || defined(__x86_64__)
 bool
@@ -209,7 +231,8 @@ const Kvm::CPUIDVector &
 Kvm::getSupportedCPUID() const
 {
     if (supportedCPUIDCache.empty()) {
-        std::unique_ptr<struct kvm_cpuid2> cpuid;
+        std::unique_ptr<struct kvm_cpuid2, void(*)(void *p)>
+            cpuid(nullptr, [](void *p) { operator delete(p); });
         int i(1);
         do {
             cpuid.reset((struct kvm_cpuid2 *)operator new(
@@ -241,7 +264,8 @@ const Kvm::MSRIndexVector &
 Kvm::getSupportedMSRs() const
 {
     if (supportedMSRCache.empty()) {
-        std::unique_ptr<struct kvm_msr_list> msrs;
+        std::unique_ptr<struct kvm_msr_list, void(*)(void *p)>
+            msrs(nullptr, [](void *p) { operator delete(p); });
         int i(0);
         do {
             msrs.reset((struct kvm_msr_list *)operator new(
@@ -289,25 +313,45 @@ Kvm::createVM()
 }
 
 
-KvmVM::KvmVM(KvmVMParams *params)
+KvmVM::KvmVM(const KvmVMParams &params)
     : SimObject(params),
-      kvm(), system(params->system),
-      vmFD(kvm.createVM()),
+      kvm(new Kvm()), system(params.system),
+      vmFD(kvm->createVM()),
       started(false),
+      _hasKernelIRQChip(false),
       nextVCPUID(0)
 {
-    maxMemorySlot = kvm.capNumMemSlots();
+    system->setKvmVM(this);
+    maxMemorySlot = kvm->capNumMemSlots();
     /* If we couldn't determine how memory slots there are, guess 32. */
     if (!maxMemorySlot)
         maxMemorySlot = 32;
     /* Setup the coalesced MMIO regions */
-    for (int i = 0; i < params->coalescedMMIO.size(); ++i)
-        coalesceMMIO(params->coalescedMMIO[i]);
+    for (int i = 0; i < params.coalescedMMIO.size(); ++i)
+        coalesceMMIO(params.coalescedMMIO[i]);
 }
 
 KvmVM::~KvmVM()
 {
-    close(vmFD);
+    if (vmFD != -1)
+        close(vmFD);
+
+    if (kvm)
+        delete kvm;
+}
+
+void
+KvmVM::notifyFork()
+{
+    if (vmFD != -1) {
+        if (close(vmFD) == -1)
+            warn("kvm VM: notifyFork failed to close vmFD\n");
+
+        vmFD = -1;
+
+        delete kvm;
+        kvm = NULL;
+    }
 }
 
 void
@@ -323,13 +367,18 @@ KvmVM::cpuStartup()
 void
 KvmVM::delayedStartup()
 {
-    const std::vector<std::pair<AddrRange, uint8_t*> >&memories(
+    const std::vector<memory::BackingStoreEntry> &memories(
         system->getPhysMem().getBackingStore());
 
     DPRINTF(Kvm, "Mapping %i memory region(s)\n", memories.size());
     for (int slot(0); slot < memories.size(); ++slot) {
-        const AddrRange &range(memories[slot].first);
-        void *pmem(memories[slot].second);
+        if (!memories[slot].kvmMap) {
+            DPRINTF(Kvm, "Skipping region marked as not usable by KVM\n");
+            continue;
+        }
+
+        const AddrRange &range(memories[slot].range);
+        void *pmem(memories[slot].pmem);
 
         if (pmem) {
             DPRINTF(Kvm, "Mapping region: 0x%p -> 0x%llx [size: 0x%llx]\n",
@@ -393,6 +442,7 @@ KvmVM::disableMemSlot(const KvmVM::MemSlot num)
     if (slot.active)
         setUserMemoryRegion(num.num, NULL, 0, 0, 0);
     slot.active = false;
+    _slotPad.erase(num.num);
 }
 
 void
@@ -408,23 +458,62 @@ KvmVM::setUserMemoryRegion(uint32_t slot,
                            void *host_addr, Addr guest_addr,
                            uint64_t len, uint32_t flags)
 {
-    struct kvm_userspace_memory_region m;
+    const long page_sysconf = sysconf(_SC_PAGESIZE);
 
-    memset(&m, 0, sizeof(m));
+    warn_if(page_sysconf <= 0,
+            "Defaulting to 4 KiB page size for KVM alignment");
+
+    // 4096 is the most common page size
+    const size_t page_size = (page_sysconf > 0) ? (size_t)page_sysconf : 4096;
+    const uint64_t remainder = len % page_size;
+
+    void *padded_host = nullptr;
+    uint64_t mapped_len = len;
+
+    if (remainder != 0) {
+        const uint64_t new_len = len + (page_size - remainder);
+
+        int ret_code = posix_memalign(&padded_host, page_size, new_len);
+        if (ret_code != 0 || !padded_host) {
+            panic("KVM: Failed to allocate padded buffer of size 0x%llx\n",
+                  (unsigned long long)new_len);
+        }
+
+        if (host_addr) {
+            std::memcpy(padded_host, host_addr, len);
+        }
+
+        std::memset(static_cast<char *>(padded_host) + len, 0, new_len - len);
+
+        host_addr = padded_host;
+        mapped_len = new_len;
+
+        _slotPad[slot].reset(padded_host);
+
+        DPRINTF(Kvm,
+                "Padding memslot %u from 0x%llx to 0x%llx bytes "
+                "(host page 0x%zx)\n",
+                slot, (unsigned long long)len, (unsigned long long)mapped_len,
+                page_size);
+    }
+
+    struct kvm_userspace_memory_region m;
+    std::memset(&m, 0, sizeof(m));
     m.slot = slot;
     m.flags = flags;
     m.guest_phys_addr = (uint64_t)guest_addr;
-    m.memory_size = len;
+    m.memory_size = mapped_len;
     m.userspace_addr = (__u64)host_addr;
 
     if (ioctl(KVM_SET_USER_MEMORY_REGION, (void *)&m) == -1) {
         panic("Failed to setup KVM memory region:\n"
-              "\tHost Address: 0x%p\n"
-              "\tGuest Address: 0x%llx\n",
-              "\tSize: %ll\n",
-              "\tFlags: 0x%x\n",
-              m.userspace_addr, m.guest_phys_addr,
-              m.memory_size, m.flags);
+              "\tHost Address: 0x%llx\n"
+              "\tGuest Address: 0x%llx\n"
+              "\tSize:        0x%llx\n"
+              "\tFlags:       0x%x\n",
+              (unsigned long long)m.userspace_addr,
+              (unsigned long long)m.guest_phys_addr,
+              (unsigned long long)m.memory_size, m.flags);
     }
 }
 
@@ -502,6 +591,24 @@ KvmVM::createDevice(uint32_t type, uint32_t flags)
 #endif
 }
 
+bool
+KvmVM::validEnvironment() const
+{
+    for (auto *tc: system->threads) {
+        if (!dynamic_cast<BaseKvmCPU *>(tc->getCpuPtr()))
+            return false;
+    }
+
+    return true;
+}
+
+long
+KvmVM::contextIdToVCpuId(ContextID ctx) const
+{
+    return dynamic_cast<BaseKvmCPU*>
+        (system->threads[ctx]->getCpuPtr())->getVCpuID();
+}
+
 int
 KvmVM::createVCPU(long vcpuID)
 {
@@ -539,15 +646,4 @@ KvmVM::ioctl(int request, long p1) const
     return ::ioctl(vmFD, request, p1);
 }
 
-
-KvmVM *
-KvmVMParams::create()
-{
-    static bool created = false;
-    if (created)
-        warn_once("Use of multiple KvmVMs is currently untested!\n");
-
-    created = true;
-
-    return new KvmVM(this);
-}
+} // namespace gem5

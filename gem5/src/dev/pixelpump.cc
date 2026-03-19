@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015 ARM Limited
+ * Copyright (c) 2015, 2017 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -33,11 +33,14 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andreas Sandberg
  */
 
 #include "dev/pixelpump.hh"
+
+#include "base/logging.hh"
+
+namespace gem5
+{
 
 const DisplayTimings DisplayTimings::vga(
     640, 480,
@@ -136,10 +139,11 @@ BasePixelPump::unserialize(CheckpointIn &cp)
         event->unserializeSection(cp, event->name());
 }
 
-
 void
-BasePixelPump::start(const DisplayTimings &timings)
+BasePixelPump::updateTimings(const DisplayTimings &timings)
 {
+    panic_if(active(), "Trying to update timings in active PixelPump\n");
+
     _timings = timings;
 
     // Resize the frame buffer if needed
@@ -149,8 +153,14 @@ BasePixelPump::start(const DisplayTimings &timings)
     // Set the current line past the last line in the frame. This
     // triggers the new frame logic in beginLine().
     line = _timings.linesPerFrame();
+}
+
+void
+BasePixelPump::start()
+{
     schedule(evBeginLine, clockEdge());
 }
+
 
 void
 BasePixelPump::stop()
@@ -241,6 +251,50 @@ BasePixelPump::renderPixels()
     }
 }
 
+void
+BasePixelPump::renderFrame()
+{
+    _underrun = false;
+    line = 0;
+
+    // Signal vsync end and render the frame
+    line = _timings.lineVBackPorchStart();
+    onVSyncEnd();
+
+    // We only care about the visible screen area when rendering the
+    // frame
+    for (line = _timings.lineFirstVisible();
+        line < _timings.lineFrontPorchStart();
+        ++line) {
+
+        _posX = 0;
+
+        onHSyncBegin();
+        onHSyncEnd();
+
+        renderLine();
+    }
+
+    line = _timings.lineFrontPorchStart() - 1;
+    onFrameDone();
+
+    // Signal vsync until the next frame begins
+    line = _timings.lineVSyncStart();
+    onVSyncBegin();
+}
+
+void
+BasePixelPump::renderLine()
+{
+    const unsigned pos_y = posY();
+    const size_t _width = fb.width();
+
+    auto pixel_it = fb.pixels.begin() + _width * pos_y;
+    panic_if(nextLine(pixel_it, _width) != _width,
+            "Unexpected underrun in BasePixelPump (%u, %u)", _width, pos_y);
+}
+
+
 BasePixelPump::PixelEvent::PixelEvent(
     const char *name, BasePixelPump *_parent, CallbackType _func)
     : Event(), Drainable(),
@@ -304,3 +358,5 @@ BasePixelPump::PixelEvent::resume()
     suspended = false;
     relativeTick = 0;
 }
+
+} // namespace gem5

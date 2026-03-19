@@ -33,9 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Ali Saidi
- *          William Wang
  */
 
 /** @file
@@ -47,17 +44,20 @@
 
 #include <iostream>
 
-#include "base/vnc/vncinput.hh"
-#include "base/bitmap.hh"
 #include "base/circlebuf.hh"
+#include "base/compiler.hh"
 #include "base/pollevent.hh"
 #include "base/socket.hh"
+#include "base/vnc/vncinput.hh"
 #include "params/VncServer.hh"
 #include "sim/sim_object.hh"
 
 /** @file
  * Declaration of a VNC server
  */
+
+namespace gem5
+{
 
 class VncServer : public VncInput
 {
@@ -75,7 +75,8 @@ class VncServer : public VncInput
     const static uint32_t VncOK   = 0;
 
     /** Server -> Client message IDs */
-    enum ServerMessages {
+    enum ServerMessages
+    {
         ServerFrameBufferUpdate     = 0,
         ServerSetColorMapEntries    = 1,
         ServerBell                  = 2,
@@ -83,7 +84,8 @@ class VncServer : public VncInput
     };
 
     /** Encoding types */
-    enum EncodingTypes {
+    enum EncodingTypes
+    {
         EncodingRaw         = 0,
         EncodingCopyRect    = 1,
         EncodingHextile     = 5,
@@ -91,7 +93,8 @@ class VncServer : public VncInput
     };
 
     /** keyboard/mouse support */
-    enum MouseEvents {
+    enum MouseEvents
+    {
         MouseLeftButton     = 0x1,
         MouseRightButton    = 0x2,
         MouseMiddleButton   = 0x4
@@ -102,7 +105,8 @@ class VncServer : public VncInput
         return "RFB 003.008\n";
     }
 
-    enum ConnectionState {
+    enum ConnectionState
+    {
         WaitForProtocolVersion,
         WaitForSecurityResponse,
         WaitForClientInit,
@@ -110,33 +114,37 @@ class VncServer : public VncInput
         NormalPhase
     };
 
-    struct ServerInitMsg {
+    struct GEM5_PACKED ServerInitMsg
+    {
         uint16_t fbWidth;
         uint16_t fbHeight;
         PixelFormat px;
         uint32_t namelen;
         char name[2]; // just to put M5 in here
-    } M5_ATTR_PACKED;
+    };
 
-    struct FrameBufferUpdate {
+    struct GEM5_PACKED FrameBufferUpdate
+    {
         uint8_t type;
         uint8_t padding;
         uint16_t num_rects;
-    } M5_ATTR_PACKED;
+    };
 
-    struct FrameBufferRect {
+    struct GEM5_PACKED FrameBufferRect
+    {
         uint16_t x;
         uint16_t y;
         uint16_t width;
         uint16_t height;
         int32_t encoding;
-    } M5_ATTR_PACKED;
+    };
 
-    struct ServerCutText {
+    struct GEM5_PACKED ServerCutText
+    {
         uint8_t type;
         uint8_t padding[3];
         uint32_t length;
-    } M5_ATTR_PACKED;
+    };
 
     /** @} */
 
@@ -172,16 +180,16 @@ class VncServer : public VncInput
     int number;
     int dataFd; // data stream file describer
 
-    ListenSocket listener;
+    ListenSocketPtr listener;
 
-    void listen(int port);
+    void listen();
     void accept();
     void data();
     void detach();
 
   public:
     typedef VncServerParams Params;
-    VncServer(const Params *p);
+    VncServer(const Params &p);
     ~VncServer();
 
     // RFB
@@ -216,9 +224,9 @@ class VncServer : public VncInput
     /** Read some data from the client
      * @param buf the data to read
      * @param len the amount of data to read
-     * @return length read
+     * @return whether the read was successful
      */
-    size_t read(uint8_t *buf, size_t len);
+    bool read(uint8_t *buf, size_t len);
 
     /** Read len -1 bytes from the client into the buffer provided + 1
      * assert that we read enough bytes. This function exists to handle
@@ -226,35 +234,35 @@ class VncServer : public VncInput
      * the first byte which describes which one we're reading
      * @param buf the address of the buffer to add one to and read data into
      * @param len the amount of data  + 1 to read
-     * @return length read
+     * @return whether the read was successful.
      */
-    size_t read1(uint8_t *buf, size_t len);
+    bool read1(uint8_t *buf, size_t len);
 
 
     /** Templated version of the read function above to
      * read simple data to the client
      * @param val data to recv from the client
      */
-    template <typename T> size_t read(T* val);
+    template <typename T> bool read(T* val);
 
 
     /** Write a buffer to the client.
      * @param buf buffer to send
      * @param len length of the buffer
-     * @return number of bytes sent
+     * @return whether the write was successful
      */
-    size_t write(const uint8_t *buf, size_t len);
+    bool write(const uint8_t *buf, size_t len);
 
     /** Templated version of the write function above to
      * write simple data to the client
      * @param val data to send to the client
      */
-    template <typename T> size_t write(T* val);
+    template <typename T> bool write(T* val);
 
     /** Send a string to the client
      * @param str string to transmit
      */
-    size_t write(const char* str);
+    bool write(const char* str);
 
     /** Check the client's protocol verion for compatibility and send
      * the security types we support
@@ -307,8 +315,10 @@ class VncServer : public VncInput
     static const PixelConverter pixelConverter;
 
   public:
-    void setDirty() M5_ATTR_OVERRIDE;
-    void frameBufferResized() M5_ATTR_OVERRIDE;
+    void setDirty() override;
+    void frameBufferResized() override;
 };
+
+} // namespace gem5
 
 #endif

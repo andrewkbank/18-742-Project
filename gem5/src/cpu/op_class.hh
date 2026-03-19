@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010 ARM Limited
+ * Copyright (c) 2010, 2017-2018, 2020, 2022, 2025 Arm Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -36,8 +36,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nathan Binkert
  */
 
 #ifndef __CPU__OP_CLASS_HH__
@@ -45,46 +43,114 @@
 
 #include "enums/OpClass.hh"
 
+namespace gem5
+{
+
 /*
  * Do a bunch of wonky stuff to maintain backward compatability so I
  * don't have to change code in a zillion places.
  */
-using Enums::OpClass;
-using Enums::No_OpClass;
+using enums::OpClass;
+using enums::No_OpClass;
 
-static const OpClass IntAluOp = Enums::IntAlu;
-static const OpClass IntMultOp = Enums::IntMult;
-static const OpClass IntDivOp = Enums::IntDiv;
-static const OpClass FloatAddOp = Enums::FloatAdd;
-static const OpClass FloatCmpOp = Enums::FloatCmp;
-static const OpClass FloatCvtOp = Enums::FloatCvt;
-static const OpClass FloatMultOp = Enums::FloatMult;
-static const OpClass FloatDivOp = Enums::FloatDiv;
-static const OpClass FloatSqrtOp = Enums::FloatSqrt;
-static const OpClass SimdAddOp = Enums::SimdAdd;
-static const OpClass SimdAddAccOp = Enums::SimdAddAcc;
-static const OpClass SimdAluOp = Enums::SimdAlu;
-static const OpClass SimdCmpOp = Enums::SimdCmp;
-static const OpClass SimdCvtOp = Enums::SimdCvt;
-static const OpClass SimdMiscOp = Enums::SimdMisc;
-static const OpClass SimdMultOp = Enums::SimdMult;
-static const OpClass SimdMultAccOp = Enums::SimdMultAcc;
-static const OpClass SimdShiftOp = Enums::SimdShift;
-static const OpClass SimdShiftAccOp = Enums::SimdShiftAcc;
-static const OpClass SimdSqrtOp = Enums::SimdSqrt;
-static const OpClass SimdFloatAddOp = Enums::SimdFloatAdd;
-static const OpClass SimdFloatAluOp = Enums::SimdFloatAlu;
-static const OpClass SimdFloatCmpOp = Enums::SimdFloatCmp;
-static const OpClass SimdFloatCvtOp = Enums::SimdFloatCvt;
-static const OpClass SimdFloatDivOp = Enums::SimdFloatDiv;
-static const OpClass SimdFloatMiscOp = Enums::SimdFloatMisc;
-static const OpClass SimdFloatMultOp = Enums::SimdFloatMult;
-static const OpClass SimdFloatMultAccOp = Enums::SimdFloatMultAcc;
-static const OpClass SimdFloatSqrtOp = Enums::SimdFloatSqrt;
-static const OpClass MemReadOp = Enums::MemRead;
-static const OpClass MemWriteOp = Enums::MemWrite;
-static const OpClass IprAccessOp = Enums::IprAccess;
-static const OpClass InstPrefetchOp = Enums::InstPrefetch;
-static const OpClass Num_OpClasses = Enums::Num_OpClass;
+static const OpClass IntAluOp = enums::IntAlu;
+static const OpClass IntMultOp = enums::IntMult;
+static const OpClass IntDivOp = enums::IntDiv;
+static const OpClass FloatAddOp = enums::FloatAdd;
+static const OpClass FloatCmpOp = enums::FloatCmp;
+static const OpClass FloatCvtOp = enums::FloatCvt;
+static const OpClass FloatMultOp = enums::FloatMult;
+static const OpClass FloatMultAccOp = enums::FloatMultAcc;
+static const OpClass FloatDivOp = enums::FloatDiv;
+static const OpClass FloatMiscOp = enums::FloatMisc;
+static const OpClass FloatSqrtOp = enums::FloatSqrt;
+static const OpClass SimdAddOp = enums::SimdAdd;
+static const OpClass SimdAddAccOp = enums::SimdAddAcc;
+static const OpClass SimdAluOp = enums::SimdAlu;
+static const OpClass SimdCmpOp = enums::SimdCmp;
+static const OpClass SimdCvtOp = enums::SimdCvt;
+static const OpClass SimdMiscOp = enums::SimdMisc;
+static const OpClass SimdMultOp = enums::SimdMult;
+static const OpClass SimdMultAccOp = enums::SimdMultAcc;
+static const OpClass SimdMatMultAccOp = enums::SimdMatMultAcc;
+static const OpClass SimdShiftOp = enums::SimdShift;
+static const OpClass SimdShiftAccOp = enums::SimdShiftAcc;
+static const OpClass SimdDivOp = enums::SimdDiv;
+static const OpClass SimdSqrtOp = enums::SimdSqrt;
+static const OpClass SimdReduceAddOp = enums::SimdReduceAdd;
+static const OpClass SimdReduceAluOp = enums::SimdReduceAlu;
+static const OpClass SimdReduceCmpOp = enums::SimdReduceCmp;
+static const OpClass SimdFloatAddOp = enums::SimdFloatAdd;
+static const OpClass SimdFloatAluOp = enums::SimdFloatAlu;
+static const OpClass SimdFloatCmpOp = enums::SimdFloatCmp;
+static const OpClass SimdFloatCvtOp = enums::SimdFloatCvt;
+static const OpClass SimdFloatDivOp = enums::SimdFloatDiv;
+static const OpClass SimdFloatMiscOp = enums::SimdFloatMisc;
+static const OpClass SimdFloatMultOp = enums::SimdFloatMult;
+static const OpClass SimdFloatMultAccOp = enums::SimdFloatMultAcc;
+static const OpClass SimdFloatMatMultAccOp = enums::SimdFloatMatMultAcc;
+static const OpClass SimdFloatSqrtOp = enums::SimdFloatSqrt;
+static const OpClass SimdFloatReduceCmpOp = enums::SimdFloatReduceCmp;
+static const OpClass SimdFloatReduceAddOp = enums::SimdFloatReduceAdd;
+static const OpClass SimdAesOp = enums::SimdAes;
+static const OpClass SimdAesMixOp = enums::SimdAesMix;
+static const OpClass SimdSha1HashOp = enums::SimdSha1Hash;
+static const OpClass SimdSha1Hash2Op = enums::SimdSha1Hash2;
+static const OpClass SimdSha256HashOp = enums::SimdSha256Hash;
+static const OpClass SimdSha256Hash2Op = enums::SimdSha256Hash2;
+static const OpClass SimdShaSigma2Op = enums::SimdShaSigma2;
+static const OpClass SimdShaSigma3Op = enums::SimdShaSigma3;
+static const OpClass SimdSha3Op = enums::SimdSha3;
+static const OpClass SimdSm4eOp = enums::SimdSm4e;
+static const OpClass SimdCrcOp = enums::SimdCrc;
+static const OpClass SimdPredAluOp = enums::SimdPredAlu;
+static const OpClass MatrixOp = enums::Matrix;
+static const OpClass MatrixMovOp = enums::MatrixMov;
+static const OpClass MatrixOPOp = enums::MatrixOP;
+static const OpClass MemReadOp = enums::MemRead;
+static const OpClass MemWriteOp = enums::MemWrite;
+static const OpClass FloatMemReadOp = enums::FloatMemRead;
+static const OpClass FloatMemWriteOp = enums::FloatMemWrite;
+static const OpClass SimdUnitStrideLoadOp = enums::SimdUnitStrideLoad;
+static const OpClass SimdUnitStrideStoreOp = enums::SimdUnitStrideStore;
+static const OpClass SimdUnitStrideMaskLoadOp
+             = enums::SimdUnitStrideMaskLoad;
+static const OpClass SimdUnitStrideMaskStoreOp
+             = enums::SimdUnitStrideMaskStore;
+static const OpClass SimdStridedLoadOp = enums::SimdStridedLoad;
+static const OpClass SimdStridedStoreOp = enums::SimdStridedStore;
+static const OpClass SimdIndexedLoadOp = enums::SimdIndexedLoad;
+static const OpClass SimdIndexedStoreOp = enums::SimdIndexedStore;
+static const OpClass SimdUnitStrideFaultOnlyFirstLoadOp
+             = enums::SimdUnitStrideFaultOnlyFirstLoad;
+static const OpClass SimdWholeRegisterLoadOp
+             = enums::SimdWholeRegisterLoad;
+static const OpClass SimdWholeRegisterStoreOp = enums::SimdWholeRegisterStore;
+static const OpClass InstPrefetchOp = enums::InstPrefetch;
+static const OpClass SimdUnitStrideSegmentedLoadOp = enums::SimdUnitStrideSegmentedLoad;
+static const OpClass SimdUnitStrideSegmentedStoreOp
+             = enums::SimdUnitStrideSegmentedStore;
+static const OpClass SimdUnitStrideSegmentedFaultOnlyFirstLoadOp
+             = enums::SimdUnitStrideSegmentedFaultOnlyFirstLoad;
+static const OpClass SimdStrideSegmentedLoadOp
+             = enums::SimdStrideSegmentedLoad;
+static const OpClass SimdStrideSegmentedStoreOp
+             = enums::SimdStrideSegmentedStore;
+static const OpClass SimdExtOp = enums::SimdExt;
+static const OpClass SimdFloatExtOp = enums::SimdFloatExt;
+static const OpClass SimdConfigOp = enums::SimdConfig;
+static const OpClass SimdBf16AddOp = enums::SimdBf16Add;
+static const OpClass SimdBf16CmpOp = enums::SimdBf16Cmp;
+static const OpClass SimdBf16CvtOp = enums::SimdBf16Cvt;
+static const OpClass SimdBf16DotProdOp = enums::SimdBf16DotProd;
+static const OpClass SimdBf16MatMultAccOp = enums::SimdBf16MatMultAcc;
+static const OpClass SimdBf16MultOp = enums::SimdBf16Mult;
+static const OpClass SimdBf16MultAccOp = enums::SimdBf16MultAcc;
+static const OpClass Bf16CvtOp = enums::Bf16Cvt;
+static const OpClass SimdDotProdOp = enums::SimdDotProd;
+static const OpClass SystemOp = enums::System;
+static const OpClass Num_OpClasses = enums::Num_OpClass;
+
+} // namespace gem5
 
 #endif // __CPU__OP_CLASS_HH__

@@ -32,10 +32,8 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Gabe Black
 
-microcode = '''
+microcode = """
 def macroop CVTSS2SD_XMM_XMM {
     cvtf2f xmml, xmmlm, destSize=8, srcSize=4, ext=Scalar
 };
@@ -106,4 +104,4 @@ def macroop CVTPD2PS_XMM_P {
     cvtf2f xmml, ufp2, destSize=4, srcSize=8, ext=2
     lfpimm xmmh, 0
 };
-'''
+"""

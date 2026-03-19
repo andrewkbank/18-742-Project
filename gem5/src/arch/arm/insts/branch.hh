@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010 ARM Limited
+ * Copyright (c) 2010,2018 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -36,13 +36,15 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Stephen Hines
  */
+
 #ifndef __ARCH_ARM_INSTS_BRANCH_HH__
 #define __ARCH_ARM_INSTS_BRANCH_HH__
 
 #include "arch/arm/insts/pred_inst.hh"
+
+namespace gem5
+{
 
 namespace ArmISA
 {
@@ -58,6 +60,8 @@ class BranchImm : public PredOp
         PredOp(mnem, _machInst, __opClass), imm(_imm)
     {}
 
+    std::string generateDisassembly(
+            Addr pc, const loader::SymbolTable *symtab) const override;
 };
 
 // Conditionally Branch to a target computed with an immediate
@@ -78,13 +82,16 @@ class BranchImmCond : public BranchImm
 class BranchReg : public PredOp
 {
   protected:
-    IntRegIndex op1;
+    RegIndex op1;
 
   public:
     BranchReg(const char *mnem, ExtMachInst _machInst, OpClass __opClass,
-              IntRegIndex _op1) :
+              RegIndex _op1) :
         PredOp(mnem, _machInst, __opClass), op1(_op1)
     {}
+
+    std::string generateDisassembly(
+            Addr pc, const loader::SymbolTable *symtab) const override;
 };
 
 // Conditionally Branch to a target computed with a register
@@ -92,7 +99,7 @@ class BranchRegCond : public BranchReg
 {
   public:
     BranchRegCond(const char *mnem, ExtMachInst _machInst, OpClass __opClass,
-                  IntRegIndex _op1, ConditionCode _condCode) :
+                  RegIndex _op1, ConditionCode _condCode) :
         BranchReg(mnem, _machInst, __opClass, _op1)
     {
         // Only update if this isn't part of an IT block
@@ -105,14 +112,17 @@ class BranchRegCond : public BranchReg
 class BranchRegReg : public PredOp
 {
   protected:
-    IntRegIndex op1;
-    IntRegIndex op2;
+    RegIndex op1;
+    RegIndex op2;
 
   public:
     BranchRegReg(const char *mnem, ExtMachInst _machInst, OpClass __opClass,
-                 IntRegIndex _op1, IntRegIndex _op2) :
+                 RegIndex _op1, RegIndex _op2) :
         PredOp(mnem, _machInst, __opClass), op1(_op1), op2(_op2)
     {}
+
+    std::string generateDisassembly(
+            Addr pc, const loader::SymbolTable *symtab) const override;
 };
 
 // Branch to a target computed with an immediate and a register
@@ -120,15 +130,16 @@ class BranchImmReg : public PredOp
 {
   protected:
     int32_t imm;
-    IntRegIndex op1;
+    RegIndex op1;
 
   public:
     BranchImmReg(const char *mnem, ExtMachInst _machInst, OpClass __opClass,
-                 int32_t _imm, IntRegIndex _op1) :
+                 int32_t _imm, RegIndex _op1) :
         PredOp(mnem, _machInst, __opClass), imm(_imm), op1(_op1)
     {}
 };
 
-}
+} // namespace ArmISA
+} // namespace gem5
 
 #endif //__ARCH_ARM_INSTS_BRANCH_HH__

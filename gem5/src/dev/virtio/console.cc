@@ -33,21 +33,22 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andreas Sandberg
  */
 
-#include "debug/VIOConsole.hh"
 #include "dev/virtio/console.hh"
+
+#include "debug/VIOConsole.hh"
 #include "params/VirtIOConsole.hh"
 #include "sim/system.hh"
 
+namespace gem5
+{
 
-VirtIOConsole::VirtIOConsole(Params *params)
+VirtIOConsole::VirtIOConsole(const Params &params)
     : VirtIODeviceBase(params, ID_CONSOLE, sizeof(Config), F_SIZE),
-      qRecv(params->system->physProxy, params->qRecvSize, *this),
-      qTrans(params->system->physProxy, params->qTransSize, *this),
-      term(*params->terminal), callbackDataAvail(qRecv)
+      qRecv(params.system->physProxy, byteOrder, params.qRecvSize, *this),
+      qTrans(params.system->physProxy, byteOrder, params.qTransSize, *this),
+      device(*params.device)
 {
     registerQueue(qRecv);
     registerQueue(qTrans);
@@ -55,7 +56,7 @@ VirtIOConsole::VirtIOConsole(Params *params)
     config.cols = 80;
     config.rows = 24;
 
-    term.regDataAvailCallback(&callbackDataAvail);
+    device.regInterfaceCallback([this]() { qRecv.trySend(); });
 }
 
 
@@ -66,8 +67,8 @@ void
 VirtIOConsole::readConfig(PacketPtr pkt, Addr cfgOffset)
 {
     Config cfg_out;
-    cfg_out.rows = htov_legacy(config.rows);
-    cfg_out.cols = htov_legacy(config.cols);
+    cfg_out.rows = htog(config.rows, byteOrder);
+    cfg_out.cols = htog(config.cols, byteOrder);
 
     readConfigBlob(pkt, cfgOffset, (uint8_t *)&cfg_out);
 }
@@ -81,11 +82,11 @@ VirtIOConsole::TermRecvQueue::trySend()
     // get free descriptors (i.e., there are buffers available to
     // send) from the guest.
     VirtDescriptor *d;
-    while (parent.term.dataAvailable() && (d = consumeDescriptor())) {
+    while (parent.device.dataAvailable() && (d = consumeDescriptor())) {
         DPRINTF(VIOConsole, "Got descriptor (len: %i)\n", d->size());
         size_t len(0);
-        while (parent.term.dataAvailable() && len < d->size()) {
-            uint8_t in(parent.term.in());
+        while (parent.device.dataAvailable() && len < d->size()) {
+            uint8_t in(parent.device.readData());
             d->chainWrite(len, &in, sizeof(uint8_t));
             ++len;
         }
@@ -104,19 +105,15 @@ VirtIOConsole::TermTransQueue::onNotifyDescriptor(VirtDescriptor *desc)
 
     // Copy the data from the guest and forward it to the
     // terminal.
-    const size_t size(desc->chainSize());
-    uint8_t data[size];
-    desc->chainRead(0, data, size);
+    const size_t size = desc->chainSize();
+    auto data = std::make_unique<uint8_t[]>(size);
+    desc->chainRead(0, data.get(), size);
     for (int i = 0; i < desc->size(); ++i)
-        parent.term.out(data[i]);
+        parent.device.writeData(data[i]);
 
     // Tell the guest that we are done with this descriptor.
     produceDescriptor(desc, 0);
     parent.kick();
 }
 
-VirtIOConsole *
-VirtIOConsoleParams::create()
-{
-    return new VirtIOConsole(this);
-}
+} // namespace gem5

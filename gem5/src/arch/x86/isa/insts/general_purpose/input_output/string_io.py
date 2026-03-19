@@ -32,10 +32,8 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Gabe Black
 
-microcode = '''
+microcode = """
 def macroop INS_M_R {
     # Find the constant we need to either add or subtract from rdi
     ruflag t0, 10
@@ -52,6 +50,10 @@ def macroop INS_M_R {
     mfence
 
     add rdi, rdi, t3, dataSize=asz
+};
+
+def macroop INS_VIRT_M_R {
+    panic "Virtual mode ins isn't implemented!"
 };
 
 def macroop INS_E_M_R {
@@ -79,6 +81,10 @@ end:
     fault "NoFault"
 };
 
+def macroop INS_VIRT_E_M_R {
+    panic "Virtual mode ins isn't implemented!"
+};
+
 def macroop OUTS_R_M {
     # Find the constant we need to either add or subtract from rdi
     ruflag t0, 10
@@ -95,6 +101,10 @@ def macroop OUTS_R_M {
     mfence
 
     add rsi, rsi, t3, dataSize=asz
+};
+
+def macroop OUTS_VIRT_R_M {
+    panic "Virtual mode outs isn't implemented!"
 };
 
 def macroop OUTS_E_R_M {
@@ -121,4 +131,8 @@ end:
     mfence
     fault "NoFault"
 };
-'''
+
+def macroop OUTS_VIRT_E_R_M {
+    panic "Virtual mode outs isn't implemented!"
+};
+"""

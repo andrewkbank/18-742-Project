@@ -26,8 +26,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef __MEM_RUBY_NETWORK_BASIC_ROUTER_HH__
-#define __MEM_RUBY_NETWORK_BASIC_ROUTER_HH__
+#ifndef __MEM_RUBY_NETWORK_BASICROUTER_HH__
+#define __MEM_RUBY_NETWORK_BASICROUTER_HH__
 
 #include <iostream>
 #include <string>
@@ -36,12 +36,17 @@
 #include "params/BasicRouter.hh"
 #include "sim/clocked_object.hh"
 
+namespace gem5
+{
+
+namespace ruby
+{
+
 class BasicRouter : public ClockedObject
 {
   public:
-    typedef BasicRouterParams Params;
-    BasicRouter(const Params *p);
-    const Params *params() const { return (const Params *)_params; }
+    PARAMS(BasicRouter);
+    BasicRouter(const Params &p);
 
     void init();
 
@@ -51,6 +56,7 @@ class BasicRouter : public ClockedObject
     // ID in relation to other routers in the system
     //
     uint32_t m_id;
+    uint32_t m_latency;
 };
 
 inline std::ostream&
@@ -61,4 +67,7 @@ operator<<(std::ostream& out, const BasicRouter& obj)
     return out;
 }
 
-#endif // __MEM_RUBY_NETWORK_BASIC_ROUTER_HH__
+} // namespace ruby
+} // namespace gem5
+
+#endif //__MEM_RUBY_NETWORK_BASICROUTER_HH__

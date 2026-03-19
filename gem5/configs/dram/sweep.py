@@ -1,4 +1,4 @@
-# Copyright (c) 2014-2015 ARM Limited
+# Copyright (c) 2014-2015, 2018-2020 ARM Limited
 # All rights reserved.
 #
 # The license below extends only to copyright in the software and shall
@@ -32,51 +32,70 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Andreas Hansson
 
-import optparse
+import argparse
+import math
 
 import m5
 from m5.objects import *
+from m5.stats import periodicStatDump
 from m5.util import addToPath
-from m5.internal.stats import periodicStatDump
 
-addToPath('../common')
+addToPath("../")
 
-import MemConfig
+from common import (
+    MemConfig,
+    ObjectList,
+)
 
 # this script is helpful to sweep the efficiency of a specific memory
 # controller configuration, by varying the number of banks accessed,
 # and the sequential stride size (how many bytes per activate), and
 # observe what bus utilisation (bandwidth) is achieved
 
-parser = optparse.OptionParser()
+parser = argparse.ArgumentParser()
 
-# Use a single-channel DDR3-1600 x64 by default
-parser.add_option("--mem-type", type="choice", default="DDR3_1600_x64",
-                  choices=MemConfig.mem_names(),
-                  help = "type of memory to use")
+dram_generators = {
+    "DRAM": lambda x: x.createDram,
+    "DRAM_ROTATE": lambda x: x.createDramRot,
+}
 
-parser.add_option("--mem-ranks", "-r", type="int", default=1,
-                  help = "Number of ranks to iterate across")
+# Use a single-channel DDR3-1600 x64 (8x8 topology) by default
+parser.add_argument(
+    "--mem-type",
+    default="DDR3_1600_8x8",
+    choices=ObjectList.mem_list.get_names(),
+    help="type of memory to use",
+)
 
-parser.add_option("--rd_perc", type="int", default=100,
-                  help = "Percentage of read commands")
+parser.add_argument(
+    "--mem-ranks",
+    "-r",
+    type=int,
+    default=1,
+    help="Number of ranks to iterate across",
+)
 
-parser.add_option("--mode", type="choice", default="DRAM",
-                  choices=["DRAM", "DRAM_ROTATE"],
-                  help = "DRAM: Random traffic; \
-                          DRAM_ROTATE: Traffic rotating across banks and ranks")
+parser.add_argument(
+    "--rd_perc", type=int, default=100, help="Percentage of read commands"
+)
 
-parser.add_option("--addr_map", type="int", default=1,
-                  help = "0: RoCoRaBaCh; 1: RoRaBaCoCh/RoRaBaChCo")
+parser.add_argument(
+    "--mode",
+    default="DRAM",
+    choices=list(dram_generators.keys()),
+    help="DRAM: Random traffic; \
+                          DRAM_ROTATE: Traffic rotating across banks and ranks",
+)
 
-(options, args) = parser.parse_args()
+parser.add_argument(
+    "--addr-map",
+    choices=ObjectList.dram_addr_map_list.get_names(),
+    default="RoRaBaCoCh",
+    help="DRAM address map policy",
+)
 
-if args:
-    print "Error: script doesn't take any positional arguments"
-    sys.exit(1)
+args = parser.parse_args()
 
 # at the moment we stay with the default open-adaptive page policy,
 # and address mapping
@@ -84,70 +103,76 @@ if args:
 # start with the system itself, using a multi-layer 2.0 GHz
 # crossbar, delivering 64 bytes / 3 cycles (one header cycle)
 # which amounts to 42.7 GByte/s per layer and thus per port
-system = System(membus = IOXBar(width = 32))
-system.clk_domain = SrcClockDomain(clock = '2.0GHz',
-                                   voltage_domain =
-                                   VoltageDomain(voltage = '1V'))
+system = System(membus=IOXBar(width=32))
+system.clk_domain = SrcClockDomain(
+    clock="2.0GHz", voltage_domain=VoltageDomain(voltage="1V")
+)
 
-# we are fine with 256 MB memory for now
-mem_range = AddrRange('256MB')
+# we are fine with 256 MiB memory for now
+mem_range = AddrRange("256MiB")
 system.mem_ranges = [mem_range]
 
 # do not worry about reserving space for the backing store
-mmap_using_noreserve = True
+system.mmap_using_noreserve = True
 
 # force a single channel to match the assumptions in the DRAM traffic
 # generator
-options.mem_channels = 1
-options.external_memory_system = 0
-options.tlm_memory = 0
-MemConfig.config_mem(options, system)
+args.mem_channels = 1
+args.external_memory_system = 0
+args.tlm_memory = 0
+args.elastic_trace_en = 0
+MemConfig.config_mem(args, system)
 
 # the following assumes that we are using the native DRAM
 # controller, check to be sure
-if not isinstance(system.mem_ctrls[0], m5.objects.DRAMCtrl):
-    fatal("This script assumes the memory is a DRAMCtrl subclass")
+if not isinstance(system.mem_ctrls[0], m5.objects.MemCtrl):
+    fatal("This script assumes the controller is a MemCtrl subclass")
+if not isinstance(system.mem_ctrls[0].dram, m5.objects.DRAMInterface):
+    fatal("This script assumes the memory is a DRAMInterface subclass")
 
 # there is no point slowing things down by saving any data
-system.mem_ctrls[0].null = True
+system.mem_ctrls[0].dram.null = True
 
 # Set the address mapping based on input argument
-# Default to RoRaBaCoCh
-if options.addr_map == 0:
-   system.mem_ctrls[0].addr_mapping = "RoCoRaBaCh"
-elif options.addr_map == 1:
-   system.mem_ctrls[0].addr_mapping = "RoRaBaCoCh"
-else:
-    fatal("Did not specify a valid address map argument")
+system.mem_ctrls[0].dram.addr_mapping = args.addr_map
 
 # stay in each state for 0.25 ms, long enough to warm things up, and
 # short enough to avoid hitting a refresh
 period = 250000000
-
-# this is where we go off piste, and print the traffic generator
-# configuration that we will later use, crazy but it works
-cfg_file_name = "configs/dram/sweep.cfg"
-cfg_file = open(cfg_file_name, 'w')
 
 # stay in each state as long as the dump/reset period, use the entire
 # range, issue transactions of the right DRAM burst size, and match
 # the DRAM maximum bandwidth to ensure that it is saturated
 
 # get the number of banks
-nbr_banks = system.mem_ctrls[0].banks_per_rank.value
+nbr_banks = system.mem_ctrls[0].dram.banks_per_rank.value
 
 # determine the burst length in bytes
-burst_size = int((system.mem_ctrls[0].devices_per_rank.value *
-                  system.mem_ctrls[0].device_bus_width.value *
-                  system.mem_ctrls[0].burst_length.value) / 8)
+burst_size = int(
+    (
+        system.mem_ctrls[0].dram.devices_per_rank.value
+        * system.mem_ctrls[0].dram.device_bus_width.value
+        * system.mem_ctrls[0].dram.burst_length.value
+    )
+    / 8
+)
 
 # next, get the page size in bytes
-page_size = system.mem_ctrls[0].devices_per_rank.value * \
-    system.mem_ctrls[0].device_rowbuffer_size.value
+page_size = (
+    system.mem_ctrls[0].dram.devices_per_rank.value
+    * system.mem_ctrls[0].dram.device_rowbuffer_size.value
+)
 
-# match the maximum bandwidth of the memory, the parameter is in ns
-# and we need it in ticks
-itt = system.mem_ctrls[0].tBURST.value * 1000000000000
+# match the maximum bandwidth of the memory, the parameter is in seconds
+# and we need it in ticks (ps)
+itt = (
+    getattr(
+        system.mem_ctrls[0].dram.tBURST_MIN,
+        "value",
+        system.mem_ctrls[0].dram.tBURST.value,
+    )
+    * 1000000000000
+)
 
 # assume we start at 0
 max_addr = mem_range.end
@@ -156,52 +181,60 @@ max_addr = mem_range.end
 # enough
 max_stride = min(512, page_size)
 
-# now we create the state by iterating over the stride size from burst
-# size to the max stride, and from using only a single bank up to the
-# number of banks available
-nxt_state = 0
-for bank in range(1, nbr_banks + 1):
-    for stride_size in range(burst_size, max_stride + 1, burst_size):
-        cfg_file.write("STATE %d %d %s %d 0 %d %d "
-                       "%d %d %d %d %d %d %d %d %d\n" %
-                       (nxt_state, period, options.mode, options.rd_perc,
-                        max_addr, burst_size, itt, itt, 0, stride_size,
-                        page_size, nbr_banks, bank, options.addr_map,
-                        options.mem_ranks))
-        nxt_state = nxt_state + 1
-
-cfg_file.write("INIT 0\n")
-
-# go through the states one by one
-for state in range(1, nxt_state):
-    cfg_file.write("TRANSITION %d %d 1\n" % (state - 1, state))
-
-cfg_file.write("TRANSITION %d %d 1\n" % (nxt_state - 1, nxt_state - 1))
-
-cfg_file.close()
-
 # create a traffic generator, and point it to the file we just created
-system.tgen = TrafficGen(config_file = cfg_file_name)
+system.tgen = PyTrafficGen()
 
 # add a communication monitor
 system.monitor = CommMonitor()
 
 # connect the traffic generator to the bus via a communication monitor
-system.tgen.port = system.monitor.slave
-system.monitor.master = system.membus.slave
+system.tgen.port = system.monitor.cpu_side_port
+system.monitor.mem_side_port = system.membus.cpu_side_ports
 
 # connect the system port even if it is not used in this example
-system.system_port = system.membus.slave
+system.system_port = system.membus.cpu_side_ports
 
 # every period, dump and reset all stats
 periodicStatDump(period)
 
 # run Forrest, run!
-root = Root(full_system = False, system = system)
-root.system.mem_mode = 'timing'
+root = Root(full_system=False, system=system)
+root.system.mem_mode = "timing"
 
 m5.instantiate()
-m5.simulate(nxt_state * period)
 
-print "DRAM sweep with burst: %d, banks: %d, max stride: %d" % \
-    (burst_size, nbr_banks, max_stride)
+
+def trace():
+    addr_map = ObjectList.dram_addr_map_list.get(args.addr_map)
+    generator = dram_generators[args.mode](system.tgen)
+    for stride_size in range(burst_size, max_stride + 1, burst_size):
+        for bank in range(1, nbr_banks + 1):
+            num_seq_pkts = int(math.ceil(float(stride_size) / burst_size))
+            yield generator(
+                period,
+                0,
+                max_addr,
+                burst_size,
+                int(itt),
+                int(itt),
+                args.rd_perc,
+                0,
+                num_seq_pkts,
+                page_size,
+                nbr_banks,
+                bank,
+                addr_map,
+                args.mem_ranks,
+            )
+    yield system.tgen.createExit(0)
+
+
+system.tgen.start(trace())
+
+m5.simulate()
+
+print(
+    "DRAM sweep with burst: %d, banks: %d, max stride: %d, request \
+       generation period: %d"
+    % (burst_size, nbr_banks, max_stride, itt)
+)

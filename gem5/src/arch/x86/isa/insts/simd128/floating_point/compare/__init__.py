@@ -32,16 +32,16 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Gabe Black
 
-categories = ["compare_and_write_mask",
-              "compare_and_write_minimum_or_maximum",
-              "compare_and_write_rflags"]
+categories = [
+    "compare_and_write_mask",
+    "compare_and_write_minimum_or_maximum",
+    "compare_and_write_rflags",
+]
 
-microcode = '''
+microcode = """
 # SSE instructions
-'''
+"""
 for category in categories:
-    exec "import %s as cat" % category
+    exec(f"from . import {category} as cat")
     microcode += cat.microcode

@@ -36,21 +36,21 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nathan Binkert
- *          Sascha Bischoff
  */
 
 #ifndef __SIM_STAT_CONTROL_HH__
 #define __SIM_STAT_CONTROL_HH__
 
-namespace Stats {
+#include "base/compiler.hh"
+#include "base/types.hh"
+#include "sim/cur_tick.hh"
 
-double statElapsedTime();
+namespace gem5
+{
 
-Tick statElapsedTicks();
+namespace statistics
+{
 
-Tick statFinalTick();
 
 void initSimStats();
 
@@ -81,6 +81,7 @@ void schedStatEvent(bool dump, bool reset, Tick when = curTick(),
  * @param period The period at which the dumping should occur.
  */
 void periodicStatDump(Tick period = 0);
-} // namespace Stats
+} // namespace statistics
+} // namespace gem5
 
 #endif // __SIM_STAT_CONTROL_HH__

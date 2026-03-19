@@ -1,4 +1,16 @@
 /*
+ * Copyright (c) 2021 Arm Limited
+ * All rights reserved
+ *
+ * The license below extends only to copyright in the software and shall
+ * not be construed as granting a license to any other intellectual
+ * property including but not limited to intellectual property relating
+ * to a hardware implementation of the functionality of the software
+ * licensed hereunder.  You may use the software subject to the license
+ * terms below provided that you ensure that this notice is replicated
+ * unmodified and in its entirety in all distributions of the software,
+ * modified or unmodified, in source code or in binary form.
+ *
  * Copyright (c) 2006 The Regents of The University of Michigan
  * All rights reserved.
  *
@@ -24,13 +36,50 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nathan Binkert
- *          Steve Reinhardt
  */
 
-#include "base/types.hh"
-#include "sim/sim_events.hh"
+#ifndef __SIMULATE_HH__
+#define __SIMULATE_HH__
 
-GlobalSimLoopExitEvent *simulate(Tick num_cycles = MaxTick);
+#include "base/types.hh"
+
+namespace gem5
+{
+
+class GlobalSimLoopExitEvent;
+
+GlobalSimLoopExitEvent *simulate(Tick num_cycles = -1);
+
+/**
+ * @brief Set the maximum tick.
+ *
+ * This function will schedule, or reschedule, the maximum tick for the
+ * simulation.
+ *
+ * This will setup the GlobalSimLoopExitEvent if it does not already exist.
+ *
+ * @param tick The maximum tick.
+ */
+void set_max_tick(Tick tick);
+
+/**
+ * @brief Get the maximum simulation tick.
+ *
+ *
+ * @returns The maximum simulation tick.
+ */
+Tick get_max_tick();
+
+/**
+ * Terminate helper threads when running in parallel mode.
+ *
+ * @pre Simulator must have returned from simulate() to service a
+ * GlobalExitEvent prior to calling this function.
+ */
+void terminateEventQueueThreads();
+
 extern GlobalSimLoopExitEvent *simulate_limit_event;
+
+} // namespace gem5
+
+#endif // __SIMULATE_HH__

@@ -1,4 +1,16 @@
 /*
+ * Copyright (c) 2016-2018 ARM Limited
+ * All rights reserved
+ *
+ * The license below extends only to copyright in the software and shall
+ * not be construed as granting a license to any other intellectual
+ * property including but not limited to intellectual property relating
+ * to a hardware implementation of the functionality of the software
+ * licensed hereunder. You may use the software subject to the license
+ * terms below provided that you ensure that this notice is replicated
+ * unmodified and in its entirety in all distributions of the software,
+ * modified or unmodified, in source code or in binary form.
+ *
  * Copyright (c) 2004-2005 The Regents of The University of Michigan
  * Copyright (c) 2013 Advanced Micro Devices, Inc.
  * All rights reserved.
@@ -25,23 +37,25 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Kevin Lim
- *          Gabe Black
  */
 
 #ifndef __CPU_O3_REGFILE_HH__
 #define __CPU_O3_REGFILE_HH__
 
+#include <cstring>
 #include <vector>
 
-#include "arch/isa_traits.hh"
-#include "arch/kernel_stats.hh"
-#include "arch/types.hh"
+#include "arch/generic/isa.hh"
 #include "base/trace.hh"
-#include "config/the_isa.hh"
 #include "cpu/o3/comm.hh"
+#include "cpu/regfile.hh"
 #include "debug/IEW.hh"
+
+namespace gem5
+{
+
+namespace o3
+{
 
 class UnifiedFreeList;
 
@@ -52,46 +66,76 @@ class PhysRegFile
 {
   private:
 
-    typedef TheISA::IntReg IntReg;
-    typedef TheISA::FloatReg FloatReg;
-    typedef TheISA::FloatRegBits FloatRegBits;
-    typedef TheISA::CCReg CCReg;
-
-    typedef union {
-        FloatReg d;
-        FloatRegBits q;
-    } PhysFloatReg;
-
+    using PhysIds = std::vector<PhysRegId>;
+  public:
+    using IdRange = std::pair<PhysIds::iterator,
+                              PhysIds::iterator>;
+  private:
     /** Integer register file. */
-    std::vector<IntReg> intRegFile;
+    RegFile intRegFile;
+    std::vector<PhysRegId> intRegIds;
 
     /** Floating point register file. */
-    std::vector<PhysFloatReg> floatRegFile;
+    RegFile floatRegFile;
+    std::vector<PhysRegId> floatRegIds;
+
+    /** Vector register file. */
+    RegFile vectorRegFile;
+    std::vector<PhysRegId> vecRegIds;
+
+    /** Vector element register file. */
+    RegFile vectorElemRegFile;
+    std::vector<PhysRegId> vecElemIds;
+
+    /** Predicate register file. */
+    RegFile vecPredRegFile;
+    std::vector<PhysRegId> vecPredRegIds;
+
+    /** Matrix register file. */
+    RegFile matRegFile;
+    std::vector<PhysRegId> matRegIds;
 
     /** Condition-code register file. */
-    std::vector<CCReg> ccRegFile;
+    RegFile ccRegFile;
+    std::vector<PhysRegId> ccRegIds;
+
+    /** Misc Reg Ids */
+    std::vector<PhysRegId> miscRegIds;
 
     /**
-     * The first floating-point physical register index.  The physical
-     * register file has a single continuous index space, with the
-     * initial indices mapping to the integer registers, followed
-     * immediately by the floating-point registers.  Thus the first
-     * floating-point index is equal to the number of integer
-     * registers.
-     *
-     * Note that this internal organizational detail on how physical
-     * register file indices are ordered should *NOT* be exposed
-     * outside of this class.  Other classes can use the is*PhysReg()
-     * methods to map from a physical register index to a class
-     * without knowing the internal structure of the index map.
+     * Number of physical general purpose registers
      */
-    unsigned baseFloatRegIndex;
+    unsigned numPhysicalIntRegs;
 
     /**
-     * The first condition-code physical register index.  The
-     * condition-code registers follow the floating-point registers.
+     * Number of physical floating point registers
      */
-    unsigned baseCCRegIndex;
+    unsigned numPhysicalFloatRegs;
+
+    /**
+     * Number of physical vector registers
+     */
+    unsigned numPhysicalVecRegs;
+
+    /**
+     * Number of physical vector element registers
+     */
+    unsigned numPhysicalVecElemRegs;
+
+    /**
+     * Number of physical predicate registers
+     */
+    unsigned numPhysicalVecPredRegs;
+
+    /**
+     * Number of physical matrix registers
+     */
+    unsigned numPhysicalMatRegs;
+
+    /**
+     * Number of physical CC registers
+     */
+    unsigned numPhysicalCCRegs;
 
     /** Total number of physical registers. */
     unsigned totalNumRegs;
@@ -103,7 +147,11 @@ class PhysRegFile
      */
     PhysRegFile(unsigned _numPhysicalIntRegs,
                 unsigned _numPhysicalFloatRegs,
-                unsigned _numPhysicalCCRegs);
+                unsigned _numPhysicalVecRegs,
+                unsigned _numPhysicalVecPredRegs,
+                unsigned _numPhysicalMatRegs,
+                unsigned _numPhysicalCCRegs,
+                const BaseISA::RegClasses &classes);
 
     /**
      * Destructor to free resources
@@ -113,156 +161,179 @@ class PhysRegFile
     /** Initialize the free list */
     void initFreeList(UnifiedFreeList *freeList);
 
-    /** @return the number of integer physical registers. */
-    unsigned numIntPhysRegs() const { return baseFloatRegIndex; }
-
-    /** @return the number of floating-point physical registers. */
-    unsigned numFloatPhysRegs() const
-    { return baseCCRegIndex - baseFloatRegIndex; }
-
-    /** @return the number of condition-code physical registers. */
-    unsigned numCCPhysRegs() const
-    { return totalNumRegs - baseCCRegIndex; }
-
     /** @return the total number of physical registers. */
     unsigned totalNumPhysRegs() const { return totalNumRegs; }
 
-    /**
-     * @return true if the specified physical register index
-     * corresponds to an integer physical register.
-     */
-    bool isIntPhysReg(PhysRegIndex reg_idx) const
-    {
-        return 0 <= reg_idx && reg_idx < baseFloatRegIndex;
+    /** Gets a misc register PhysRegIdPtr. */
+    PhysRegIdPtr getMiscRegId(RegIndex reg_idx) {
+        return &miscRegIds[reg_idx];
     }
 
-    /**
-     * @return true if the specified physical register index
-     * corresponds to a floating-point physical register.
-     */
-    bool isFloatPhysReg(PhysRegIndex reg_idx) const
+    RegVal
+    getReg(PhysRegIdPtr phys_reg) const
     {
-        return (baseFloatRegIndex <= reg_idx && reg_idx < baseCCRegIndex);
+        const RegClassType type = phys_reg->classValue();
+        const RegIndex idx = phys_reg->index();
+
+        RegVal val;
+        switch (type) {
+          case IntRegClass:
+            val = intRegFile.reg(idx);
+            DPRINTF(IEW, "RegFile: Access to int register %i, has data %#x\n",
+                    idx, val);
+            return val;
+          case FloatRegClass:
+            val = floatRegFile.reg(idx);
+            DPRINTF(IEW, "RegFile: Access to float register %i has data %#x\n",
+                    idx, val);
+            return val;
+          case VecElemClass:
+            val = vectorElemRegFile.reg(idx);
+            DPRINTF(IEW, "RegFile: Access to vector element register %i "
+                    "has data %#x\n", idx, val);
+            return val;
+          case CCRegClass:
+            val = ccRegFile.reg(idx);
+            DPRINTF(IEW, "RegFile: Access to cc register %i has data %#x\n",
+                    idx, val);
+            return val;
+          default:
+            panic("Unsupported register class type %d.", type);
+        }
     }
 
-    /**
-     * Return true if the specified physical register index
-     * corresponds to a condition-code physical register.
-     */
-    bool isCCPhysReg(PhysRegIndex reg_idx)
+    void
+    getReg(PhysRegIdPtr phys_reg, void *val) const
     {
-        return (baseCCRegIndex <= reg_idx && reg_idx < totalNumRegs);
+        const RegClassType type = phys_reg->classValue();
+        const RegIndex idx = phys_reg->index();
+
+        switch (type) {
+          case IntRegClass:
+            *(RegVal *)val = getReg(phys_reg);
+            break;
+          case FloatRegClass:
+            *(RegVal *)val = getReg(phys_reg);
+            break;
+          case VecRegClass:
+            vectorRegFile.get(idx, val);
+            DPRINTF(IEW, "RegFile: Access to vector register %i, has "
+                    "data %s\n", idx, vectorRegFile.regClass.valString(val));
+            break;
+          case VecElemClass:
+            *(RegVal *)val = getReg(phys_reg);
+            break;
+          case VecPredRegClass:
+            vecPredRegFile.get(idx, val);
+            DPRINTF(IEW, "RegFile: Access to predicate register %i, has "
+                    "data %s\n", idx, vecPredRegFile.regClass.valString(val));
+            break;
+          case MatRegClass:
+            matRegFile.get(idx, val);
+            DPRINTF(IEW, "RegFile: Access to matrix register %i, has "
+                    "data %s\n", idx, matRegFile.regClass.valString(val));
+            break;
+          case CCRegClass:
+            *(RegVal *)val = getReg(phys_reg);
+            break;
+          default:
+            panic("Unrecognized register class type %d.", type);
+        }
     }
 
-    /** Reads an integer register. */
-    uint64_t readIntReg(PhysRegIndex reg_idx) const
+    void *
+    getWritableReg(PhysRegIdPtr phys_reg)
     {
-        assert(isIntPhysReg(reg_idx));
+        const RegClassType type = phys_reg->classValue();
+        const RegIndex idx = phys_reg->index();
 
-        DPRINTF(IEW, "RegFile: Access to int register %i, has data "
-                "%#x\n", int(reg_idx), intRegFile[reg_idx]);
-        return intRegFile[reg_idx];
+        switch (type) {
+          case VecRegClass:
+            return vectorRegFile.ptr(idx);
+          case VecPredRegClass:
+            return vecPredRegFile.ptr(idx);
+          case MatRegClass:
+            return matRegFile.ptr(idx);
+          default:
+            panic("Unrecognized register class type %d.", type);
+        }
     }
 
-    /** Reads a floating point register (double precision). */
-    FloatReg readFloatReg(PhysRegIndex reg_idx) const
+    void
+    setReg(PhysRegIdPtr phys_reg, RegVal val)
     {
-        assert(isFloatPhysReg(reg_idx));
+        const RegClassType type = phys_reg->classValue();
+        const RegIndex idx = phys_reg->index();
 
-        // Remove the base Float reg dependency.
-        PhysRegIndex reg_offset = reg_idx - baseFloatRegIndex;
-
-        DPRINTF(IEW, "RegFile: Access to float register %i, has "
-                "data %#x\n", int(reg_idx), floatRegFile[reg_offset].q);
-
-        return floatRegFile[reg_offset].d;
+        switch (type) {
+          case InvalidRegClass:
+            break;
+          case IntRegClass:
+            intRegFile.reg(idx) = val;
+            DPRINTF(IEW, "RegFile: Setting int register %i to %#x\n",
+                    idx, val);
+            break;
+          case FloatRegClass:
+            floatRegFile.reg(idx) = val;
+            DPRINTF(IEW, "RegFile: Setting float register %i to %#x\n",
+                    idx, val);
+            break;
+          case VecElemClass:
+            vectorElemRegFile.reg(idx) = val;
+            DPRINTF(IEW, "RegFile: Setting vector element register %i to "
+                    "%#x\n", idx, val);
+            break;
+          case CCRegClass:
+            ccRegFile.reg(idx) = val;
+            DPRINTF(IEW, "RegFile: Setting cc register %i to %#x\n",
+                    idx, val);
+            break;
+          default:
+            panic("Unsupported register class type %d.", type);
+        }
     }
 
-    FloatRegBits readFloatRegBits(PhysRegIndex reg_idx) const
+    void
+    setReg(PhysRegIdPtr phys_reg, const void *val)
     {
-        assert(isFloatPhysReg(reg_idx));
+        const RegClassType type = phys_reg->classValue();
+        const RegIndex idx = phys_reg->index();
 
-        // Remove the base Float reg dependency.
-        PhysRegIndex reg_offset = reg_idx - baseFloatRegIndex;
-
-        FloatRegBits floatRegBits = floatRegFile[reg_offset].q;
-
-        DPRINTF(IEW, "RegFile: Access to float register %i as int, "
-                "has data %#x\n", int(reg_idx), (uint64_t)floatRegBits);
-
-        return floatRegBits;
-    }
-
-    /** Reads a condition-code register. */
-    CCReg readCCReg(PhysRegIndex reg_idx)
-    {
-        assert(isCCPhysReg(reg_idx));
-
-        // Remove the base CC reg dependency.
-        PhysRegIndex reg_offset = reg_idx - baseCCRegIndex;
-
-        DPRINTF(IEW, "RegFile: Access to cc register %i, has "
-                "data %#x\n", int(reg_idx), ccRegFile[reg_offset]);
-
-        return ccRegFile[reg_offset];
-    }
-
-    /** Sets an integer register to the given value. */
-    void setIntReg(PhysRegIndex reg_idx, uint64_t val)
-    {
-        assert(isIntPhysReg(reg_idx));
-
-        DPRINTF(IEW, "RegFile: Setting int register %i to %#x\n",
-                int(reg_idx), val);
-
-        if (reg_idx != TheISA::ZeroReg)
-            intRegFile[reg_idx] = val;
-    }
-
-    /** Sets a double precision floating point register to the given value. */
-    void setFloatReg(PhysRegIndex reg_idx, FloatReg val)
-    {
-        assert(isFloatPhysReg(reg_idx));
-
-        // Remove the base Float reg dependency.
-        PhysRegIndex reg_offset = reg_idx - baseFloatRegIndex;
-
-        DPRINTF(IEW, "RegFile: Setting float register %i to %#x\n",
-                int(reg_idx), (uint64_t)val);
-
-#if THE_ISA == ALPHA_ISA
-        if (reg_offset != TheISA::ZeroReg)
-#endif
-            floatRegFile[reg_offset].d = val;
-    }
-
-    void setFloatRegBits(PhysRegIndex reg_idx, FloatRegBits val)
-    {
-        assert(isFloatPhysReg(reg_idx));
-
-        // Remove the base Float reg dependency.
-        PhysRegIndex reg_offset = reg_idx - baseFloatRegIndex;
-
-        DPRINTF(IEW, "RegFile: Setting float register %i to %#x\n",
-                int(reg_idx), (uint64_t)val);
-
-        floatRegFile[reg_offset].q = val;
-    }
-
-    /** Sets a condition-code register to the given value. */
-    void setCCReg(PhysRegIndex reg_idx, CCReg val)
-    {
-        assert(isCCPhysReg(reg_idx));
-
-        // Remove the base CC reg dependency.
-        PhysRegIndex reg_offset = reg_idx - baseCCRegIndex;
-
-        DPRINTF(IEW, "RegFile: Setting cc register %i to %#x\n",
-                int(reg_idx), (uint64_t)val);
-
-        ccRegFile[reg_offset] = val;
+        switch (type) {
+          case IntRegClass:
+            setReg(phys_reg, *(RegVal *)val);
+            break;
+          case FloatRegClass:
+            setReg(phys_reg, *(RegVal *)val);
+            break;
+          case VecRegClass:
+            DPRINTF(IEW, "RegFile: Setting vector register %i to %s\n",
+                    idx, vectorRegFile.regClass.valString(val));
+            vectorRegFile.set(idx, val);
+            break;
+          case VecElemClass:
+            setReg(phys_reg, *(RegVal *)val);
+            break;
+          case VecPredRegClass:
+            DPRINTF(IEW, "RegFile: Setting predicate register %i to %s\n",
+                    idx, vecPredRegFile.regClass.valString(val));
+            vecPredRegFile.set(idx, val);
+            break;
+          case MatRegClass:
+            DPRINTF(IEW, "RegFile: Setting matrix register %i to %s\n",
+                    idx, matRegFile.regClass.valString(val));
+            matRegFile.set(idx, val);
+            break;
+          case CCRegClass:
+            setReg(phys_reg, *(RegVal *)val);
+            break;
+          default:
+            panic("Unrecognized register class type %d.", type);
+        }
     }
 };
 
+} // namespace o3
+} // namespace gem5
 
 #endif //__CPU_O3_REGFILE_HH__

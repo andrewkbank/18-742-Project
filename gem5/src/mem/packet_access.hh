@@ -36,20 +36,16 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Ali Saidi
- *          Nathan Binkert
- *          Andreas Sandberg
  */
-
-#include "arch/isa_traits.hh"
-#include "base/bigint.hh"
-#include "config/the_isa.hh"
-#include "mem/packet.hh"
-#include "sim/byteswap.hh"
 
 #ifndef __MEM_PACKET_ACCESS_HH__
 #define __MEM_PACKET_ACCESS_HH__
+
+#include "mem/packet.hh"
+#include "sim/byteswap.hh"
+
+namespace gem5
+{
 
 template <typename T>
 inline T
@@ -66,7 +62,7 @@ Packet::setRaw(T v)
 {
     assert(flags.isSet(STATIC_DATA|DYNAMIC_DATA));
     assert(sizeof(T) <= size);
-    *(T*)data = TheISA::htog(v);
+    *(T*)data = v;
 }
 
 
@@ -89,22 +85,15 @@ inline T
 Packet::get(ByteOrder endian) const
 {
     switch (endian) {
-      case BigEndianByteOrder:
+      case ByteOrder::big:
         return getBE<T>();
 
-      case LittleEndianByteOrder:
+      case ByteOrder::little:
         return getLE<T>();
 
       default:
         panic("Illegal byte order in Packet::get()\n");
     };
-}
-
-template <typename T>
-inline T
-Packet::get() const
-{
-    return TheISA::gtoh(getRaw<T>());
 }
 
 template <typename T>
@@ -126,10 +115,10 @@ inline void
 Packet::set(T v, ByteOrder endian)
 {
     switch (endian) {
-      case BigEndianByteOrder:
+      case ByteOrder::big:
         return setBE<T>(v);
 
-      case LittleEndianByteOrder:
+      case ByteOrder::little:
         return setLE<T>(v);
 
       default:
@@ -137,11 +126,6 @@ Packet::set(T v, ByteOrder endian)
     };
 }
 
-template <typename T>
-inline void
-Packet::set(T v)
-{
-    setRaw(TheISA::htog(v));
-}
+} // namespace gem5
 
 #endif //__MEM_PACKET_ACCESS_HH__

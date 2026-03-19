@@ -27,16 +27,17 @@
 
 from slicc.ast.AST import AST
 
+
 class DeclListAST(AST):
     def __init__(self, slicc, decls):
-        super(DeclListAST, self).__init__(slicc)
+        super().__init__(slicc)
 
         if not isinstance(decls, (list, tuple)):
-            decls = [ decls ]
+            decls = [decls]
         self.decls = decls
 
     def __repr__(self):
-        return "[DeclListAST: %s]" % (', '.join(repr(d) for d in self.decls))
+        return f"[DeclListAST: {', '.join(repr(d) for d in self.decls)}]"
 
     def files(self, parent=None):
         s = set()
@@ -46,8 +47,14 @@ class DeclListAST(AST):
 
     def generate(self):
         for decl in self.decls:
+            decl.findMachines()
             decl.generate()
 
-    def findMachines(self):
+    def setShared(self):
+        """Mark all types in this DeclList as shared"""
         for decl in self.decls:
-            decl.findMachines()
+            decl.setShared(True)
+
+    def __iadd__(self, other):
+        self.decls += other.decls
+        return self

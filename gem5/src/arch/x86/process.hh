@@ -33,8 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Gabe Black
  */
 
 #ifndef __ARCH_X86_PROCESS_HH__
@@ -43,52 +41,64 @@
 #include <string>
 #include <vector>
 
-#include "sim/process.hh"
+#include "arch/x86/pagetable.hh"
 #include "mem/multi_level_page_table.hh"
+#include "sim/aux_vector.hh"
+#include "sim/process.hh"
+
+namespace gem5
+{
 
 class SyscallDesc;
 
 namespace X86ISA
 {
-    enum X86AuxiliaryVectorTypes {
-        M5_AT_SYSINFO = 32,
-        M5_AT_SYSINFO_EHDR = 33
+    namespace auxv
+    {
+
+    enum X86AuxiliaryVectorTypes
+    {
+        Sysinfo = 32,
+        SysinfoEhdr = 33
     };
 
-    class X86LiveProcess : public LiveProcess
+    } // namespace auxv
+
+    class X86Process : public Process
     {
       protected:
         Addr _gdtStart;
         Addr _gdtSize;
 
-        SyscallDesc *syscallDescs;
-        const int numSyscallDescs;
-
-        X86LiveProcess(LiveProcessParams * params, ObjectFile *objFile,
-                SyscallDesc *_syscallDescs, int _numSyscallDescs);
+        X86Process(const ProcessParams &params, loader::ObjectFile *objFile);
 
         template<class IntType>
         void argsInit(int pageSize,
-                std::vector<AuxVector<IntType> > extraAuxvs);
+                      std::vector<gem5::auxv::AuxVector<IntType>> extraAuxvs);
 
       public:
-        Addr gdtStart()
-        { return _gdtStart; }
-        
-        Addr gdtSize()
-        { return _gdtSize; }
+        Addr gdtStart() const { return _gdtStart; }
+        Addr gdtSize() const { return _gdtSize; }
 
-        SyscallDesc* getDesc(int callnum);
+        void clone(ThreadContext *old_tc, ThreadContext *new_tc,
+                   Process *process, RegVal flags) override;
 
-        void setSyscallReturn(ThreadContext *tc, SyscallReturn return_value);
+        X86Process &
+        operator=(const X86Process &in)
+        {
+            if (this == &in)
+                return *this;
+
+            _gdtStart = in._gdtStart;
+            _gdtSize = in._gdtSize;
+
+            return *this;
+        }
     };
 
-    class X86_64LiveProcess : public X86LiveProcess
+    class X86_64Process : public X86Process
     {
       protected:
-        X86_64LiveProcess(LiveProcessParams *params, ObjectFile *objFile,
-                SyscallDesc *_syscallDescs, int _numSyscallDescs);
-
         class VSyscallPage
         {
           public:
@@ -96,25 +106,37 @@ namespace X86ISA
             Addr size;
             Addr vtimeOffset;
             Addr vgettimeofdayOffset;
+
+            VSyscallPage &
+            operator=(const VSyscallPage &in)
+            {
+                if (this == &in)
+                    return *this;
+
+                base = in.base;
+                size = in.size;
+                vtimeOffset = in.vtimeOffset;
+                vgettimeofdayOffset = in.vgettimeofdayOffset;
+
+                return *this;
+            }
         };
         VSyscallPage vsyscallPage;
 
       public:
-        void argsInit(int intSize, int pageSize);
-        void initState();
+        X86_64Process(const ProcessParams &params,
+                      loader::ObjectFile *objFile);
 
-        X86ISA::IntReg getSyscallArg(ThreadContext *tc, int &i);
-        /// Explicitly import the otherwise hidden getSyscallArg
-        using LiveProcess::getSyscallArg;
-        void setSyscallArg(ThreadContext *tc, int i, X86ISA::IntReg val);
+        void argsInit(int pageSize);
+        void initState() override;
+
+        void clone(ThreadContext *old_tc, ThreadContext *new_tc,
+                   Process *process, RegVal flags) override;
     };
 
-    class I386LiveProcess : public X86LiveProcess
+    class I386Process : public X86Process
     {
       protected:
-        I386LiveProcess(LiveProcessParams *params, ObjectFile *objFile,
-                SyscallDesc *_syscallDescs, int _numSyscallDescs);
-
         class VSyscallPage
         {
           public:
@@ -122,26 +144,37 @@ namespace X86ISA
             Addr size;
             Addr vsyscallOffset;
             Addr vsysexitOffset;
+
+            VSyscallPage &
+            operator=(const VSyscallPage &in)
+            {
+                if (this == &in)
+                    return *this;
+
+                base = in.base;
+                size = in.size;
+                vsyscallOffset = in.vsyscallOffset;
+                vsysexitOffset = in.vsysexitOffset;
+
+                return *this;
+            }
         };
         VSyscallPage vsyscallPage;
 
       public:
-        void argsInit(int intSize, int pageSize);
-        void initState();
+        I386Process(const ProcessParams &params,
+                    loader::ObjectFile *objFile);
 
-        void syscall(int64_t callnum, ThreadContext *tc);
-        X86ISA::IntReg getSyscallArg(ThreadContext *tc, int &i);
-        X86ISA::IntReg getSyscallArg(ThreadContext *tc, int &i, int width);
-        void setSyscallArg(ThreadContext *tc, int i, X86ISA::IntReg val);
+        const VSyscallPage &getVSyscallPage() const { return vsyscallPage; }
+
+        void argsInit(int pageSize);
+        void initState() override;
+
+        void clone(ThreadContext *old_tc, ThreadContext *new_tc,
+                   Process *process, RegVal flags) override;
     };
 
-    /**
-     * Declaration of architectural page table for x86.
-     *
-     * These page tables are stored in system memory and respect x86 specification.
-     */
-    typedef MultiLevelPageTable<PageTableOps> ArchPageTable;
-
-}
+} // namespace X86ISA
+} // namespace gem5
 
 #endif // __ARCH_X86_PROCESS_HH__

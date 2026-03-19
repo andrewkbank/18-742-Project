@@ -1,3 +1,15 @@
+# Copyright (c) 2020 ARM Limited
+# All rights reserved.
+#
+# The license below extends only to copyright in the software and shall
+# not be construed as granting a license to any other intellectual
+# property including but not limited to intellectual property relating
+# to a hardware implementation of the functionality of the software
+# licensed hereunder.  You may use the software subject to the license
+# terms below provided that you ensure that this notice is replicated
+# unmodified and in its entirety in all distributions of the software,
+# modified or unmodified, in source code or in binary form.
+#
 # Copyright (c) 1999-2008 Mark D. Hill and David A. Wood
 # Copyright (c) 2009 The Hewlett-Packard Development Company
 # All rights reserved.
@@ -28,16 +40,17 @@
 from slicc.ast.AST import AST
 from slicc.symbols import Var
 
+
 class FormalParamAST(AST):
-    def __init__(self, slicc, type_ast, ident, default = None, pointer = False):
-        super(FormalParamAST, self).__init__(slicc)
+    def __init__(self, slicc, type_ast, ident, default=None, qualifier=""):
+        super().__init__(slicc)
         self.type_ast = type_ast
         self.ident = ident
         self.default = default
-        self.pointer = pointer
+        self.qualifier = qualifier
 
     def __repr__(self):
-        return "[FormalParamAST: %s]" % self.ident
+        return f"[FormalParamAST: {self.ident}]"
 
     @property
     def name(self):
@@ -45,17 +58,36 @@ class FormalParamAST(AST):
 
     def generate(self):
         type = self.type_ast.type
-        param = "param_%s" % self.ident
+        param = f"param_{self.ident}"
 
         # Add to symbol table
-        v = Var(self.symtab, self.ident, self.location, type, param,
-                self.pairs)
+        v = Var(
+            self.symtab, self.ident, self.location, type, param, self.pairs
+        )
         self.symtab.newSymbol(v)
 
-        if self.pointer or str(type) == "TBE" or (
-           "interface" in type and (
-               type["interface"] == "AbstractCacheEntry" or
-               type["interface"] == "AbstractEntry")):
-            return type, "%s* %s" % (type.c_ident, param)
+        # Qualifier is always a pointer for TBE table and Cache entries.
+        # It's expected to be left unspecified or specified as ptr.
+        qualifier = self.qualifier
+        if str(type) == "TBE" or (
+            "interface" in type and (type["interface"] == "AbstractCacheEntry")
+        ):
+            if qualifier not in ["", "PTR"]:
+                self.warning(
+                    "Parameter '%s' is always pointer. "
+                    "%s qualifier ignored" % (self.ident, qualifier)
+                )
+            qualifier = "PTR"
+
+        # default
+        if qualifier == "":
+            qualifier = "CONST_REF"
+
+        if qualifier == "PTR":
+            return type, f"{type.c_ident}* {param}"
+        elif qualifier == "REF":
+            return type, f"{type.c_ident}& {param}"
+        elif qualifier == "CONST_REF":
+            return type, f"const {type.c_ident}& {param}"
         else:
-            return type, "const %s& %s" % (type.c_ident, param)
+            self.error(f"Invalid qualifier for param '{self.ident}'")

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2014 ARM Limited
+ * Copyright (c) 2013-2014, 2020 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -33,9 +33,9 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andrew Bardsley
  */
+
+#include "cpu/minor/pipeline.hh"
 
 #include <algorithm>
 
@@ -43,17 +43,19 @@
 #include "cpu/minor/execute.hh"
 #include "cpu/minor/fetch1.hh"
 #include "cpu/minor/fetch2.hh"
-#include "cpu/minor/pipeline.hh"
 #include "debug/Drain.hh"
 #include "debug/MinorCPU.hh"
 #include "debug/MinorTrace.hh"
 #include "debug/Quiesce.hh"
 
-namespace Minor
+namespace gem5
 {
 
-Pipeline::Pipeline(MinorCPU &cpu_, MinorCPUParams &params) :
-    Ticked(cpu_, &(cpu_.BaseCPU::numCycles)),
+namespace minor
+{
+
+Pipeline::Pipeline(MinorCPU &cpu_, const BaseMinorCPUParams &params) :
+    Ticked(cpu_, &(cpu_.BaseCPU::baseStats.numCycles)),
     cpu(cpu_),
     allow_idling(params.enableIdling),
     f1ToF2(cpu.name() + ".f1ToF2", "lines",
@@ -122,6 +124,9 @@ Pipeline::minorTrace() const
 void
 Pipeline::evaluate()
 {
+    /** We tick the CPU to update the BaseCPU cycle counters */
+    cpu.tick();
+
     /* Note that it's important to evaluate the stages in order to allow
      *  'immediate', 0-time-offset TimeBuffer activity to be visible from
      *  later stages to earlier ones in the same cycle */
@@ -130,7 +135,7 @@ Pipeline::evaluate()
     fetch2.evaluate();
     fetch1.evaluate();
 
-    if (DTRACE(MinorTrace))
+    if (debug::MinorTrace)
         minorTrace();
 
     /* Update the time buffers after the stages */
@@ -187,9 +192,9 @@ Pipeline::getDataPort()
 }
 
 void
-Pipeline::wakeupFetch()
+Pipeline::wakeupFetch(ThreadID tid)
 {
-    execute.wakeupFetch();
+    fetch1.wakeupFetch(tid);
 }
 
 bool
@@ -212,6 +217,11 @@ void
 Pipeline::drainResume()
 {
     DPRINTF(Drain, "Drain resume\n");
+
+    for (ThreadID tid = 0; tid < cpu.numThreads; tid++) {
+        fetch1.wakeupFetch(tid);
+    }
+
     execute.drainResume();
 }
 
@@ -247,4 +257,5 @@ Pipeline::isDrained()
     return ret;
 }
 
-}
+} // namespace minor
+} // namespace gem5

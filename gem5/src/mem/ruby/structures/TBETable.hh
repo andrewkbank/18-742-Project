@@ -1,4 +1,16 @@
 /*
+ * Copyright (c) 2020 ARM Limited
+ * All rights reserved
+ *
+ * The license below extends only to copyright in the software and shall
+ * not be construed as granting a license to any other intellectual
+ * property including but not limited to intellectual property relating
+ * to a hardware implementation of the functionality of the software
+ * licensed hereunder.  You may use the software subject to the license
+ * terms below provided that you ensure that this notice is replicated
+ * unmodified and in its entirety in all distributions of the software,
+ * modified or unmodified, in source code or in binary form.
+ *
  * Copyright (c) 1999-2008 Mark D. Hill and David A. Wood
  * All rights reserved.
  *
@@ -30,9 +42,16 @@
 #define __MEM_RUBY_STRUCTURES_TBETABLE_HH__
 
 #include <iostream>
+#include <unordered_map>
 
-#include "base/hashmap.hh"
 #include "mem/ruby/common/Address.hh"
+#include "mem/ruby/system/RubySystem.hh"
+
+namespace gem5
+{
+
+namespace ruby
+{
 
 template<class ENTRY>
 class TBETable
@@ -52,21 +71,29 @@ class TBETable
         return (m_number_of_TBEs - m_map.size()) >= n;
     }
 
+    void setRubySystem(RubySystem* rs);
+
+    ENTRY *getNullEntry();
     ENTRY *lookup(Addr address);
 
     // Print cache contents
     void print(std::ostream& out) const;
 
-  private:
-    // Private copy constructor and assignment operator
+  protected:
+    // Protected copy constructor and assignment operator
     TBETable(const TBETable& obj);
     TBETable& operator=(const TBETable& obj);
 
     // Data Members (m_prefix)
-    m5::hash_map<Addr, ENTRY> m_map;
+    std::unordered_map<Addr, ENTRY> m_map;
 
   private:
-    int m_number_of_TBEs;
+    int m_number_of_TBEs = 0;
+    int m_block_size = 0;
+    RubySystem* m_ruby_system = nullptr;
+
+    static constexpr bool entryRequiresRubySystem =
+        std::is_member_function_pointer_v<decltype(&ENTRY::setRubySystem)>;
 };
 
 template<class ENTRY>
@@ -79,10 +106,18 @@ operator<<(std::ostream& out, const TBETable<ENTRY>& obj)
 }
 
 template<class ENTRY>
+inline
+void TBETable<ENTRY>::setRubySystem(RubySystem* rs)
+{
+    m_ruby_system = rs;
+    m_block_size = rs->getBlockSizeBytes();
+}
+
+template<class ENTRY>
 inline bool
 TBETable<ENTRY>::isPresent(Addr address) const
 {
-    assert(address == makeLineAddress(address));
+    assert(address == makeLineAddress(address, floorLog2(m_block_size)));
     assert(m_map.size() <= m_number_of_TBEs);
     return !!m_map.count(address);
 }
@@ -93,7 +128,10 @@ TBETable<ENTRY>::allocate(Addr address)
 {
     assert(!isPresent(address));
     assert(m_map.size() < m_number_of_TBEs);
-    m_map[address] = ENTRY();
+    assert(m_block_size > 0);
+    ENTRY new_entry = ENTRY(m_block_size);
+    new_entry.setRubySystem(m_ruby_system);
+    m_map.emplace(address, new_entry);
 }
 
 template<class ENTRY>
@@ -105,12 +143,19 @@ TBETable<ENTRY>::deallocate(Addr address)
     m_map.erase(address);
 }
 
+template<class ENTRY>
+inline ENTRY*
+TBETable<ENTRY>::getNullEntry()
+{
+    return nullptr;
+}
+
 // looks an address up in the cache
 template<class ENTRY>
 inline ENTRY*
 TBETable<ENTRY>::lookup(Addr address)
 {
-  if(m_map.find(address) != m_map.end()) return &(m_map.find(address)->second);
+  if (m_map.find(address) != m_map.end()) return &(m_map.find(address)->second);
   return NULL;
 }
 
@@ -120,5 +165,8 @@ inline void
 TBETable<ENTRY>::print(std::ostream& out) const
 {
 }
+
+} // namespace ruby
+} // namespace gem5
 
 #endif // __MEM_RUBY_STRUCTURES_TBETABLE_HH__

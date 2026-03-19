@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2011, 2014 ARM Limited
+ * Copyright (c) 2022-2023 The University of Edinburgh
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -36,9 +37,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Kevin Lim
- *          Timothy M. Jones
  */
 
 #ifndef __CPU_PRED_2BIT_LOCAL_PRED_HH__
@@ -46,10 +44,16 @@
 
 #include <vector>
 
+#include "base/sat_counter.hh"
 #include "base/types.hh"
-#include "cpu/pred/bpred_unit.hh"
-#include "cpu/pred/sat_counter.hh"
+#include "cpu/pred/conditional.hh"
 #include "params/LocalBP.hh"
+
+namespace gem5
+{
+
+namespace branch_prediction
+{
 
 /**
  * Implements a local predictor that uses the PC to index into a table of
@@ -58,48 +62,30 @@
  * predictor state that needs to be recorded or updated; the update can be
  * determined solely by the branch being taken or not taken.
  */
-class LocalBP : public BPredUnit
+class LocalBP : public ConditionalPredictor
 {
   public:
     /**
      * Default branch predictor constructor.
      */
-    LocalBP(const LocalBPParams *params);
+    LocalBP(const LocalBPParams &params);
 
-    virtual void uncondBranch(Addr pc, void * &bp_history);
+    // Overriding interface functions
+    bool lookup(ThreadID tid, Addr pc, void * &bp_history) override;
 
-    /**
-     * Looks up the given address in the branch predictor and returns
-     * a true/false value as to whether it is taken.
-     * @param branch_addr The address of the branch to look up.
-     * @param bp_history Pointer to any bp history state.
-     * @return Whether or not the branch is taken.
-     */
-    bool lookup(Addr branch_addr, void * &bp_history);
+    void branchPlaceholder(ThreadID tid, Addr pc, bool uncond,
+                           void * &bpHistory) override;
 
-    /**
-     * Updates the branch predictor to Not Taken if a BTB entry is
-     * invalid or not found.
-     * @param branch_addr The address of the branch to look up.
-     * @param bp_history Pointer to any bp history state.
-     * @return Whether or not the branch is taken.
-     */
-    void btbUpdate(Addr branch_addr, void * &bp_history);
+    void updateHistories(ThreadID tid, Addr pc, bool uncond, bool taken,
+                         Addr target, const StaticInstPtr &inst,
+                         void * &bp_history) override;
 
-    /**
-     * Updates the branch predictor with the actual result of a branch.
-     * @param branch_addr The address of the branch to update.
-     * @param taken Whether or not the branch was taken.
-     */
-    void update(Addr branch_addr, bool taken, void *bp_history, bool squashed);
+    void update(ThreadID tid, Addr pc, bool taken,
+                void * &bp_history, bool squashed,
+                const StaticInstPtr & inst, Addr target) override;
 
-    void retireSquashed(void *bp_history)
+    void squash(ThreadID tid, void * &bp_history) override
     { assert(bp_history == NULL); }
-
-    void squash(void *bp_history)
-    { assert(bp_history == NULL); }
-
-    void reset();
 
   private:
     /**
@@ -113,20 +99,23 @@ class LocalBP : public BPredUnit
     /** Calculates the local index based on the PC. */
     inline unsigned getLocalIndex(Addr &PC);
 
-    /** Array of counters that make up the local predictor. */
-    std::vector<SatCounter> localCtrs;
-
     /** Size of the local predictor. */
-    unsigned localPredictorSize;
-
-    /** Number of sets. */
-    unsigned localPredictorSets;
+    const unsigned localPredictorSize;
 
     /** Number of bits of the local predictor's counters. */
-    unsigned localCtrBits;
+    const unsigned localCtrBits;
+
+    /** Number of sets. */
+    const unsigned localPredictorSets;
+
+    /** Array of counters that make up the local predictor. */
+    std::vector<SatCounter8> localCtrs;
 
     /** Mask to get index bits. */
-    unsigned indexMask;
+    const unsigned indexMask;
 };
+
+} // namespace branch_prediction
+} // namespace gem5
 
 #endif // __CPU_PRED_2BIT_LOCAL_PRED_HH__

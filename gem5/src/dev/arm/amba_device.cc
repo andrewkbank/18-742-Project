@@ -36,36 +36,41 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Ali Saidi
  */
+
+#include "dev/arm/amba_device.hh"
 
 #include "base/trace.hh"
 #include "debug/AMBA.hh"
-#include "dev/arm/amba_device.hh"
 #include "dev/arm/amba_fake.hh"
 #include "mem/packet.hh"
 #include "mem/packet_access.hh"
+#include "params/AmbaDmaDevice.hh"
+#include "params/AmbaIntDevice.hh"
+#include "params/AmbaPioDevice.hh"
 
-const uint64_t AmbaVendor = ULL(0xb105f00d00000000);
+namespace gem5
+{
 
-AmbaPioDevice::AmbaPioDevice(const Params *p, Addr pio_size)
-    : BasicPioDevice(p, pio_size), ambaId(AmbaVendor | p->amba_id)
+const uint64_t AmbaVendor = 0xb105f00d00000000ULL;
+
+AmbaPioDevice::AmbaPioDevice(const Params &p, Addr pio_size)
+    : BasicPioDevice(p, pio_size), ambaId(AmbaVendor | p.amba_id)
 {
 }
 
-AmbaIntDevice::AmbaIntDevice(const Params *p, Addr pio_size)
+AmbaIntDevice::AmbaIntDevice(const Params &p, Addr pio_size)
     : AmbaPioDevice(p, pio_size),
-      intNum(p->int_num), gic(p->gic), intDelay(p->int_delay)
+      interrupt(p.interrupt->get()), intDelay(p.int_delay)
 {
 }
 
 
 
-AmbaDmaDevice::AmbaDmaDevice(const Params *p, Addr pio_size)
-    : DmaDevice(p), ambaId(AmbaVendor | p->amba_id),
-      pioAddr(p->pio_addr), pioSize(pio_size),
-      pioDelay(p->pio_latency),intNum(p->int_num), gic(p->gic)
+AmbaDmaDevice::AmbaDmaDevice(const Params &p, Addr pio_size)
+    : DmaDevice(p), ambaId(AmbaVendor | p.amba_id),
+      pioAddr(p.pio_addr), pioSize(pio_size),
+      pioDelay(p.pio_latency), interrupt(p.interrupt->get())
 {
 }
 
@@ -81,7 +86,9 @@ AmbaDevice::readId(PacketPtr pkt, uint64_t amba_id, Addr pio_addr)
     DPRINTF(AMBA, "Returning %#x for offset %#x(%d)\n",
             (amba_id >> byte) & 0xFF,
             pkt->getAddr() - pio_addr, byte);
-    assert(pkt->getSize() == 4);
-    pkt->set<uint32_t>((amba_id >> byte) & 0xFF);
+
+    pkt->setUintX((amba_id >> byte) & 0xFF, ByteOrder::little);
     return true;
 }
+
+} // namespace gem5

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 ARM Limited
+ * Copyright (c) 2014-2017 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -33,8 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andreas Sandberg
  */
 
 #ifndef __DEV_VIRTIO_FS9P_HH__
@@ -44,22 +42,27 @@
 #include <memory>
 #include <string>
 
+#include "base/compiler.hh"
 #include "base/pollevent.hh"
 #include "dev/virtio/base.hh"
+
+namespace gem5
+{
 
 struct VirtIO9PBaseParams;
 
 typedef uint8_t P9MsgType;
 typedef uint16_t P9Tag;
 
-struct P9MsgHeader {
+struct GEM5_PACKED P9MsgHeader
+{
     /** Length including header */
     uint32_t len;
     /** Message type */
     P9MsgType type;
     /** Message tag */
     P9Tag tag;
-} M5_ATTR_PACKED;
+};
 
 /** Convert p9 byte order (LE) to host byte order */
 template <typename T> inline T
@@ -110,7 +113,7 @@ class VirtIO9PBase : public VirtIODeviceBase
 {
   public:
     typedef VirtIO9PBaseParams Params;
-    VirtIO9PBase(Params *params);
+    VirtIO9PBase(const Params &params);
     virtual ~VirtIO9PBase();
 
     void readConfig(PacketPtr pkt, Addr cfgOffset);
@@ -122,13 +125,15 @@ class VirtIO9PBase : public VirtIODeviceBase
      * @note The fields in this structure depend on the features
      * exposed to the guest.
      */
-    struct Config {
+    struct GEM5_PACKED Config
+    {
         uint16_t len;
         char tag[];
-    } M5_ATTR_PACKED;
+    };
 
     /** Currently active configuration (host byte order) */
-    std::unique_ptr<Config> config;
+    std::unique_ptr<Config, void(*)(void *p)> config =
+        {nullptr, [](void *p){ operator delete(p); }};
 
     /** VirtIO device ID */
     static const DeviceId ID_9P = 0x09;
@@ -147,8 +152,9 @@ class VirtIO9PBase : public VirtIODeviceBase
     class FSQueue : public VirtQueue
     {
       public:
-        FSQueue(PortProxy &proxy, uint16_t size, VirtIO9PBase &_parent)
-            : VirtQueue(proxy, size), parent(_parent) {}
+        FSQueue(PortProxy &proxy, ByteOrder bo,
+                uint16_t size, VirtIO9PBase &_parent)
+            : VirtQueue(proxy, bo, size), parent(_parent) {}
         virtual ~FSQueue() {}
 
         void onNotifyDescriptor(VirtDescriptor *desc);
@@ -213,14 +219,15 @@ class VirtIO9PProxy : public VirtIO9PBase
 {
   public:
     typedef VirtIO9PProxyParams Params;
-    VirtIO9PProxy(Params *params);
+    VirtIO9PProxy(const Params &params);
     virtual ~VirtIO9PProxy();
 
-    void serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE;
-    void unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE;
+    void serialize(CheckpointOut &cp) const override;
+    void unserialize(CheckpointIn &cp) override;
 
   protected:
-    void recvTMsg(const P9MsgHeader &header, const uint8_t *data, size_t size);
+    void recvTMsg(const P9MsgHeader &header, const uint8_t *data,
+                  size_t size) override;
 
     /** Notification of pending data from server */
     void serverDataReady();
@@ -268,6 +275,17 @@ class VirtIO9PProxy : public VirtIO9PBase
      * @param len Number of bytes to write.
      */
     void writeAll(const uint8_t *data, size_t len);
+
+    /**
+     * Bool to track if the device has been used or not.
+     *
+     * We need to keep track of if the device has been used as we are
+     * unable to checkpoint the device in the event that the device
+     * has been mounted in the guest system. This is due to the fact
+     * that we do not, and cannot, track the complete state across
+     * host and guest.
+     */
+     bool deviceUsed;
 };
 
 struct VirtIO9PDiodParams;
@@ -280,7 +298,7 @@ class VirtIO9PDiod : public VirtIO9PProxy
 {
   public:
     typedef VirtIO9PDiodParams Params;
-    VirtIO9PDiod(Params *params);
+    VirtIO9PDiod(const Params &params);
     virtual ~VirtIO9PDiod();
 
     void startup();
@@ -293,6 +311,8 @@ class VirtIO9PDiod : public VirtIO9PProxy
 
     ssize_t read(uint8_t *data, size_t len);
     ssize_t write(const uint8_t *data, size_t len);
+    /** Kill the diod child process at the end of the simulation */
+    void terminateDiod();
 
   private:
     class DiodDataEvent : public PollEvent
@@ -330,7 +350,7 @@ class VirtIO9PSocket : public VirtIO9PProxy
 {
   public:
     typedef VirtIO9PSocketParams Params;
-    VirtIO9PSocket(Params *params);
+    VirtIO9PSocket(const Params &params);
     virtual ~VirtIO9PSocket();
 
     void startup();
@@ -367,5 +387,7 @@ class VirtIO9PSocket : public VirtIO9PProxy
 
     std::unique_ptr<SocketDataEvent> dataEvent;
 };
+
+} // namespace gem5
 
 #endif // __DEV_VIRTIO_FS9P_HH__

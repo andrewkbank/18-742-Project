@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010-2013 ARM Limited
+ * Copyright (c) 2010-2013, 2016, 2018, 2024 Arm Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -33,13 +33,11 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Ali Saidi
- *          Giacomo Gabrielli
  */
 
-#include "arch/arm/faults.hh"
 #include "arch/arm/stage2_lookup.hh"
+
+#include "arch/arm/faults.hh"
 #include "arch/arm/system.hh"
 #include "arch/arm/table_walker.hh"
 #include "arch/arm/tlb.hh"
@@ -50,33 +48,39 @@
 #include "debug/TLBVerbose.hh"
 #include "sim/system.hh"
 
+namespace gem5
+{
+
 using namespace ArmISA;
 
 Fault
 Stage2LookUp::getTe(ThreadContext *tc, TlbEntry *destTe)
-
 {
-    fault = stage2Tlb->getTE(&stage2Te, &req, tc, mode, this, timing,
-                                   functional, false, tranType);
+    fault = mmu->getTE(&stage2Te, req, tc, mode, this, timing,
+        functional, ss, ipaSpace, tranType, true);
+
     // Call finish if we're done already
     if ((fault != NoFault) || (stage2Te != NULL)) {
-        mergeTe(&req, mode);
+        // Since we directly requested the table entry (which we need later on
+        // to merge the attributes) then we've skipped some stage2 permissions
+        // checking. So call translate on stage 2 to do the checking. As the
+        // entry is now in the TLB this should always hit the cache.
+        if (fault == NoFault) {
+            if (ELIs64(tc, EL2))
+                fault = mmu->checkPermissions64(stage2Te, req, mode, tc, true);
+            else
+                fault = mmu->checkPermissions(stage2Te, req, mode, true);
+        }
+
+        mergeTe(mode);
         *destTe = stage1Te;
     }
     return fault;
 }
 
 void
-Stage2LookUp::mergeTe(RequestPtr req, BaseTLB::Mode mode)
+Stage2LookUp::mergeTe(BaseMMU::Mode mode)
 {
-    // Since we directly requested the table entry (which we need later on to
-    // merge the attributes) then we've skipped some stage 2 permissinos
-    // checking. So call translate on stage 2 to do the checking. As the entry
-    // is now in the TLB this should always hit the cache.
-    if (fault == NoFault) {
-        fault = stage2Tlb->checkPermissions(stage2Te, req, mode);
-    }
-
     // Check again that we haven't got a fault
     if (fault == NoFault) {
         assert(stage2Te != NULL);
@@ -84,23 +88,24 @@ Stage2LookUp::mergeTe(RequestPtr req, BaseTLB::Mode mode)
         // Now we have the table entries for both stages of translation
         // merge them and insert the result into the stage 1 TLB. See
         // CombineS1S2Desc() in pseudocode
-        stage1Te.N             = stage2Te->N;
         stage1Te.nonCacheable |= stage2Te->nonCacheable;
         stage1Te.xn           |= stage2Te->xn;
 
         if (stage1Te.size > stage2Te->size) {
             // Size mismatch also implies vpn mismatch (this is shifted by
             // sizebits!).
-            stage1Te.vpn  = s1Req->getVaddr() / (stage2Te->size+1);
+            stage1Te.vpn  = s1Req->getVaddr() >> stage2Te->N;
             stage1Te.pfn  = stage2Te->pfn;
             stage1Te.size = stage2Te->size;
+            stage1Te.N    = stage2Te->N;
         } else if (stage1Te.size < stage2Te->size) {
             // Guest 4K could well be section-backed by host hugepage!  In this
             // case a 4K entry is added but pfn needs to be adjusted.  New PFN =
             // offset into section PFN given by stage2 IPA treated as a stage1
             // page size.
-            stage1Te.pfn = (stage2Te->pfn * ((stage2Te->size+1) / (stage1Te.size+1))) +
-                           (stage2Te->vpn / (stage1Te.size+1));
+            const Addr pa = (stage2Te->pfn << stage2Te->N);
+            const Addr ipa = (stage1Te.pfn << stage1Te.N);
+            stage1Te.pfn = (pa | (ipa & mask(stage2Te->N))) >> stage1Te.N;
             // Size remains smaller of the two.
         } else {
             // Matching sizes
@@ -157,6 +162,14 @@ Stage2LookUp::mergeTe(RequestPtr req, BaseTLB::Mode mode)
             stage1Te.shareable       = true;
             stage1Te.outerShareable = true;
         }
+
+        if (stage1Te.mtype == TlbEntry::MemoryType::Normal &&
+            stage1Te.innerAttrs == 3 &&
+            stage1Te.outerAttrs == 3) {
+            stage1Te.xs = false;
+        } else {
+            stage1Te.xs = stage1Te.xs && stage2Te->xs;
+        }
         stage1Te.updateAttributes();
     }
 
@@ -164,33 +177,39 @@ Stage2LookUp::mergeTe(RequestPtr req, BaseTLB::Mode mode)
     if (fault != NoFault) {
         // If the second stage of translation generated a fault add the
         // details of the original stage 1 virtual address
-        reinterpret_cast<ArmFault *>(fault.get())->annotate(ArmFault::OVA,
-            s1Req->getVaddr());
+        if (auto arm_fault = reinterpret_cast<ArmFault *>(fault.get())) {
+            arm_fault->annotate(ArmFault::OVA, s1Req->getVaddr());
+        }
     }
     complete = true;
 }
 
 void
-Stage2LookUp::finish(const Fault &_fault, RequestPtr req,
-    ThreadContext *tc, BaseTLB::Mode mode)
+Stage2LookUp::finish(const Fault &_fault, const RequestPtr &req,
+    ThreadContext *tc, BaseMMU::Mode mode)
 {
     fault = _fault;
     // if we haven't got the table entry get it now
     if ((fault == NoFault) && (stage2Te == NULL)) {
-        fault = stage2Tlb->getTE(&stage2Te, req, tc, mode, this,
-            timing, functional, false, tranType);
+        // OLD_LOOK: stage2Tlb
+        fault = mmu->getTE(&stage2Te, req, tc, mode, this,
+            timing, functional, ss, ipaSpace, tranType, true);
     }
 
     // Now we have the stage 2 table entry we need to merge it with the stage
     // 1 entry we were given at the start
-    mergeTe(req, mode);
+    mergeTe(mode);
 
     if (fault != NoFault) {
-        transState->finish(fault, req, tc, mode);
+        // Returning with a fault requires the original request
+        transState->finish(fault, s1Req, tc, mode);
     } else if (timing) {
         // Now notify the original stage 1 translation that we finally have
         // a result
-        stage1Tlb->translateComplete(s1Req, tc, transState, mode, tranType, true);
+        // tran_s1.callFromStage2 = true;
+        // OLD_LOOK: stage1Tlb
+        mmu->translateComplete(
+            s1Req, tc, transState, mode, tranType, true);
     }
     // if we have been asked to delete ourselfs do it now
     if (selfDelete) {
@@ -198,3 +217,4 @@ Stage2LookUp::finish(const Fault &_fault, RequestPtr req,
     }
 }
 
+} // namespace gem5

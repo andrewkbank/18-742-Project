@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 ARM Limited
+ * Copyright (c) 2014, 2016-2017, 2021 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -33,21 +33,29 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andreas Sandberg
  */
 
 #ifndef __DEV_VIRTIO_BASE_HH__
 #define __DEV_VIRTIO_BASE_HH__
 
-#include "arch/isa_traits.hh"
+#include <cstdint>
+#include <functional>
+#include <vector>
+
 #include "base/bitunion.hh"
-#include "base/callback.hh"
+#include "base/compiler.hh"
+#include "base/types.hh"
 #include "dev/virtio/virtio_ring.h"
 #include "mem/port_proxy.hh"
+#include "sim/serialize.hh"
 #include "sim/sim_object.hh"
 
+namespace gem5
+{
+
 struct VirtIODeviceBaseParams;
+struct VirtIODummyDeviceParams;
+
 class VirtQueue;
 
 /** @{
@@ -63,48 +71,23 @@ class VirtQueue;
  * of byte swapping.
  */
 
-/** Convert legacy VirtIO endianness to host endianness. */
-template <typename T> inline T
-vtoh_legacy(T v) {
-    return TheISA::gtoh(v);
-}
-
-/** Convert host endianness to legacy VirtIO endianness. */
-template <typename T> inline T
-htov_legacy(T v) {
-    return TheISA::htog(v);
-}
-
-
-template <> inline vring_used_elem
-vtoh_legacy(vring_used_elem v) {
-    v.id = vtoh_legacy(v.id);
-    v.len = vtoh_legacy(v.len);
+template <typename T>
+inline std::enable_if_t<std::is_same_v<T, vring_used_elem>, T>
+swap_byte(T v)
+{
+    v.id = swap_byte(v.id);
+    v.len = swap_byte(v.len);
     return v;
 }
 
-template <> inline vring_used_elem
-htov_legacy(vring_used_elem v) {
-    v.id = htov_legacy(v.id);
-    v.len = htov_legacy(v.len);
-    return v;
-}
-
-template <> inline vring_desc
-vtoh_legacy(vring_desc v) {
-    v.addr = vtoh_legacy(v.addr);
-    v.len = vtoh_legacy(v.len);
-    v.flags = vtoh_legacy(v.flags);
-    v.next = vtoh_legacy(v.next);
-    return v;
-}
-
-template <> inline vring_desc
-htov_legacy(vring_desc v) {
-    v.addr = htov_legacy(v.addr);
-    v.len = htov_legacy(v.len);
-    v.flags = htov_legacy(v.flags);
-    v.next = htov_legacy(v.next);
+template <typename T>
+inline std::enable_if_t<std::is_same_v<T, vring_desc>, T>
+swap_byte(T v)
+{
+    v.addr = swap_byte(v.addr);
+    v.len = swap_byte(v.len);
+    v.flags = swap_byte(v.flags);
+    v.next = swap_byte(v.next);
     return v;
 }
 
@@ -147,7 +130,8 @@ class VirtDescriptor
      * @param queue Queue owning this descriptor.
      * @param index Index within the queue.
      */
-    VirtDescriptor(PortProxy &memProxy, VirtQueue &queue, Index index);
+    VirtDescriptor(PortProxy &memProxy, ByteOrder bo,
+            VirtQueue &queue, Index index);
     // WORKAROUND: The noexcept declaration works around a bug where
     // gcc 4.7 tries to call the wrong constructor when emplacing
     // something into a vector.
@@ -296,6 +280,9 @@ class VirtDescriptor
     /** Pointer to virtqueue owning this descriptor */
     VirtQueue *queue;
 
+    /** The byte order the descriptor is stored in. */
+    ByteOrder byteOrder;
+
     /** Index in virtqueue */
     Index _index;
 
@@ -312,19 +299,28 @@ class VirtDescriptor
  * @note Queues must be registered with
  * VirtIODeviceBase::registerQueue() to be active.
  */
-class VirtQueue : public Serializable {
-public:
+class VirtQueue : public Serializable
+{
+  public:
     virtual ~VirtQueue() {};
 
     /** @{
      * @name Checkpointing Interface
      */
-    void serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE;
-    void unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE;
+    void serialize(CheckpointOut &cp) const override;
+    void unserialize(CheckpointIn &cp) override;
 
     /** @{
      * @name Low-level Device Interface
      */
+
+    /**
+     * Reset cached state in this queue and in the associated
+     * ring buffers. A client of this method should be the
+     * VirtIODeviceBase::reset.
+     */
+    void reset();
+
     /**
      * Set the base address of this queue.
      *
@@ -431,8 +427,8 @@ public:
      * Page size used by VirtIO.\ It's hard-coded to 4096 bytes in
      * the spec for historical reasons.
      */
-    static const unsigned ALIGN_BITS = 12;
-    static const unsigned ALIGN_SIZE = 1 << ALIGN_BITS;
+    static const Addr ALIGN_BITS = 12;
+    static const Addr ALIGN_SIZE = 1 << ALIGN_BITS;
     /** @} */
 
   protected:
@@ -445,7 +441,10 @@ public:
      * @param proxy Proxy to the guest physical memory.
      * @param size Size in descriptors/pages.
      */
-    VirtQueue(PortProxy &proxy, uint16_t size);
+    VirtQueue(PortProxy &proxy, ByteOrder bo, uint16_t size);
+
+    /** Byte order in this queue */
+    ByteOrder byteOrder;
 
   private:
     VirtQueue();
@@ -472,13 +471,23 @@ public:
         typedef uint16_t Flags;
         typedef uint16_t Index;
 
-        struct Header {
+        struct GEM5_PACKED Header
+        {
             Flags flags;
             Index index;
-        } M5_ATTR_PACKED;
+        };
 
-        VirtRing<T>(PortProxy &proxy, uint16_t size)
-        : header{0, 0}, ring(size), _proxy(proxy), _base(0) {}
+        VirtRing(PortProxy &proxy, ByteOrder bo, uint16_t size) :
+            header{0, 0}, ring(size), _proxy(proxy), _base(0), byteOrder(bo)
+        {}
+
+        /** Reset any state in the ring buffer. */
+        void
+        reset()
+        {
+            header = {0, 0};
+            _base = 0;
+        };
 
         /**
          * Set the base address of the VirtIO ring buffer.
@@ -488,41 +497,49 @@ public:
         void setAddress(Addr addr) { _base = addr; }
 
         /** Update the ring buffer header with data from the guest. */
-        void readHeader() {
+        void
+        readHeader()
+        {
             assert(_base != 0);
-            _proxy.readBlob(_base, (uint8_t *)&header, sizeof(header));
-            header.flags = vtoh_legacy(header.flags);
-            header.index = vtoh_legacy(header.index);
+            _proxy.readBlob(_base, &header, sizeof(header));
+            header.flags = gtoh(header.flags, byteOrder);
+            header.index = gtoh(header.index, byteOrder);
         }
 
-        void writeHeader() {
+        void
+        writeHeader()
+        {
             Header out;
             assert(_base != 0);
-            out.flags = htov_legacy(header.flags);
-            out.index = htov_legacy(header.index);
-            _proxy.writeBlob(_base, (uint8_t *)&out, sizeof(out));
+            out.flags = htog(header.flags, byteOrder);
+            out.index = htog(header.index, byteOrder);
+            _proxy.writeBlob(_base, &out, sizeof(out));
         }
 
-        void read() {
+        void
+        read()
+        {
             readHeader();
 
             /* Read and byte-swap the elements in the ring */
-            T temp[ring.size()];
+            auto temp = std::make_unique<T[]>(ring.size());
             _proxy.readBlob(_base + sizeof(header),
-                            (uint8_t *)temp, sizeof(T) * ring.size());
+                            temp.get(), sizeof(T) * ring.size());
             for (int i = 0; i < ring.size(); ++i)
-                ring[i] = vtoh_legacy(temp[i]);
+                ring[i] = gtoh(temp[i], byteOrder);
         }
 
-        void write() {
+        void
+        write()
+        {
             assert(_base != 0);
             /* Create a byte-swapped copy of the ring and write it to
              * guest memory. */
-            T temp[ring.size()];
+            auto temp = std::make_unique<T[]>(ring.size());
             for (int i = 0; i < ring.size(); ++i)
-                temp[i] = htov_legacy(ring[i]);
+                temp[i] = htog(ring[i], byteOrder);
             _proxy.writeBlob(_base + sizeof(header),
-                             (uint8_t *)temp, sizeof(T) * ring.size());
+                             temp.get(), sizeof(T) * ring.size());
             writeHeader();
         }
 
@@ -533,12 +550,14 @@ public:
 
       private:
         // Remove default constructor
-        VirtRing<T>();
+        VirtRing();
 
         /** Guest physical memory proxy */
         PortProxy &_proxy;
         /** Guest physical base address of the ring buffer */
         Addr _base;
+        /** Byte order in the ring */
+        ByteOrder byteOrder;
     };
 
     /** Ring of available (incoming) descriptors */
@@ -587,7 +606,7 @@ class VirtIODeviceBase : public SimObject
     EndBitUnion(DeviceStatus)
 
     typedef VirtIODeviceBaseParams Params;
-    VirtIODeviceBase(Params *params, DeviceId id, size_t config_size,
+    VirtIODeviceBase(const Params &params, DeviceId id, size_t config_size,
                      FeatureBits features);
     virtual ~VirtIODeviceBase();
 
@@ -595,8 +614,8 @@ class VirtIODeviceBase : public SimObject
     /** @{
      * @name SimObject Interfaces
      */
-    void serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE;
-    void unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE;
+    void serialize(CheckpointOut &cp) const override;
+    void unserialize(CheckpointIn &cp) override;
     /** @} */
 
 
@@ -615,9 +634,11 @@ class VirtIODeviceBase : public SimObject
      * typically through an interrupt. Device models call this method
      * to tell the transport interface to notify the guest.
      */
-    void kick() {
+    void
+    kick()
+    {
         assert(transKick);
-        transKick->process();
+        transKick();
     };
 
     /**
@@ -720,6 +741,11 @@ class VirtIODeviceBase : public SimObject
      */
     void writeConfigBlob(PacketPtr pkt, Addr cfgOffset, uint8_t *cfg);
 
+    /**
+     * The byte order of the queues, descriptors, etc.
+     */
+    ByteOrder byteOrder;
+
     /** @} */
 
   public:
@@ -730,11 +756,13 @@ class VirtIODeviceBase : public SimObject
       * Register a callback to kick the guest through the transport
       * interface.
       *
-      * @param c Callback into transport interface.
+      * @param callback Callback into transport interface.
       */
-    void registerKickCallback(Callback *c) {
+    void
+    registerKickCallback(const std::function<void()> &callback)
+    {
         assert(!transKick);
-        transKick = c;
+        transKick = callback;
     }
 
 
@@ -872,7 +900,19 @@ class VirtIODeviceBase : public SimObject
     std::vector<VirtQueue *> _queues;
 
     /** Callbacks to kick the guest through the transport layer  */
-    Callback *transKick;
+    std::function<void()> transKick;
 };
+
+class VirtIODummyDevice : public VirtIODeviceBase
+{
+  public:
+    VirtIODummyDevice(const VirtIODummyDeviceParams &params);
+
+  protected:
+    /** VirtIO device ID */
+    static const DeviceId ID_INVALID = 0x00;
+};
+
+} // namespace gem5
 
 #endif // __DEV_VIRTIO_BASE_HH__

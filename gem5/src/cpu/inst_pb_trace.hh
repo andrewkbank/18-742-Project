@@ -33,14 +33,12 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Ali Saidi
  */
 
 #ifndef __CPU_INST_PB_TRACE_HH__
 #define __CPU_INST_PB_TRACE_HH__
 
-#include "arch/types.hh"
+#include "arch/generic/pcstate.hh"
 #include "base/trace.hh"
 #include "base/types.hh"
 #include "cpu/static_inst_fwd.hh"
@@ -48,13 +46,16 @@
 #include "proto/protoio.hh"
 #include "sim/insttracer.hh"
 
-class ThreadContext;
-
 namespace ProtoMessage {
 class Inst;
 }
 
-namespace Trace {
+namespace gem5
+{
+
+class ThreadContext;
+
+namespace trace {
 
 /**
  * This in an instruction tracer that records the flow of instructions through
@@ -66,7 +67,7 @@ class InstPBTraceRecord : public InstRecord
 {
   public:
     InstPBTraceRecord(InstPBTrace& _tracer, Tick when, ThreadContext *tc,
-                      const StaticInstPtr si, TheISA::PCState pc,
+                      const StaticInstPtr si, const PCStateBase &pc,
                       const StaticInstPtr mi = NULL)
         : InstRecord(when, tc, si, pc, mi), tracer(_tracer)
     {}
@@ -75,7 +76,7 @@ class InstPBTraceRecord : public InstRecord
      * This implementation of dump calls InstPBTrace to output the contents to a
      * protobuf file
      */
-    void dump() M5_ATTR_OVERRIDE;
+    void dump() override;
 
   protected:
     InstPBTrace& tracer;
@@ -85,14 +86,17 @@ class InstPBTraceRecord : public InstRecord
 class InstPBTrace : public InstTracer
 {
  public:
-    InstPBTrace(const InstPBTraceParams *p);
+    InstPBTrace(const InstPBTraceParams &p);
     virtual ~InstPBTrace();
 
     InstPBTraceRecord* getInstRecord(Tick when, ThreadContext *tc, const
-                                    StaticInstPtr si, TheISA::PCState pc, const
-                                    StaticInstPtr mi = NULL) M5_ATTR_OVERRIDE;
+                                    StaticInstPtr si, const PCStateBase &pc,
+                                    const StaticInstPtr mi = NULL) override;
 
   protected:
+    std::unique_ptr<uint8_t []> buf;
+    size_t bufSize;
+
     /** One output stream for the entire simulation.
      * We encode the CPU & system ID so all we need is a single file
      */
@@ -119,7 +123,7 @@ class InstPBTrace : public InstTracer
      * @param si for the machInst and opClass
      * @param pc for the PC Addr
      */
-    void traceInst(ThreadContext *tc, StaticInstPtr si, TheISA::PCState pc);
+    void traceInst(ThreadContext *tc, StaticInstPtr si, const PCStateBase &pc);
 
     /** Write a memory request to the trace file as part of the cur instruction
      * @param si for the machInst and opClass
@@ -131,5 +135,8 @@ class InstPBTrace : public InstTracer
 
     friend class InstPBTraceRecord;
 };
-} // namespace Trace
+
+} // namespace trace
+} // namespace gem5
+
 #endif // __CPU_INST_PB_TRACE_HH__

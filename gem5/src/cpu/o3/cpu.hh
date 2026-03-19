@@ -1,6 +1,7 @@
 /*
- * Copyright (c) 2011-2013 ARM Limited
+ * Copyright (c) 2011-2013, 2016-2020 ARM Limited
  * Copyright (c) 2013 Advanced Micro Devices, Inc.
+ * Copyright (c) 2022-2023 The University of Edinburgh
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -38,10 +39,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Kevin Lim
- *          Korey Sewell
- *          Rick Strong
  */
 
 #ifndef __CPU_O3_CPU_HH__
@@ -53,65 +50,59 @@
 #include <set>
 #include <vector>
 
-#include "arch/types.hh"
+#include "arch/generic/pcstate.hh"
 #include "base/statistics.hh"
-#include "config/the_isa.hh"
-#include "cpu/o3/comm.hh"
-#include "cpu/o3/cpu_policy.hh"
-#include "cpu/o3/scoreboard.hh"
-#include "cpu/o3/thread_state.hh"
 #include "cpu/activity.hh"
 #include "cpu/base.hh"
+#include "cpu/o3/bac.hh"
+#include "cpu/o3/comm.hh"
+#include "cpu/o3/commit.hh"
+#include "cpu/o3/decode.hh"
+#include "cpu/o3/dyn_inst_ptr.hh"
+#include "cpu/o3/fetch.hh"
+#include "cpu/o3/free_list.hh"
+#include "cpu/o3/ftq.hh"
+#include "cpu/o3/iew.hh"
+#include "cpu/o3/limits.hh"
+#include "cpu/o3/rename.hh"
+#include "cpu/o3/rob.hh"
+#include "cpu/o3/scoreboard.hh"
+#include "cpu/o3/thread_state.hh"
 #include "cpu/simple_thread.hh"
 #include "cpu/timebuf.hh"
-//#include "cpu/o3/thread_context.hh"
-#include "params/DerivO3CPU.hh"
+#include "params/BaseO3CPU.hh"
 #include "sim/process.hh"
+
+namespace gem5
+{
 
 template <class>
 class Checker;
 class ThreadContext;
-template <class>
-class O3ThreadContext;
 
 class Checkpoint;
-class MemObject;
 class Process;
 
-struct BaseCPUParams;
-
-class BaseO3CPU : public BaseCPU
+namespace o3
 {
-    //Stuff that's pretty ISA independent will go here.
-  public:
-    BaseO3CPU(BaseCPUParams *params);
 
-    void regStats();
-};
+class ThreadContext;
 
 /**
- * FullO3CPU class, has each of the stages (fetch through commit)
+ * O3CPU class, has each of the stages (fetch through commit)
  * within it, as well as all of the time buffers between stages.  The
  * tick() function for the CPU is defined here.
  */
-template <class Impl>
-class FullO3CPU : public BaseO3CPU
+class CPU : public BaseCPU
 {
   public:
-    // Typedefs from the Impl here.
-    typedef typename Impl::CPUPol CPUPolicy;
-    typedef typename Impl::DynInstPtr DynInstPtr;
-    typedef typename Impl::O3CPU O3CPU;
+    typedef std::list<DynInstPtr>::iterator ListIt;
 
-    typedef O3ThreadState<Impl> ImplState;
-    typedef O3ThreadState<Impl> Thread;
-
-    typedef typename std::list<DynInstPtr>::iterator ListIt;
-
-    friend class O3ThreadContext<Impl>;
+    friend class ThreadContext;
 
   public:
-    enum Status {
+    enum Status
+    {
         Running,
         Idle,
         Halted,
@@ -119,104 +110,26 @@ class FullO3CPU : public BaseO3CPU
         SwitchedOut
     };
 
-    TheISA::TLB * itb;
-    TheISA::TLB * dtb;
+    BaseMMU *mmu;
+    using LSQRequest = LSQ::LSQRequest;
+
+    using PerThreadUnifiedRenameMap =
+        UnifiedRenameMap::PerThreadUnifiedRenameMap;
 
     /** Overall CPU status. */
     Status _status;
 
   private:
 
-    /**
-     * IcachePort class for instruction fetch.
-     */
-    class IcachePort : public MasterPort
-    {
-      protected:
-        /** Pointer to fetch. */
-        DefaultFetch<Impl> *fetch;
-
-      public:
-        /** Default constructor. */
-        IcachePort(DefaultFetch<Impl> *_fetch, FullO3CPU<Impl>* _cpu)
-            : MasterPort(_cpu->name() + ".icache_port", _cpu), fetch(_fetch)
-        { }
-
-      protected:
-
-        /** Timing version of receive.  Handles setting fetch to the
-         * proper status to start fetching. */
-        virtual bool recvTimingResp(PacketPtr pkt);
-        virtual void recvTimingSnoopReq(PacketPtr pkt) { }
-
-        /** Handles doing a retry of a failed fetch. */
-        virtual void recvReqRetry();
-    };
-
-    /**
-     * DcachePort class for the load/store queue.
-     */
-    class DcachePort : public MasterPort
-    {
-      protected:
-
-        /** Pointer to LSQ. */
-        LSQ<Impl> *lsq;
-        FullO3CPU<Impl> *cpu;
-
-      public:
-        /** Default constructor. */
-        DcachePort(LSQ<Impl> *_lsq, FullO3CPU<Impl>* _cpu)
-            : MasterPort(_cpu->name() + ".dcache_port", _cpu), lsq(_lsq),
-              cpu(_cpu)
-        { }
-
-      protected:
-
-        /** Timing version of receive.  Handles writing back and
-         * completing the load or store that has returned from
-         * memory. */
-        virtual bool recvTimingResp(PacketPtr pkt);
-        virtual void recvTimingSnoopReq(PacketPtr pkt);
-
-        virtual void recvFunctionalSnoop(PacketPtr pkt)
-        {
-            // @todo: Is there a need for potential invalidation here?
-        }
-
-        /** Handles doing a retry of the previous send. */
-        virtual void recvReqRetry();
-
-        /**
-         * As this CPU requires snooping to maintain the load store queue
-         * change the behaviour from the base CPU port.
-         *
-         * @return true since we have to snoop
-         */
-        virtual bool isSnooping() const { return true; }
-    };
-
-    class TickEvent : public Event
-    {
-      private:
-        /** Pointer to the CPU. */
-        FullO3CPU<Impl> *cpu;
-
-      public:
-        /** Constructs a tick event. */
-        TickEvent(FullO3CPU<Impl> *c);
-
-        /** Processes a tick event, calling tick() on the CPU. */
-        void process();
-        /** Returns the description of the tick event. */
-        const char *description() const;
-    };
-
     /** The tick event used for scheduling CPU ticks. */
-    TickEvent tickEvent;
+    EventFunctionWrapper tickEvent;
+
+    /** The exit event used for terminating all ready-to-exit threads */
+    EventFunctionWrapper threadExitEvent;
 
     /** Schedule tick event, regardless of its current state. */
-    void scheduleTickEvent(Cycles delay)
+    void
+    scheduleTickEvent(Cycles delay)
     {
         if (tickEvent.squashed())
             reschedule(tickEvent, clockEdge(delay));
@@ -225,7 +138,8 @@ class FullO3CPU : public BaseO3CPU
     }
 
     /** Unschedule tick event, regardless of its current state. */
-    void unscheduleTickEvent()
+    void
+    unscheduleTickEvent()
     {
         if (tickEvent.scheduled())
             tickEvent.squash();
@@ -256,37 +170,22 @@ class FullO3CPU : public BaseO3CPU
     void drainSanityCheck() const;
 
     /** Check if a system is in a drained state. */
-    bool isDrained() const;
+    bool isCpuDrained() const;
 
   public:
     /** Constructs a CPU with the given parameters. */
-    FullO3CPU(DerivO3CPUParams *params);
-    /** Destructor. */
-    ~FullO3CPU();
-
-    /** Registers statistics. */
-    void regStats();
+    CPU(const BaseO3CPUParams &params);
 
     ProbePointArg<PacketPtr> *ppInstAccessComplete;
     ProbePointArg<std::pair<DynInstPtr, PacketPtr> > *ppDataAccessComplete;
 
     /** Register probe points. */
-    void regProbePoints();
+    void regProbePoints() override;
 
-    void demapPage(Addr vaddr, uint64_t asn)
+    void
+    demapPage(Addr vaddr, uint64_t asn)
     {
-        this->itb->demapPage(vaddr, asn);
-        this->dtb->demapPage(vaddr, asn);
-    }
-
-    void demapInstPage(Addr vaddr, uint64_t asn)
-    {
-        this->itb->demapPage(vaddr, asn);
-    }
-
-    void demapDataPage(Addr vaddr, uint64_t asn)
-    {
-        this->dtb->demapPage(vaddr, asn);
+        mmu->demapPage(vaddr, asn);
     }
 
     /** Ticks CPU, calling tick() on each stage, and checking the overall
@@ -295,13 +194,16 @@ class FullO3CPU : public BaseO3CPU
     void tick();
 
     /** Initialize the CPU */
-    void init();
+    void init() override;
 
-    void startup();
+    void startup() override;
 
     /** Returns the Number of Active Threads in the CPU */
-    int numActiveThreads()
-    { return activeThreads.size(); }
+    int
+    numActiveThreads()
+    {
+        return activeThreads.size();
+    }
 
     /** Add Thread to Active Threads List */
     void activateThread(ThreadID tid);
@@ -316,21 +218,21 @@ class FullO3CPU : public BaseO3CPU
     void removeThread(ThreadID tid);
 
     /** Count the Total Instructions Committed in the CPU. */
-    virtual Counter totalInsts() const;
+    Counter totalInsts() const override;
 
     /** Count the Total Ops (including micro ops) committed in the CPU. */
-    virtual Counter totalOps() const;
+    Counter totalOps() const override;
 
     /** Add Thread to Active Threads List. */
-    void activateContext(ThreadID tid);
+    void activateContext(ThreadID tid) override;
 
     /** Remove Thread from Active Threads List */
-    void suspendContext(ThreadID tid);
+    void suspendContext(ThreadID tid) override;
 
     /** Remove Thread from Active Threads List &&
      *  Remove Thread Context from CPU.
      */
-    void haltContext(ThreadID tid);
+    void haltContext(ThreadID tid) override;
 
     /** Update The Order In Which We Process Threads. */
     void updateThreadPriority();
@@ -338,22 +240,31 @@ class FullO3CPU : public BaseO3CPU
     /** Is the CPU draining? */
     bool isDraining() const { return drainState() == DrainState::Draining; }
 
-    void serializeThread(CheckpointOut &cp,
-                         ThreadID tid) const M5_ATTR_OVERRIDE;
-    void unserializeThread(CheckpointIn &cp, ThreadID tid) M5_ATTR_OVERRIDE;
+    void serializeThread(CheckpointOut &cp, ThreadID tid) const override;
+    void unserializeThread(CheckpointIn &cp, ThreadID tid) override;
+
+    /** Insert tid to the list of threads trying to exit */
+    void addThreadToExitingList(ThreadID tid);
+
+    /** Is the thread trying to exit? */
+    bool isThreadExiting(ThreadID tid) const;
+
+    /**
+     *  If a thread is trying to exit and its corresponding trap event
+     *  has been completed, schedule an event to terminate the thread.
+     */
+    void scheduleThreadExitEvent(ThreadID tid);
+
+    /** Terminate all threads that are ready to exit */
+    void exitThreads();
 
   public:
-    /** Executes a syscall.
-     * @todo: Determine if this needs to be virtual.
-     */
-    void syscall(int64_t callnum, ThreadID tid);
-
     /** Starts draining the CPU's pipeline of all instructions in
      * order to stop all memory accesses. */
-    DrainState drain() M5_ATTR_OVERRIDE;
+    DrainState drain() override;
 
     /** Resumes execution after a drain. */
-    void drainResume() M5_ATTR_OVERRIDE;
+    void drainResume() override;
 
     /**
      * Commit has reached a safe point to drain a thread.
@@ -365,24 +276,25 @@ class FullO3CPU : public BaseO3CPU
     void commitDrained(ThreadID tid);
 
     /** Switches out this CPU. */
-    virtual void switchOut();
+    void switchOut() override;
 
     /** Takes over from another CPU. */
-    virtual void takeOverFrom(BaseCPU *oldCPU);
+    void takeOverFrom(BaseCPU *oldCPU) override;
 
-    void verifyMemoryMode() const;
+    void verifyMemoryMode() const override;
 
     /** Get the current instruction sequence number, and increment it. */
-    InstSeqNum getAndIncrementInstSeq()
-    { return globalSeqNum++; }
+    InstSeqNum getAndIncrementInstSeq() { return globalSeqNum++; }
+
+    /** Get the current fetch target sequence number, and increment it. */
+    InstSeqNum
+    getAndIncrementFTSeq()
+    {
+        return globalFTSeqNum++;
+    }
 
     /** Traps to handle given fault. */
     void trap(const Fault &fault, ThreadID tid, const StaticInstPtr &inst);
-
-    /** HW return from error interrupt. */
-    Fault hwrei(ThreadID tid);
-
-    bool simPalCheck(int palFunc, ThreadID tid);
 
     /** Returns the Fault for any valid interrupt. */
     Fault getInterrupts();
@@ -393,83 +305,49 @@ class FullO3CPU : public BaseO3CPU
     /** Halts the CPU. */
     void halt() { panic("Halt not implemented!\n"); }
 
-    /** Check if this address is a valid instruction address. */
-    bool validInstAddr(Addr addr) { return true; }
-
-    /** Check if this address is a valid data address. */
-    bool validDataAddr(Addr addr) { return true; }
-
     /** Register accessors.  Index refers to the physical register index. */
 
     /** Reads a miscellaneous register. */
-    TheISA::MiscReg readMiscRegNoEffect(int misc_reg, ThreadID tid) const;
+    RegVal readMiscRegNoEffect(int misc_reg, ThreadID tid) const;
 
     /** Reads a misc. register, including any side effects the read
      * might have as defined by the architecture.
      */
-    TheISA::MiscReg readMiscReg(int misc_reg, ThreadID tid);
+    RegVal readMiscReg(int misc_reg, ThreadID tid);
 
     /** Sets a miscellaneous register. */
-    void setMiscRegNoEffect(int misc_reg, const TheISA::MiscReg &val,
-            ThreadID tid);
+    void setMiscRegNoEffect(int misc_reg, RegVal val, ThreadID tid);
 
     /** Sets a misc. register, including any side effects the write
      * might have as defined by the architecture.
      */
-    void setMiscReg(int misc_reg, const TheISA::MiscReg &val,
-            ThreadID tid);
+    void setMiscReg(int misc_reg, RegVal val, ThreadID tid);
 
-    uint64_t readIntReg(int reg_idx);
+    RegVal getReg(PhysRegIdPtr phys_reg, ThreadID tid);
+    void getReg(PhysRegIdPtr phys_reg, void *val, ThreadID tid);
+    void *getWritableReg(PhysRegIdPtr phys_reg, ThreadID tid);
 
-    TheISA::FloatReg readFloatReg(int reg_idx);
-
-    TheISA::FloatRegBits readFloatRegBits(int reg_idx);
-
-    TheISA::CCReg readCCReg(int reg_idx);
-
-    void setIntReg(int reg_idx, uint64_t val);
-
-    void setFloatReg(int reg_idx, TheISA::FloatReg val);
-
-    void setFloatRegBits(int reg_idx, TheISA::FloatRegBits val);
-
-    void setCCReg(int reg_idx, TheISA::CCReg val);
-
-    uint64_t readArchIntReg(int reg_idx, ThreadID tid);
-
-    float readArchFloatReg(int reg_idx, ThreadID tid);
-
-    uint64_t readArchFloatRegInt(int reg_idx, ThreadID tid);
-
-    TheISA::CCReg readArchCCReg(int reg_idx, ThreadID tid);
+    void setReg(PhysRegIdPtr phys_reg, RegVal val, ThreadID tid);
+    void setReg(PhysRegIdPtr phys_reg, const void *val, ThreadID tid);
 
     /** Architectural register accessors.  Looks up in the commit
      * rename table to obtain the true physical index of the
      * architected register first, then accesses that physical
      * register.
      */
-    void setArchIntReg(int reg_idx, uint64_t val, ThreadID tid);
 
-    void setArchFloatReg(int reg_idx, float val, ThreadID tid);
+    RegVal getArchReg(const RegId &reg, ThreadID tid);
+    void getArchReg(const RegId &reg, void *val, ThreadID tid);
+    void *getWritableArchReg(const RegId &reg, ThreadID tid);
 
-    void setArchFloatRegInt(int reg_idx, uint64_t val, ThreadID tid);
-
-    void setArchCCReg(int reg_idx, TheISA::CCReg val, ThreadID tid);
+    void setArchReg(const RegId &reg, RegVal val, ThreadID tid);
+    void setArchReg(const RegId &reg, const void *val, ThreadID tid);
 
     /** Sets the commit PC state of a specific thread. */
-    void pcState(const TheISA::PCState &newPCState, ThreadID tid);
+    void pcState(const PCStateBase &new_pc_state, ThreadID tid);
 
     /** Reads the commit PC state of a specific thread. */
-    TheISA::PCState pcState(ThreadID tid);
-
-    /** Reads the commit PC of a specific thread. */
-    Addr instAddr(ThreadID tid);
-
-    /** Reads the commit micro PC of a specific thread. */
-    MicroPC microPC(ThreadID tid);
-
-    /** Reads the next PC of a specific thread. */
-    Addr nextInstAddr(ThreadID tid);
+    const PCStateBase &pcState(ThreadID tid);
 
     /** Initiates a squash of all in-flight instructions for a given
      * thread.  The source of the squash is an external update of
@@ -480,15 +358,15 @@ class FullO3CPU : public BaseO3CPU
     /** Function to add instruction onto the head of the list of the
      *  instructions.  Used when new instructions are fetched.
      */
-    ListIt addInst(DynInstPtr &inst);
+    ListIt addInst(const DynInstPtr &inst);
 
     /** Function to tell the CPU that an instruction has completed. */
-    void instDone(ThreadID tid, DynInstPtr &inst);
+    void instDone(ThreadID tid, const DynInstPtr &inst);
 
     /** Remove an instruction from the front end of the list.  There's
      *  no restriction on location of the instruction.
      */
-    void removeFrontInst(DynInstPtr &inst);
+    void removeFrontInst(const DynInstPtr &inst);
 
     /** Remove all instructions that are not currently in the ROB.
      *  There's also an option to not squash delay slot instructions.*/
@@ -498,7 +376,7 @@ class FullO3CPU : public BaseO3CPU
     void removeInstsUntil(const InstSeqNum &seq_num, ThreadID tid);
 
     /** Removes the instruction pointed to by the iterator. */
-    inline void squashInstIt(const ListIt &instIt, ThreadID tid);
+    void squashInstIt(const ListIt &instIt, ThreadID tid);
 
     /** Cleans up all instructions on the remove list. */
     void cleanUpRemovedInsts();
@@ -520,7 +398,7 @@ class FullO3CPU : public BaseO3CPU
      */
     std::queue<ListIt> removeList;
 
-#ifdef DEBUG
+#ifdef GEM5_DEBUG
     /** Debug structure to keep track of the sequence numbers still in
      * flight.
      */
@@ -533,75 +411,72 @@ class FullO3CPU : public BaseO3CPU
     bool removeInstsThisCycle;
 
   protected:
+    /** The branch and PC address calculation stage. */
+    BAC bac;
+
+    /** The Fetch taget queue. */
+    FTQ ftq;
+
     /** The fetch stage. */
-    typename CPUPolicy::Fetch fetch;
+    Fetch fetch;
 
     /** The decode stage. */
-    typename CPUPolicy::Decode decode;
+    Decode decode;
 
     /** The dispatch stage. */
-    typename CPUPolicy::Rename rename;
+    Rename rename;
 
     /** The issue/execute/writeback stages. */
-    typename CPUPolicy::IEW iew;
+    IEW iew;
 
     /** The commit stage. */
-    typename CPUPolicy::Commit commit;
+    Commit commit;
 
     /** The register file. */
     PhysRegFile regFile;
 
     /** The free list. */
-    typename CPUPolicy::FreeList freeList;
+    UnifiedFreeList freeList;
 
     /** The rename map. */
-    typename CPUPolicy::RenameMap renameMap[Impl::MaxThreads];
+    PerThreadUnifiedRenameMap renameMap;
 
     /** The commit rename map. */
-    typename CPUPolicy::RenameMap commitRenameMap[Impl::MaxThreads];
+    PerThreadUnifiedRenameMap commitRenameMap;
 
     /** The re-order buffer. */
-    typename CPUPolicy::ROB rob;
+    ROB rob;
 
     /** Active Threads List */
     std::list<ThreadID> activeThreads;
 
+    /**
+     *  This is a list of threads that are trying to exit. Each thread id
+     *  is mapped to a boolean value denoting whether the thread is ready
+     *  to exit.
+     */
+    std::unordered_map<ThreadID, bool> exitingThreads;
+
     /** Integer Register Scoreboard */
     Scoreboard scoreboard;
 
-    std::vector<TheISA::ISA *> isa;
-
-    /** Instruction port. Note that it has to appear after the fetch stage. */
-    IcachePort icachePort;
-
-    /** Data port. Note that it has to appear after the iew stages */
-    DcachePort dcachePort;
+    std::vector<BaseISA *> isa;
 
   public:
     /** Enum to give each stage a specific index, so when calling
      *  activateStage() or deactivateStage(), they can specify which stage
      *  is being activated/deactivated.
      */
-    enum StageIdx {
+    enum StageIdx
+    {
+        BACIdx,
         FetchIdx,
         DecodeIdx,
         RenameIdx,
         IEWIdx,
         CommitIdx,
-        NumStages };
-
-    /** Typedefs from the Impl to get the structs that each of the
-     *  time buffers should use.
-     */
-    typedef typename CPUPolicy::TimeStruct TimeStruct;
-
-    typedef typename CPUPolicy::FetchStruct FetchStruct;
-
-    typedef typename CPUPolicy::DecodeStruct DecodeStruct;
-
-    typedef typename CPUPolicy::RenameStruct RenameStruct;
-
-    typedef typename CPUPolicy::IEWStruct IEWStruct;
+        NumStages
+    };
 
     /** The main time buffer to do backwards communication. */
     TimeBuffer<TimeStruct> timeBuffer;
@@ -630,43 +505,60 @@ class FullO3CPU : public BaseO3CPU
     void activityThisCycle() { activityRec.activity(); }
 
     /** Changes a stage's status to active within the activity recorder. */
-    void activateStage(const StageIdx idx)
-    { activityRec.activateStage(idx); }
+    void
+    activateStage(const StageIdx idx)
+    {
+        activityRec.activateStage(idx);
+    }
 
     /** Changes a stage's status to inactive within the activity recorder. */
-    void deactivateStage(const StageIdx idx)
-    { activityRec.deactivateStage(idx); }
+    void
+    deactivateStage(const StageIdx idx)
+    {
+        activityRec.deactivateStage(idx);
+    }
 
     /** Wakes the CPU, rescheduling the CPU if it's not already active. */
     void wakeCPU();
 
-    virtual void wakeup();
+    virtual void wakeup(ThreadID tid) override;
 
     /** Gets a free thread id. Use if thread ids change across system. */
     ThreadID getFreeTid();
 
+    /**
+     * Get whether a thread is in user mode.
+     *
+     * @param tid The thread id
+     * @return true if the thread is in user mode, false otherwise
+     */
+    bool inUserMode(ThreadID tid);
+
   public:
     /** Returns a pointer to a thread context. */
-    ThreadContext *
+    gem5::ThreadContext *
     tcBase(ThreadID tid)
     {
         return thread[tid]->getTC();
     }
 
     /** The global sequence number counter. */
-    InstSeqNum globalSeqNum;//[Impl::MaxThreads];
+    InstSeqNum globalSeqNum;
+
+    /** The global FT sequence number counter. */
+    FTSeqNum globalFTSeqNum;
 
     /** Pointer to the checker, which can dynamically verify
      * instruction results at run time.  This can be set to NULL if it
      * is not being used.
      */
-    Checker<Impl> *checker;
+    gem5::Checker<DynInstPtr> *checker;
 
     /** Pointer to the system. */
     System *system;
 
     /** Pointers to all of the threads in the CPU. */
-    std::vector<Thread *> thread;
+    std::vector<ThreadState *> thread;
 
     /** Threads Scheduled to Enter CPU */
     std::list<int> cpuWaitList;
@@ -683,60 +575,52 @@ class FullO3CPU : public BaseO3CPU
     /** Available thread ids in the cpu*/
     std::vector<ThreadID> tids;
 
-    /** CPU read function, forwards read to LSQ. */
-    Fault read(RequestPtr &req, RequestPtr &sreqLow, RequestPtr &sreqHigh,
-               uint8_t *data, int load_idx)
-    {
-        return this->iew.ldstQueue.read(req, sreqLow, sreqHigh,
-                                        data, load_idx);
-    }
+    /** CPU pushRequest function, forwards request to LSQ. */
+    Fault
+    pushRequest(const DynInstPtr& inst, bool isLoad, uint8_t *data,
+                unsigned int size, Addr addr, Request::Flags flags,
+                uint64_t *res, AtomicOpFunctorPtr amo_op = nullptr,
+                const std::vector<bool>& byte_enable=std::vector<bool>())
 
-    /** CPU write function, forwards write to LSQ. */
-    Fault write(RequestPtr &req, RequestPtr &sreqLow, RequestPtr &sreqHigh,
-                uint8_t *data, int store_idx)
     {
-        return this->iew.ldstQueue.write(req, sreqLow, sreqHigh,
-                                         data, store_idx);
+        return iew.ldstQueue.pushRequest(inst, isLoad, data, size, addr,
+                flags, res, std::move(amo_op), byte_enable);
     }
 
     /** Used by the fetch unit to get a hold of the instruction port. */
-    virtual MasterPort &getInstPort() { return icachePort; }
+    Port &
+    getInstPort() override
+    {
+        return fetch.getInstPort();
+    }
 
     /** Get the dcache port (used to find block size for translations). */
-    virtual MasterPort &getDataPort() { return dcachePort; }
+    Port &
+    getDataPort() override
+    {
+        return iew.ldstQueue.getDataPort();
+    }
 
-    /** Stat for total number of times the CPU is descheduled. */
-    Stats::Scalar timesIdled;
-    /** Stat for total number of cycles the CPU spends descheduled. */
-    Stats::Scalar idleCycles;
-    /** Stat for total number of cycles the CPU spends descheduled due to a
-     * quiesce operation or waiting for an interrupt. */
-    Stats::Scalar quiesceCycles;
-    /** Stat for the number of committed instructions per thread. */
-    Stats::Vector committedInsts;
-    /** Stat for the number of committed ops (including micro ops) per thread. */
-    Stats::Vector committedOps;
-    /** Stat for the CPI per thread. */
-    Stats::Formula cpi;
-    /** Stat for the total CPI. */
-    Stats::Formula totalCpi;
-    /** Stat for the IPC per thread. */
-    Stats::Formula ipc;
-    /** Stat for the total IPC. */
-    Stats::Formula totalIpc;
+    struct CPUStats : public statistics::Group
+    {
+        CPUStats(CPU *cpu);
 
-    //number of integer register file accesses
-    Stats::Scalar intRegfileReads;
-    Stats::Scalar intRegfileWrites;
-    //number of float register file accesses
-    Stats::Scalar fpRegfileReads;
-    Stats::Scalar fpRegfileWrites;
-    //number of CC register file accesses
-    Stats::Scalar ccRegfileReads;
-    Stats::Scalar ccRegfileWrites;
-    //number of misc
-    Stats::Scalar miscRegfileReads;
-    Stats::Scalar miscRegfileWrites;
+        /** Stat for total number of times the CPU is descheduled. */
+        statistics::Scalar timesIdled;
+        /** Stat for total number of cycles the CPU spends descheduled. */
+        statistics::Scalar idleCycles;
+        /** Stat for total number of cycles the CPU spends descheduled due to a
+         * quiesce operation or waiting for an interrupt. */
+        statistics::Scalar quiesceCycles;
+    } cpuStats;
+
+  public:
+    // hardware transactional memory
+    void htmSendAbortSignal(ThreadID tid, uint64_t htm_uid,
+                            HtmFailureFaultCause cause) override;
 };
+
+} // namespace o3
+} // namespace gem5
 
 #endif // __CPU_O3_CPU_HH__

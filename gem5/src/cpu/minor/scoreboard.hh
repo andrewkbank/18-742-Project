@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2014 ARM Limited
+ * Copyright (c) 2013-2014, 2016-2017 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -33,8 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andrew Bardsley
  */
 
 /**
@@ -46,11 +44,19 @@
 #ifndef __CPU_MINOR_SCOREBOARD_HH__
 #define __CPU_MINOR_SCOREBOARD_HH__
 
+#include <vector>
+
+#include "base/named.hh"
+#include "base/types.hh"
 #include "cpu/minor/cpu.hh"
 #include "cpu/minor/dyn_inst.hh"
 #include "cpu/minor/trace.hh"
+#include "cpu/reg_class.hh"
 
-namespace Minor
+namespace gem5
+{
+
+namespace minor
 {
 
 /** A scoreboard of register dependencies including, for each register:
@@ -59,6 +65,16 @@ namespace Minor
 class Scoreboard : public Named
 {
   public:
+    const BaseISA::RegClasses regClasses;
+
+    const unsigned intRegOffset;
+    const unsigned floatRegOffset;
+    const unsigned ccRegOffset;
+    const unsigned vecRegOffset;
+    const unsigned vecRegElemOffset;
+    const unsigned vecPredRegOffset;
+    const unsigned matRegOffset;
+
     /** The number of registers in the Scoreboard.  These
      *  are just the integer, CC and float registers packed
      *  together with integer regs in the range [0,NumIntRegs-1],
@@ -66,9 +82,6 @@ class Scoreboard : public Named
      *  and float regs in the range
      *  [NumIntRegs+NumCCRegs, NumFloatRegs+NumIntRegs+NumCCRegs-1] */
     const unsigned numRegs;
-
-    /** Type to use for thread context registers */
-    typedef TheISA::RegIndex RegIndex;
 
     /** Type to use when indexing numResults */
     typedef unsigned short int Index;
@@ -82,6 +95,7 @@ class Scoreboard : public Named
 
     /** Index of the FU generating this result */
     std::vector<int> fuIndices;
+    static constexpr int invalidFUIndex = -1;
 
     /** The estimated cycle number that the result will be presented.
      *  This can be offset from to allow forwarding to be simulated as
@@ -94,13 +108,23 @@ class Scoreboard : public Named
     std::vector<InstSeqNum> writingInst;
 
   public:
-    Scoreboard(const std::string &name) :
+    Scoreboard(const std::string &name,
+            const BaseISA::RegClasses& reg_classes) :
         Named(name),
-        numRegs(TheISA::NumIntRegs + TheISA::NumCCRegs +
-            TheISA::NumFloatRegs),
+        regClasses(reg_classes),
+        intRegOffset(0),
+        floatRegOffset(intRegOffset + reg_classes.at(IntRegClass)->numRegs()),
+        ccRegOffset(floatRegOffset + reg_classes.at(FloatRegClass)->numRegs()),
+        vecRegOffset(ccRegOffset + reg_classes.at(CCRegClass)->numRegs()),
+        vecRegElemOffset(vecRegOffset + reg_classes.at(VecRegClass)->numRegs()),
+        vecPredRegOffset(vecRegElemOffset +
+                reg_classes.at(VecElemClass)->numRegs()),
+        matRegOffset(vecPredRegOffset +
+                reg_classes.at(VecPredRegClass)->numRegs()),
+        numRegs(matRegOffset + reg_classes.at(MatRegClass)->numRegs()),
         numResults(numRegs, 0),
         numUnpredictableResults(numRegs, 0),
-        fuIndices(numRegs, 0),
+        fuIndices(numRegs, invalidFUIndex),
         returnCycle(numRegs, Cycles(0)),
         writingInst(numRegs, 0)
     { }
@@ -109,7 +133,7 @@ class Scoreboard : public Named
     /** Sets scoreboard_index to the index into numResults of the
      *  given register index.  Returns true if the given register
      *  is in the scoreboard and false if it isn't */
-    bool findIndex(RegIndex reg, Index &scoreboard_index);
+    bool findIndex(const RegId& reg, Index &scoreboard_index);
 
     /** Mark up an instruction's effects by incrementing
      *  numResults counts.  If mark_unpredictable is true, the inst's
@@ -140,6 +164,7 @@ class Scoreboard : public Named
     void minorTrace() const;
 };
 
-}
+} // namespace minor
+} // namespace gem5
 
 #endif /* __CPU_MINOR_SCOREBOARD_HH__ */

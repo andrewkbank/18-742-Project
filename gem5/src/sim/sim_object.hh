@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015 ARM Limited
+ * Copyright (c) 2015, 2021 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -37,9 +37,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Steve Reinhardt
- *          Nathan Binkert
  */
 
 /* @file
@@ -49,21 +46,24 @@
 #ifndef __SIM_OBJECT_HH__
 #define __SIM_OBJECT_HH__
 
-#include <iostream>
-#include <list>
-#include <map>
 #include <string>
 #include <vector>
 
-#include "enums/MemoryMode.hh"
+#include "base/named.hh"
+#include "base/stats/group.hh"
 #include "params/SimObject.hh"
 #include "sim/drain.hh"
-#include "sim/eventq_impl.hh"
+#include "sim/eventq.hh"
+#include "sim/port.hh"
 #include "sim/serialize.hh"
 
-class BaseCPU;
-class Event;
+namespace gem5
+{
+
+class EventManager;
 class ProbeManager;
+class SimObjectResolver;
+
 /**
  * Abstract superclass for simulation objects.  Represents things that
  * correspond to physical components and can be specified via the
@@ -93,8 +93,58 @@ class ProbeManager;
  * depth-first traversal is performed (see descendants() in
  * SimObject.py). This has the effect of calling the method on the
  * parent node <i>before</i> its children.
+ *
+ * The python version of a SimObject class actually represents its Params
+ * structure which holds all its parameter settings and its name. When python
+ * needs to create a C++ instance of one of those classes, it uses the Params
+ * struct's create() method which returns one instance, set up with the
+ * parameters in the struct.
+ *
+ * When writing a SimObject class, there are three different cases as far as
+ * what you need to do to support the create() method, for hypothetical class
+ * Foo.
+ *
+ * If you have a constructor with a signature like this:
+ *
+ * Foo(const FooParams &)
+ *
+ * you don't have to do anything, a create method will be automatically
+ * defined which will call your constructor and return that instance. You
+ * should use this option most of the time.
+ *
+ * If you have a constructor with that signature but still want to define
+ * your own create method for some reason, you can do that by providing an
+ * alternative implementation which will override the default. It should have
+ * this signature:
+ *
+ * Foo *FooParams::create() const;
+ *
+ * If you don't have a constructor with that signature at all, then you must
+ * implement the create method with that signature which will build your
+ * object in some other way.
+ *
+ * A reference to the SimObjectParams will be returned via the params()
+ * API. It is quite common for a derived class (DerivSimObject) to access its
+ * derived parameters by downcasting the SimObjectParam to DerivSimObjectParams
+ *
+ * \code{.cpp}
+ *     using Params = DerivSimObjectParams;
+ *     const Params &
+ *     params() const
+ *     {
+ *         return reinterpret_cast<const Params&>(_params);
+ *     }
+ * \endcode
+ *
+ * We provide the PARAMS(..) macro as syntactic sugar to replace the code
+ * above with a much simpler:
+ *
+ * \code{.cpp}
+ *     PARAMS(DerivSimObject);
+ * \endcode
  */
-class SimObject : public EventManager, public Serializable, public Drainable
+class SimObject : public EventManager, public Serializable, public Drainable,
+                  public statistics::Group, public Named
 {
   private:
     typedef std::vector<SimObject *> SimObjectList;
@@ -102,28 +152,44 @@ class SimObject : public EventManager, public Serializable, public Drainable
     /** List of all instantiated simulation objects. */
     static SimObjectList simObjectList;
 
+    /** Helper to resolve an object given its name. */
+    static SimObjectResolver *_objNameResolver;
+
     /** Manager coordinates hooking up probe points with listeners. */
     ProbeManager *probeManager;
 
   protected:
-    /** Cached copy of the object parameters. */
-    const SimObjectParams *_params;
+    /**
+     * Cached copy of the object parameters.
+     *
+     * @ingroup api_simobject
+     */
+    const SimObjectParams &_params;
 
   public:
     typedef SimObjectParams Params;
-    const Params *params() const { return _params; }
-    SimObject(const Params *_params);
+    /**
+     * @return This function returns the cached copy of the object parameters.
+     *
+     * @ingroup api_simobject
+     */
+    const Params &params() const { return _params; }
+
+    /**
+     * @ingroup api_simobject
+     */
+    SimObject(const Params &p);
+
     virtual ~SimObject();
 
   public:
-
-    virtual const std::string name() const { return params()->name; }
-
     /**
      * init() is called after all C++ SimObjects have been created and
      * all ports are connected.  Initializations that are independent
      * of unserialization but rely on a fully instantiated and
      * connected SimObject graph should be done here.
+     *
+     * @ingroup api_simobject
      */
     virtual void init();
 
@@ -137,6 +203,8 @@ class SimObject : public EventManager, public Serializable, public Drainable
      * found.
      *
      * @param cp Checkpoint to restore the state from.
+     *
+     * @ingroup api_serialize
      */
     virtual void loadState(CheckpointIn &cp);
 
@@ -144,39 +212,70 @@ class SimObject : public EventManager, public Serializable, public Drainable
      * initState() is called on each SimObject when *not* restoring
      * from a checkpoint.  This provides a hook for state
      * initializations that are only required for a "cold start".
+     *
+     * @ingroup api_serialize
      */
     virtual void initState();
 
     /**
-     * Register statistics for this object.
-     */
-    virtual void regStats();
-
-    /**
-     * Reset statistics associated with this object.
-     */
-    virtual void resetStats();
-
-    /**
      * Register probe points for this object.
+     *
+     * @ingroup api_simobject
      */
     virtual void regProbePoints();
 
     /**
      * Register probe listeners for this object.
+     *
+     * @ingroup api_simobject
      */
     virtual void regProbeListeners();
 
     /**
      * Get the probe manager for this object.
+     *
+     * Probes generate traces. A trace is a file that
+     * keeps a log of events. For example, we can have a probe
+     * listener for an address and the trace will be a file that
+     * has time stamps for all the reads and writes to that address.
+     *
+     * @ingroup api_simobject
      */
     ProbeManager *getProbeManager();
+
+    /**
+     * Get a port with a given name and index. This is used at binding time
+     * and returns a reference to a protocol-agnostic port.
+     *
+     * gem5 has a request and response port interface. All memory objects
+     * are connected together via ports. These ports provide a rigid
+     * interface between these memory objects. These ports implement
+     * three different memory system modes: timing, atomic, and
+     * functional. The most important mode is the timing mode and here
+     * timing mode is used for conducting cycle-level timing
+     * experiments. The other modes are only used in special
+     * circumstances and should *not* be used to conduct cycle-level
+     * timing experiments. The other modes are only used in special
+     * circumstances. These ports allow SimObjects to communicate with
+     * each other.
+     *
+     * @param if_name Port name
+     * @param idx Index in the case of a VectorPort
+     *
+     * @return A reference to the given port
+     *
+     * @ingroup api_simobject
+     */
+    virtual Port &getPort(const std::string &if_name,
+                          PortID idx=InvalidPortID);
 
     /**
      * startup() is the final initialization call before simulation.
      * All state is initialized (including unserialized state, if any,
      * such as the curTick() value), so this is the appropriate place to
      * schedule initial event(s) for objects that need them.
+     *
+     * @ingroup api_simobject
      */
     virtual void startup();
 
@@ -184,7 +283,7 @@ class SimObject : public EventManager, public Serializable, public Drainable
      * Provide a default implementation of the drain interface for
      * objects that don't need draining.
      */
-    DrainState drain() M5_ATTR_OVERRIDE { return DrainState::Drained; }
+    DrainState drain() override { return DrainState::Drained; }
 
     /**
      * Write back dirty buffers to memory using functional writes.
@@ -193,6 +292,8 @@ class SimObject : public EventManager, public Serializable, public Drainable
      * written all its dirty data back to memory. This method is
      * typically used to prepare a system with caches for
      * checkpointing.
+     *
+     * @ingroup api_simobject
      */
     virtual void memWriteback() {};
 
@@ -206,30 +307,68 @@ class SimObject : public EventManager, public Serializable, public Drainable
      *
      * @warn This does <i>not</i> cause any dirty state to be written
      * back to memory.
+     *
+     * @ingroup api_simobject
      */
     virtual void memInvalidate() {};
 
-    void serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE {};
-    void unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE {};
+    void serialize(CheckpointOut &cp) const override {};
+    void unserialize(CheckpointIn &cp) override {};
 
     /**
-     * Serialize all SimObjects in the system.
+     * Create a checkpoint by serializing all SimObjects in the system.
+     *
+     * This is the entry point in the process of checkpoint creation,
+     * so it will create the checkpoint file and then unfold into
+     * the serialization of all the sim objects declared.
+     *
+     * Each SimObject instance is explicitly and individually serialized
+     * in its own section. As such, the serialization functions should not
+     * be called on sim objects anywhere else; otherwise, these objects
+     * would be needlessly serialized more than once.
      */
-    static void serializeAll(CheckpointOut &cp);
-
-#ifdef DEBUG
-  public:
-    bool doDebugBreak;
-    static void debugObjectBreak(const std::string &objs);
-#endif
+    static void serializeAll(const std::string &cpt_dir);
 
     /**
      * Find the SimObject with the given name and return a pointer to
      * it.  Primarily used for interactive debugging.  Argument is
      * char* rather than std::string to make it callable from gdb.
+     *
+     * @ingroup api_simobject
      */
     static SimObject *find(const char *name);
+
+    /**
+     * There is a single object name resolver, and it is only set when
+     * simulation is restoring from checkpoints.
+     *
+     * @param Pointer to the single sim object name resolver.
+     */
+    static void setSimObjectResolver(SimObjectResolver *resolver);
+
+    /**
+     * There is a single object name resolver, and it is only set when
+     * simulation is restoring from checkpoints.
+     *
+     * @return Pointer to the single sim object name resolver.
+     */
+    static SimObjectResolver *getSimObjectResolver();
 };
+
+/* Add PARAMS(ClassName) to every descendant of SimObject that needs
+ * params.
+ *
+ * Strictly speaking, we need static_cast here, because the types are
+ * related by inheritance, but since the target type may be
+ * incomplete, the compiler does not know the relation.
+ */
+#define PARAMS(type)                                     \
+    using Params = type ## Params;                       \
+    const Params &                                       \
+    params() const                                       \
+    {                                                    \
+        return reinterpret_cast<const Params&>(_params); \
+    }
 
 /**
  * Base class to wrap object resolving functionality.
@@ -242,12 +381,25 @@ class SimObjectResolver
   public:
     virtual ~SimObjectResolver() { }
 
-    // Find a SimObject given a full path name
+    /**
+     * Find a SimObject given a full path name
+     *
+     * @ingroup api_serialize
+     */
     virtual SimObject *resolveSimObject(const std::string &name) = 0;
 };
 
-#ifdef DEBUG
-void debugObjectBreak(const char *objs);
-#endif
+
+/**
+ * To avoid circular dependencies the unserialization of SimObjects must be
+ * implemented here.
+ *
+ * @ingroup api_serialize
+ */
+void objParamIn(CheckpointIn &cp, const std::string &name, SimObject * &param);
+
+void debug_serialize(const std::string &cpt_dir);
+
+} // namespace gem5
 
 #endif // __SIM_OBJECT_HH__

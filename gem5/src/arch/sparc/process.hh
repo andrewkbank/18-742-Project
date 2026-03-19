@@ -24,24 +24,25 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Gabe Black
- *          Ali Saidi
  */
 
 #ifndef __SPARC_PROCESS_HH__
 #define __SPARC_PROCESS_HH__
 
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "sim/byteswap.hh"
+#include "arch/sparc/page_size.hh"
+#include "base/loader/object_file.hh"
+#include "mem/page_table.hh"
+#include "params/Process.hh"
 #include "sim/process.hh"
 
-class ObjectFile;
-class System;
+namespace gem5
+{
 
-class SparcLiveProcess : public LiveProcess
+class SparcProcess : public Process
 {
   protected:
 
@@ -50,88 +51,90 @@ class SparcLiveProcess : public LiveProcess
     // The locations of the fill and spill handlers
     Addr fillStart, spillStart;
 
-    SparcLiveProcess(LiveProcessParams * params,
-            ObjectFile *objFile, Addr _StackBias);
+    SparcProcess(const ProcessParams &params, loader::ObjectFile *objFile,
+                 Addr _StackBias);
 
-    void initState();
+    void initState() override;
 
     template<class IntType>
     void argsInit(int pageSize);
 
   public:
 
-    // Handles traps which request services from the operating system
-    virtual void handleTrap(int trapNum, ThreadContext *tc);
-
     Addr readFillStart() { return fillStart; }
     Addr readSpillStart() { return spillStart; }
-
-    virtual void flushWindows(ThreadContext *tc) = 0;
-    void setSyscallReturn(ThreadContext *tc, SyscallReturn return_value);
 };
 
-class Sparc32LiveProcess : public SparcLiveProcess
+class Sparc32Process : public SparcProcess
 {
   protected:
 
-    Sparc32LiveProcess(LiveProcessParams * params, ObjectFile *objFile) :
-            SparcLiveProcess(params, objFile, 0)
+    void initState() override;
+
+  public:
+
+    Sparc32Process(const ProcessParams &params, loader::ObjectFile *objFile)
+        : SparcProcess(params, objFile, 0)
     {
+        Addr brk_point = image.maxAddr();
+        brk_point = roundUp(brk_point, SparcISA::PageBytes);
+
+        // Reserve 8M for main stack.
+        Addr max_stack_size = params.maxStackSize;
+
         // Set up stack. On SPARC Linux, stack goes from the top of memory
         // downward, less the hole for the kernel address space.
-        stack_base = (Addr)0xf0000000ULL;
+        Addr stack_base = 0xf0000000ULL;
+
+        // Set pointer for next thread stack.
+        Addr next_thread_stack_base = stack_base - max_stack_size;
 
         // Set up region for mmaps.
-        mmap_start = mmap_end = 0x70000000;
+        Addr mmap_end = 0x70000000;
+
+        memState = std::make_shared<MemState>(this, brk_point, stack_base,
+                                              max_stack_size,
+                                              next_thread_stack_base,
+                                              mmap_end);
     }
 
-    void initState();
-
-  public:
-
     void argsInit(int intSize, int pageSize);
-
-    void flushWindows(ThreadContext *tc);
-
-    SparcISA::IntReg getSyscallArg(ThreadContext *tc, int &i);
-    /// Explicitly import the otherwise hidden getSyscallArg
-    using LiveProcess::getSyscallArg;
-
-    void setSyscallArg(ThreadContext *tc, int i, SparcISA::IntReg val);
 };
 
-class Sparc64LiveProcess : public SparcLiveProcess
+class Sparc64Process : public SparcProcess
 {
   protected:
-
-    Sparc64LiveProcess(LiveProcessParams * params, ObjectFile *objFile) :
-            SparcLiveProcess(params, objFile, 2047)
-    {
-        // Set up stack. On SPARC Linux, stack goes from the top of memory
-        // downward, less the hole for the kernel address space.
-        stack_base = (Addr)0x80000000000ULL;
-
-        // Set up region for mmaps.  Tru64 seems to start just above 0 and
-        // grow up from there.
-        mmap_start = mmap_end = 0xfffff80000000000ULL;
-    }
-
-    void initState();
+    void initState() override;
 
   public:
 
+    Sparc64Process(const ProcessParams &params, loader::ObjectFile *objFile)
+        : SparcProcess(params, objFile, 2047)
+    {
+        Addr brk_point = image.maxAddr();
+        brk_point = roundUp(brk_point, SparcISA::PageBytes);
+
+        Addr max_stack_size = params.maxStackSize;
+
+        // Set up stack. On SPARC Linux, stack goes from the top of memory
+        // downward, less the hole for the kernel address space.
+        Addr stack_base = 0x80000000000ULL;
+
+        // Set pointer for next thread stack.  Reserve 8M for main stack.
+        Addr next_thread_stack_base = stack_base - max_stack_size;
+
+        // Set up region for mmaps.
+        Addr mmap_end = 0xfffff80000000000ULL;
+
+        memState = std::make_shared<MemState>(this, brk_point, stack_base,
+                                              max_stack_size,
+                                              next_thread_stack_base,
+                                              mmap_end);
+    }
+
     void argsInit(int intSize, int pageSize);
-
-    void flushWindows(ThreadContext *tc);
-
-    SparcISA::IntReg getSyscallArg(ThreadContext *tc, int &i);
-    /// Explicitly import the otherwise hidden getSyscallArg
-    using LiveProcess::getSyscallArg;
-
-    void setSyscallArg(ThreadContext *tc, int i, SparcISA::IntReg val);
 };
 
-/* No architectural page table defined for this ISA */
-typedef NoArchPageTable ArchPageTable;
+} // namespace gem5
 
 #endif // __SPARC_PROCESS_HH__

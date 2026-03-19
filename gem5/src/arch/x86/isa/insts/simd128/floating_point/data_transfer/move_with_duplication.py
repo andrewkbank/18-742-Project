@@ -32,10 +32,8 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Gabe Black
 
-microcode = '''
+microcode = """
 def macroop MOVDDUP_XMM_XMM {
     movfp xmmh, xmmlm, dataSize=8
     movfp xmml, xmmlm, dataSize=8
@@ -54,4 +52,4 @@ def macroop MOVDDUP_XMM_P {
 
 # MOVSLDUP
 # MOVSHDUP
-'''
+"""

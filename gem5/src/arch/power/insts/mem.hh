@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2009 The University of Edinburgh
+ * Copyright (c) 2021 IBM Corporation
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -24,14 +25,15 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Timothy M. Jones
  */
 
 #ifndef __ARCH_POWER_MEM_HH__
 #define __ARCH_POWER_MEM_HH__
 
 #include "arch/power/insts/static_inst.hh"
+
+namespace gem5
+{
 
 namespace PowerISA
 {
@@ -45,23 +47,16 @@ class MemOp : public PowerStaticInst
 
     /// Memory request flags.  See mem_req_base.hh.
     unsigned memAccessFlags;
-    /// Pointer to EAComp object.
-    const StaticInstPtr eaCompPtr;
-    /// Pointer to MemAcc object.
-    const StaticInstPtr memAccPtr;
 
     /// Constructor
-    MemOp(const char *mnem, MachInst _machInst, OpClass __opClass,
-          StaticInstPtr _eaCompPtr = nullStaticInstPtr,
-          StaticInstPtr _memAccPtr = nullStaticInstPtr)
+    MemOp(const char *mnem, MachInst _machInst, OpClass __opClass)
       : PowerStaticInst(mnem, _machInst, __opClass),
-        memAccessFlags(0),
-        eaCompPtr(_eaCompPtr),
-        memAccPtr(_memAccPtr)
+        memAccessFlags(0)
     {
     }
 
-    std::string generateDisassembly(Addr pc, const SymbolTable *symtab) const;
+    std::string generateDisassembly(
+            Addr pc, const loader::SymbolTable *symtab) const override;
 };
 
 
@@ -72,20 +67,58 @@ class MemDispOp : public MemOp
 {
   protected:
 
-    int16_t disp;
+    int64_t d;
 
     /// Constructor
-    MemDispOp(const char *mnem, MachInst _machInst, OpClass __opClass,
-              StaticInstPtr _eaCompPtr = nullStaticInstPtr,
-              StaticInstPtr _memAccPtr = nullStaticInstPtr)
-      : MemOp(mnem, _machInst, __opClass, _eaCompPtr, _memAccPtr),
-        disp(machInst.d)
+    MemDispOp(const char *mnem, MachInst _machInst, OpClass __opClass)
+      : MemOp(mnem, _machInst, __opClass),
+        d(sext<16>(machInst.d))
     {
     }
 
-    std::string generateDisassembly(Addr pc, const SymbolTable *symtab) const;
+    std::string generateDisassembly(
+            Addr pc, const loader::SymbolTable *symtab) const override;
+};
+
+/**
+ * Class for memory operations with shifted displacement.
+ */
+class MemDispShiftOp : public MemOp
+{
+  protected:
+
+    int64_t ds;
+
+    /// Constructor
+    MemDispShiftOp(const char *mnem, MachInst _machInst, OpClass __opClass)
+      : MemOp(mnem, _machInst, __opClass),
+        ds(sext<14>(machInst.ds))
+    {
+    }
+
+    std::string generateDisassembly(
+            Addr pc, const loader::SymbolTable *symtab) const override;
+};
+
+
+/**
+ * Class for memory operations with register indexed addressing.
+ */
+class MemIndexOp : public MemOp
+{
+  protected:
+
+    /// Constructor
+    MemIndexOp(const char *mnem, MachInst _machInst, OpClass __opClass)
+      : MemOp(mnem, _machInst, __opClass)
+    {
+    }
+
+    std::string generateDisassembly(
+            Addr pc, const loader::SymbolTable *symtab) const override;
 };
 
 } // namespace PowerISA
+} // namespace gem5
 
 #endif //__ARCH_POWER_INSTS_MEM_HH__

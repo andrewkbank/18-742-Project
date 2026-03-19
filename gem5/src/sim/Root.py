@@ -25,16 +25,13 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Nathan Binkert
 
-from m5.SimObject import SimObject
-from m5.defines import buildEnv
 from m5.params import *
+from m5.SimObject import SimObject
 from m5.util import fatal
 
-class Root(SimObject):
 
+class Root(SimObject):
     _the_instance = None
 
     def __new__(cls, **kwargs):
@@ -50,16 +47,18 @@ class Root(SimObject):
         # args.  Seems like a bad design but that's the way it is.
         Root._the_instance = SimObject.__new__(cls)
         return Root._the_instance
-        
+
     @classmethod
     def getInstance(cls):
         return Root._the_instance
 
     def path(self):
-        return 'root'
+        return "root"
 
-    type = 'Root'
+    type = "Root"
     cxx_header = "sim/root.hh"
+    cxx_class = "gem5::Root"
+    override_create = True
 
     # By default, root sim object and hence all other sim objects schedule
     # event on the eventq with index 0.
@@ -74,5 +73,6 @@ class Root(SimObject):
     # Time syncing prevents the simulation from running faster than real time.
     time_sync_enable = Param.Bool(False, "whether time syncing is enabled")
     time_sync_period = Param.Clock("100ms", "how often to sync with real time")
-    time_sync_spin_threshold = \
-            Param.Clock("100us", "when less than this much time is left, spin")
+    time_sync_spin_threshold = Param.Clock(
+        "100us", "when less than this much time is left, spin"
+    )

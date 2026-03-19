@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2011, 2014 ARM Limited
+ * Copyright (c) 2022-2023 The University of Edinburgh
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -36,10 +37,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Kevin Lim
- *          Timothy M. Jones
- *          Nilay Vaish
  */
 
 #ifndef __CPU_PRED_TOURNAMENT_PRED_HH__
@@ -47,75 +44,42 @@
 
 #include <vector>
 
+#include "base/sat_counter.hh"
 #include "base/types.hh"
-#include "cpu/pred/bpred_unit.hh"
-#include "cpu/pred/sat_counter.hh"
+#include "cpu/pred/conditional.hh"
 #include "params/TournamentBP.hh"
+
+namespace gem5
+{
+
+namespace branch_prediction
+{
 
 /**
  * Implements a tournament branch predictor, hopefully identical to the one
  * used in the 21264.  It has a local predictor, which uses a local history
  * table to index into a table of counters, and a global predictor, which
  * uses a global history to index into a table of counters.  A choice
- * predictor chooses between the two.  Only the global history register
- * is speculatively updated, the rest are updated upon branches committing
- * or misspeculating.
+ * predictor chooses between the two.  Both the global history register
+ * and the selected local history are speculatively updated.
  */
-class TournamentBP : public BPredUnit
+class TournamentBP : public ConditionalPredictor
 {
   public:
     /**
      * Default branch predictor constructor.
      */
-    TournamentBP(const TournamentBPParams *params);
+    TournamentBP(const TournamentBPParams &params);
 
-    /**
-     * Looks up the given address in the branch predictor and returns
-     * a true/false value as to whether it is taken.  Also creates a
-     * BPHistory object to store any state it will need on squash/update.
-     * @param branch_addr The address of the branch to look up.
-     * @param bp_history Pointer that will be set to the BPHistory object.
-     * @return Whether or not the branch is taken.
-     */
-    bool lookup(Addr branch_addr, void * &bp_history);
-
-    /**
-     * Records that there was an unconditional branch, and modifies
-     * the bp history to point to an object that has the previous
-     * global history stored in it.
-     * @param bp_history Pointer that will be set to the BPHistory object.
-     */
-    void uncondBranch(Addr pc, void * &bp_history);
-    /**
-     * Updates the branch predictor to Not Taken if a BTB entry is
-     * invalid or not found.
-     * @param branch_addr The address of the branch to look up.
-     * @param bp_history Pointer to any bp history state.
-     * @return Whether or not the branch is taken.
-     */
-    void btbUpdate(Addr branch_addr, void * &bp_history);
-    /**
-     * Updates the branch predictor with the actual result of a branch.
-     * @param branch_addr The address of the branch to update.
-     * @param taken Whether or not the branch was taken.
-     * @param bp_history Pointer to the BPHistory object that was created
-     * when the branch was predicted.
-     * @param squashed is set when this function is called during a squash
-     * operation.
-     */
-    void update(Addr branch_addr, bool taken, void *bp_history, bool squashed);
-
-    void retireSquashed(void *bp_history);
-
-    /**
-     * Restores the global branch history on a squash.
-     * @param bp_history Pointer to the BPHistory object that has the
-     * previous global branch history in it.
-     */
-    void squash(void *bp_history);
-
-    /** Returns the global history. */
-    inline unsigned readGlobalHist() { return globalHistory; }
+    // Base class methods.
+    bool lookup(ThreadID tid, Addr pc, void* &bp_history) override;
+    void updateHistories(ThreadID tid, Addr pc, bool uncond, bool taken,
+                         Addr target, const StaticInstPtr &inst,
+                         void * &bp_history) override;
+    void update(ThreadID tid, Addr pc, bool taken, void * &bp_history,
+                bool squashed, const StaticInstPtr & inst,
+                Addr target) override;
+    void squash(ThreadID tid, void * &bp_history) override;
 
   private:
     /**
@@ -131,25 +95,18 @@ class TournamentBP : public BPredUnit
      */
     inline unsigned calcLocHistIdx(Addr &branch_addr);
 
-    /** Updates global history as taken. */
-    inline void updateGlobalHistTaken();
-
-    /** Updates global history as not taken. */
-    inline void updateGlobalHistNotTaken();
-
-    /**
-     * Updates local histories as taken.
-     * @param local_history_idx The local history table entry that
-     * will be updated.
-     */
-    inline void updateLocalHistTaken(unsigned local_history_idx);
+    /** Updates global history with the given direction
+     * @param taken Whether or not the branch was taken
+    */
+    inline void updateGlobalHist(ThreadID tid, bool taken);
 
     /**
-     * Updates local histories as not taken.
+     * Updates local histories.
      * @param local_history_idx The local history table entry that
      * will be updated.
+     * @param taken Whether or not the branch was taken.
      */
-    inline void updateLocalHistNotTaken(unsigned local_history_idx);
+    inline void updateLocalHist(unsigned local_history_idx, bool taken);
 
     /**
      * The branch history information that is created upon predicting
@@ -157,8 +114,9 @@ class TournamentBP : public BPredUnit
      * when the BP can use this information to update/restore its
      * state properly.
      */
-    struct BPHistory {
-#ifdef DEBUG
+    struct BPHistory
+    {
+#ifdef GEM5_DEBUG
         BPHistory()
         { newCount++; }
         ~BPHistory()
@@ -176,9 +134,6 @@ class TournamentBP : public BPredUnit
 
     /** Flag for invalid predictor index */
     static const int invalidPredictorIndex = -1;
-    /** Local counters. */
-    std::vector<SatCounter> localCtrs;
-
     /** Number of counters in the local predictor. */
     unsigned localPredictorSize;
 
@@ -187,6 +142,9 @@ class TournamentBP : public BPredUnit
 
     /** Number of bits of the local predictor's counters. */
     unsigned localCtrBits;
+
+    /** Local counters. */
+    std::vector<SatCounter8> localCtrs;
 
     /** Array of local history table entries. */
     std::vector<unsigned> localHistoryTable;
@@ -197,19 +155,19 @@ class TournamentBP : public BPredUnit
     /** Number of bits for each entry of the local history table. */
     unsigned localHistoryBits;
 
-    /** Array of counters that make up the global predictor. */
-    std::vector<SatCounter> globalCtrs;
-
     /** Number of entries in the global predictor. */
     unsigned globalPredictorSize;
 
     /** Number of bits of the global predictor's counters. */
     unsigned globalCtrBits;
 
+    /** Array of counters that make up the global predictor. */
+    std::vector<SatCounter8> globalCtrs;
+
     /** Global history register. Contains as much history as specified by
      *  globalHistoryBits. Actual number of bits used is determined by
      *  globalHistoryMask and choiceHistoryMask. */
-    unsigned globalHistory;
+    std::vector<unsigned> globalHistory;
 
     /** Number of bits for the global history. Determines maximum number of
         entries in global and choice predictor tables. */
@@ -227,14 +185,14 @@ class TournamentBP : public BPredUnit
      *  used. */
     unsigned historyRegisterMask;
 
-    /** Array of counters that make up the choice predictor. */
-    std::vector<SatCounter> choiceCtrs;
-
     /** Number of entries in the choice predictor. */
     unsigned choicePredictorSize;
 
     /** Number of bits in the choice predictor's counters. */
     unsigned choiceCtrBits;
+
+    /** Array of counters that make up the choice predictor. */
+    std::vector<SatCounter8> choiceCtrs;
 
     /** Thresholds for the counter value; above the threshold is taken,
      *  equal to or below the threshold is not taken.
@@ -243,5 +201,8 @@ class TournamentBP : public BPredUnit
     unsigned globalThreshold;
     unsigned choiceThreshold;
 };
+
+} // namespace branch_prediction
+} // namespace gem5
 
 #endif // __CPU_PRED_TOURNAMENT_PRED_HH__

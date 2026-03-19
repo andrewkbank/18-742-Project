@@ -38,27 +38,52 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nathan Binkert
  */
+
+#include "sim/sim_events.hh"
 
 #include <string>
 
 #include "base/callback.hh"
-#include "base/hostinfo.hh"
-#include "sim/eventq_impl.hh"
-#include "sim/sim_events.hh"
+#include "sim/eventq.hh"
 #include "sim/sim_exit.hh"
 #include "sim/stats.hh"
 
-using namespace std;
+namespace gem5
+{
 
 GlobalSimLoopExitEvent::GlobalSimLoopExitEvent(Tick when,
                                                const std::string &_cause,
-                                               int c, Tick r)
+                                               int c, Tick r,
+                                               uint64_t hypercall_id,
+        std::map<std::string, std::string> payload)
     : GlobalEvent(when, Sim_Exit_Pri, IsExitEvent),
-      cause(_cause), code(c), repeat(r)
+      cause(_cause), code(c), repeat(r), hypercall_id(hypercall_id),
+      payload(payload)
 {
+}
+
+GlobalSimLoopExitEvent::GlobalSimLoopExitEvent(const std::string &_cause,
+                                               int c, Tick r,
+                                               uint64_t hypercall_id,
+        std::map<std::string, std::string> payload)
+    : GlobalEvent(curTick(), Minimum_Pri, IsExitEvent),
+      cause(_cause), code(c), repeat(r), hypercall_id(hypercall_id),
+      payload(payload)
+{
+}
+
+GlobalSimLoopExitEvent::GlobalSimLoopExitEvent(Tick when,
+    uint64_t hypercall_id, std::map<std::string, std::string> payload)
+    : GlobalSimLoopExitEvent(when, "", 0, 0, hypercall_id, payload)
+{
+}
+
+GlobalSimLoopExitEvent::GlobalSimLoopExitEvent(uint64_t hypercall_id,
+        std::map<std::string, std::string> payload)
+    : GlobalSimLoopExitEvent("", 0, 0, hypercall_id, payload)
+{
+    assert(hypercall_id != 0); // 0 is reserved for the "old style" exitSimLoop
 }
 
 const char *
@@ -78,6 +103,10 @@ GlobalSimLoopExitEvent::process()
     }
 }
 
+/**
+ * The "old style" exitSimLoop functions.
+ */
+
 void
 exitSimLoop(const std::string &message, int exit_code, Tick when, Tick repeat,
             bool serialize)
@@ -87,6 +116,39 @@ exitSimLoop(const std::string &message, int exit_code, Tick when, Tick repeat,
             "currently unsupported.");
 
     new GlobalSimLoopExitEvent(when + simQuantum, message, exit_code, repeat);
+}
+
+
+void
+exitSimLoopNow(const std::string &message, int exit_code, Tick repeat,
+               bool serialize)
+{
+    new GlobalSimLoopExitEvent(message, exit_code, repeat);
+}
+
+void
+exitSimLoopWithHypercall (const::std::string &message, int exit_code,
+                Tick when, Tick repeat, std::map<std::string,
+                std::string> payload, uint64_t hypercall_id,
+                bool serialize)
+{
+    new GlobalSimLoopExitEvent(when + simQuantum, message, exit_code, repeat,
+                hypercall_id, payload);
+}
+/**
+ * The "new style" exitSimLoop functions.
+ */
+void exitSimulationLoop(uint64_t type_id,
+    std::map<std::string, std::string> payload, Tick when)
+{
+    new GlobalSimLoopExitEvent(when, type_id, payload);
+}
+
+void
+exitSimulationLoopNow(uint64_t type_id,
+    std::map<std::string, std::string> payload)
+{
+    new GlobalSimLoopExitEvent(type_id, payload);
 }
 
 LocalSimLoopExitEvent::LocalSimLoopExitEvent(const std::string &_cause, int c,
@@ -160,3 +222,5 @@ CountedExitEvent::description() const
 {
     return "counted exit";
 }
+
+} // namespace gem5

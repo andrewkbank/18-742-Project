@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012-2013 ARM Limited
+ * Copyright (c) 2010, 2012-2013, 2017-2018, 2022-2023 Arm Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -36,41 +36,35 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Stephen Hines
  */
 
 #ifndef __ARCH_ARM_TYPES_HH__
 #define __ARCH_ARM_TYPES_HH__
 
-#include "arch/generic/types.hh"
+#include <cstdint>
+
+#include "arch/arm/pcstate.hh"
 #include "base/bitunion.hh"
-#include "base/hashmap.hh"
-#include "base/misc.hh"
-#include "base/types.hh"
-#include "debug/Decoder.hh"
+#include "base/logging.hh"
+
+namespace gem5
+{
 
 namespace ArmISA
 {
     typedef uint32_t MachInst;
 
-    BitUnion8(ITSTATE)
-        /* Note that the split (cond, mask) below is not as in ARM ARM.
-         * But it is more convenient for simulation. The condition
-         * is always the concatenation of the top 3 bits and the next bit,
-         * which applies when one of the bottom 4 bits is set.
-         * Refer to predecoder.cc for the use case.
-         */
-        Bitfield<7, 4> cond;
-        Bitfield<3, 0> mask;
-        // Bitfields for moving to/from CPSR
-        Bitfield<7, 2> top6;
-        Bitfield<1, 0> bottom2;
-    EndBitUnion(ITSTATE)
+    typedef uint16_t vmid_t;
 
     BitUnion64(ExtMachInst)
         // Decoder state
         Bitfield<63, 62> decoderFault; // See DecoderFault
+        Bitfield<61> illegalExecution;
+        Bitfield<60> debugStep;
+
+        // SVE vector length, encoded in the same format as the ZCR_EL<x>.LEN
+        // bitfields
+        Bitfield<59, 56> sveLen;
 
         // ITSTATE bits
         Bitfield<55, 48> itstate;
@@ -208,305 +202,16 @@ namespace ArmISA
         Bitfield<11, 8>  ltcoproc;
     EndBitUnion(ExtMachInst)
 
-    class PCState : public GenericISA::UPCState<MachInst>
-    {
-      protected:
-
-        typedef GenericISA::UPCState<MachInst> Base;
-
-        enum FlagBits {
-            ThumbBit = (1 << 0),
-            JazelleBit = (1 << 1),
-            AArch64Bit = (1 << 2)
-        };
-        uint8_t flags;
-        uint8_t nextFlags;
-        uint8_t _itstate;
-        uint8_t _nextItstate;
-        uint8_t _size;
-      public:
-        PCState() : flags(0), nextFlags(0), _itstate(0), _nextItstate(0),
-                    _size(0)
-        {}
-
-        void
-        set(Addr val)
-        {
-            Base::set(val);
-            npc(val + (thumb() ? 2 : 4));
-        }
-
-        PCState(Addr val) : flags(0), nextFlags(0), _itstate(0),
-                            _nextItstate(0), _size(0)
-        { set(val); }
-
-        bool
-        thumb() const
-        {
-            return flags & ThumbBit;
-        }
-
-        void
-        thumb(bool val)
-        {
-            if (val)
-                flags |= ThumbBit;
-            else
-                flags &= ~ThumbBit;
-        }
-
-        bool
-        nextThumb() const
-        {
-            return nextFlags & ThumbBit;
-        }
-
-        void
-        nextThumb(bool val)
-        {
-            if (val)
-                nextFlags |= ThumbBit;
-            else
-                nextFlags &= ~ThumbBit;
-        }
-
-        void size(uint8_t s) { _size = s; }
-        uint8_t size() const { return _size; }
-
-        bool
-        branching() const
-        {
-            return ((this->pc() + this->size()) != this->npc());
-        }
-
-
-        bool
-        jazelle() const
-        {
-            return flags & JazelleBit;
-        }
-
-        void
-        jazelle(bool val)
-        {
-            if (val)
-                flags |= JazelleBit;
-            else
-                flags &= ~JazelleBit;
-        }
-
-        bool
-        nextJazelle() const
-        {
-            return nextFlags & JazelleBit;
-        }
-
-        void
-        nextJazelle(bool val)
-        {
-            if (val)
-                nextFlags |= JazelleBit;
-            else
-                nextFlags &= ~JazelleBit;
-        }
-
-        bool
-        aarch64() const
-        {
-            return flags & AArch64Bit;
-        }
-
-        void
-        aarch64(bool val)
-        {
-            if (val)
-                flags |= AArch64Bit;
-            else
-                flags &= ~AArch64Bit;
-        }
-
-        bool
-        nextAArch64() const
-        {
-            return nextFlags & AArch64Bit;
-        }
-
-        void
-        nextAArch64(bool val)
-        {
-            if (val)
-                nextFlags |= AArch64Bit;
-            else
-                nextFlags &= ~AArch64Bit;
-        }
-
-
-        uint8_t
-        itstate() const
-        {
-            return _itstate;
-        }
-
-        void
-        itstate(uint8_t value)
-        {
-            _itstate = value;
-        }
-
-        uint8_t
-        nextItstate() const
-        {
-            return _nextItstate;
-        }
-
-        void
-        nextItstate(uint8_t value)
-        {
-            _nextItstate = value;
-        }
-
-        void
-        advance()
-        {
-            Base::advance();
-            flags = nextFlags;
-            npc(pc() + (thumb() ? 2 : 4));
-
-            if (_nextItstate) {
-                _itstate = _nextItstate;
-                _nextItstate = 0;
-            } else if (_itstate) {
-                ITSTATE it = _itstate;
-                uint8_t cond_mask = it.mask;
-                uint8_t thumb_cond = it.cond;
-                DPRINTF(Decoder, "Advancing ITSTATE from %#x,%#x.\n",
-                        thumb_cond, cond_mask);
-                cond_mask <<= 1;
-                uint8_t new_bit = bits(cond_mask, 4);
-                cond_mask &= mask(4);
-                if (cond_mask == 0)
-                    thumb_cond = 0;
-                else
-                    replaceBits(thumb_cond, 0, new_bit);
-                DPRINTF(Decoder, "Advancing ITSTATE to %#x,%#x.\n",
-                        thumb_cond, cond_mask);
-                it.mask = cond_mask;
-                it.cond = thumb_cond;
-                _itstate = it;
-            }
-        }
-
-        void
-        uEnd()
-        {
-            advance();
-            upc(0);
-            nupc(1);
-        }
-
-        Addr
-        instPC() const
-        {
-            return pc() + (thumb() ? 4 : 8);
-        }
-
-        void
-        instNPC(Addr val)
-        {
-            // @todo: review this when AArch32/64 interprocessing is
-            // supported
-            if (aarch64())
-                npc(val);  // AArch64 doesn't force PC alignment, a PC
-                           // Alignment Fault can be raised instead
-            else
-                npc(val &~ mask(nextThumb() ? 1 : 2));
-        }
-
-        Addr
-        instNPC() const
-        {
-            return npc();
-        }
-
-        // Perform an interworking branch.
-        void
-        instIWNPC(Addr val)
-        {
-            bool thumbEE = (thumb() && jazelle());
-
-            Addr newPC = val;
-            if (thumbEE) {
-                if (bits(newPC, 0)) {
-                    newPC = newPC & ~mask(1);
-                }  // else we have a bad interworking address; do not call
-                   // panic() since the instruction could be executed
-                   // speculatively
-            } else {
-                if (bits(newPC, 0)) {
-                    nextThumb(true);
-                    newPC = newPC & ~mask(1);
-                } else if (!bits(newPC, 1)) {
-                    nextThumb(false);
-                } else {
-                    // This state is UNPREDICTABLE in the ARM architecture
-                    // The easy thing to do is just mask off the bit and
-                    // stay in the current mode, so we'll do that.
-                    newPC &= ~mask(2);
-                }
-            }
-            npc(newPC);
-        }
-
-        // Perform an interworking branch in ARM mode, a regular branch
-        // otherwise.
-        void
-        instAIWNPC(Addr val)
-        {
-            if (!thumb() && !jazelle())
-                instIWNPC(val);
-            else
-                instNPC(val);
-        }
-
-        bool
-        operator == (const PCState &opc) const
-        {
-            return Base::operator == (opc) &&
-                flags == opc.flags && nextFlags == opc.nextFlags &&
-                _itstate == opc._itstate && _nextItstate == opc._nextItstate;
-        }
-
-        bool
-        operator != (const PCState &opc) const
-        {
-            return !(*this == opc);
-        }
-
-        void
-        serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE
-        {
-            Base::serialize(cp);
-            SERIALIZE_SCALAR(flags);
-            SERIALIZE_SCALAR(_size);
-            SERIALIZE_SCALAR(nextFlags);
-            SERIALIZE_SCALAR(_itstate);
-            SERIALIZE_SCALAR(_nextItstate);
-        }
-
-        void
-        unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE
-        {
-            Base::unserialize(cp);
-            UNSERIALIZE_SCALAR(flags);
-            UNSERIALIZE_SCALAR(_size);
-            UNSERIALIZE_SCALAR(nextFlags);
-            UNSERIALIZE_SCALAR(_itstate);
-            UNSERIALIZE_SCALAR(_nextItstate);
-        }
-    };
+    BitUnion32(Affinity)
+        Bitfield<31, 24> aff3;
+        Bitfield<23, 16> aff2;
+        Bitfield<15, 8>  aff1;
+        Bitfield<7, 0>   aff0;
+    EndBitUnion(Affinity)
 
     // Shift types for ARM instructions
-    enum ArmShiftType {
+    enum ArmShiftType
+    {
         LSL = 0,
         LSR,
         ASR,
@@ -514,7 +219,8 @@ namespace ArmISA
     };
 
     // Extension types for ARM instructions
-    enum ArmExtendType {
+    enum ArmExtendType
+    {
         UXTB = 0,
         UXTH = 1,
         UXTW = 2,
@@ -525,14 +231,12 @@ namespace ArmISA
         SXTX = 7
     };
 
-    typedef uint64_t LargestRead;
-    // Need to use 64 bits to make sure that read requests get handled properly
-
     typedef int RegContextParam;
     typedef int RegContextVal;
 
     //used in FP convert & round function
-    enum ConvertType{
+    enum ConvertType
+    {
         SINGLE_TO_DOUBLE,
         SINGLE_TO_WORD,
         SINGLE_TO_LONG,
@@ -556,21 +260,61 @@ namespace ArmISA
     };
 
     //used in FP convert & round function
-    enum RoundMode{
+    enum RoundMode
+    {
         RND_ZERO,
         RND_DOWN,
         RND_UP,
         RND_NEAREST
     };
 
-    enum ExceptionLevel {
+    /** Security State */
+    enum class SecurityState
+    {
+        NonSecure,
+        Secure
+    };
+
+    /** Physical Address Space */
+    enum class PASpace
+    {
+        NonSecure,
+        Secure
+    };
+
+    enum class TranMethod
+    {
+        LpaeTran,
+        VmsaTran,
+        UnknownTran
+    };
+
+    enum class DomainType : std::uint8_t
+    {
+        NoAccess = 0,
+        Client,
+        Reserved,
+        Manager
+    };
+
+    enum ExceptionLevel
+    {
         EL0 = 0,
         EL1,
         EL2,
         EL3
     };
 
-    enum OperatingMode {
+    enum class TranslationRegime
+    {
+        EL10,
+        EL20,
+        EL2,
+        EL3
+    };
+
+    enum OperatingMode
+    {
         MODE_EL0T = 0x0,
         MODE_EL1T = 0x4,
         MODE_EL1H = 0x5,
@@ -590,48 +334,66 @@ namespace ArmISA
         MODE_MAXMODE = MODE_SYSTEM
     };
 
-    enum ExceptionClass {
-        EC_INVALID                 = -1,
-        EC_UNKNOWN                 = 0x0,
-        EC_TRAPPED_WFI_WFE         = 0x1,
-        EC_TRAPPED_CP15_MCR_MRC    = 0x3,
-        EC_TRAPPED_CP15_MCRR_MRRC  = 0x4,
-        EC_TRAPPED_CP14_MCR_MRC    = 0x5,
-        EC_TRAPPED_CP14_LDC_STC    = 0x6,
-        EC_TRAPPED_HCPTR           = 0x7,
-        EC_TRAPPED_SIMD_FP         = 0x7,   // AArch64 alias
-        EC_TRAPPED_CP10_MRC_VMRS   = 0x8,
-        EC_TRAPPED_BXJ             = 0xA,
-        EC_TRAPPED_CP14_MCRR_MRRC  = 0xC,
-        EC_ILLEGAL_INST            = 0xE,
-        EC_SVC_TO_HYP              = 0x11,
-        EC_SVC                     = 0x11,  // AArch64 alias
-        EC_HVC                     = 0x12,
-        EC_SMC_TO_HYP              = 0x13,
-        EC_SMC                     = 0x13,  // AArch64 alias
-        EC_SVC_64                  = 0x15,
-        EC_HVC_64                  = 0x16,
-        EC_SMC_64                  = 0x17,
-        EC_TRAPPED_MSR_MRS_64      = 0x18,
-        EC_PREFETCH_ABORT_TO_HYP   = 0x20,
-        EC_PREFETCH_ABORT_LOWER_EL = 0x20,  // AArch64 alias
-        EC_PREFETCH_ABORT_FROM_HYP = 0x21,
-        EC_PREFETCH_ABORT_CURR_EL  = 0x21,  // AArch64 alias
-        EC_PC_ALIGNMENT            = 0x22,
-        EC_DATA_ABORT_TO_HYP       = 0x24,
-        EC_DATA_ABORT_LOWER_EL     = 0x24,  // AArch64 alias
-        EC_DATA_ABORT_FROM_HYP     = 0x25,
-        EC_DATA_ABORT_CURR_EL      = 0x25,  // AArch64 alias
-        EC_STACK_PTR_ALIGNMENT     = 0x26,
-        EC_FP_EXCEPTION            = 0x28,
-        EC_FP_EXCEPTION_64         = 0x2C,
-        EC_SERROR                  = 0x2F
+    enum class ExceptionClass
+    {
+        INVALID                 = -1,
+        UNKNOWN                 = 0x0,
+        TRAPPED_WFI_WFE         = 0x1,
+        TRAPPED_CP15_MCR_MRC    = 0x3,
+        TRAPPED_CP15_MCRR_MRRC  = 0x4,
+        TRAPPED_CP14_MCR_MRC    = 0x5,
+        TRAPPED_CP14_LDC_STC    = 0x6,
+        TRAPPED_HCPTR           = 0x7,
+        TRAPPED_SIMD_FP         = 0x7,   // AArch64 alias
+        TRAPPED_CP10_MRC_VMRS   = 0x8,
+        TRAPPED_PAC             = 0x9,
+        TRAPPED_BXJ             = 0xA,
+        TRAPPED_CP14_MCRR_MRRC  = 0xC,
+        ILLEGAL_INST            = 0xE,
+        SVC_TO_HYP              = 0x11,
+        SVC                     = 0x11,  // AArch64 alias
+        HVC                     = 0x12,
+        SMC_TO_HYP              = 0x13,
+        SMC                     = 0x13,  // AArch64 alias
+        SVC_64                  = 0x15,
+        HVC_64                  = 0x16,
+        SMC_64                  = 0x17,
+        TRAPPED_MSR_MRS_64      = 0x18,
+        TRAPPED_SVE             = 0x19,
+        TRAPPED_ERET            = 0x1A,
+        TRAPPED_SME             = 0x1D,
+        PREFETCH_ABORT_TO_HYP   = 0x20,
+        PREFETCH_ABORT_LOWER_EL = 0x20,  // AArch64 alias
+        PREFETCH_ABORT_FROM_HYP = 0x21,
+        PREFETCH_ABORT_CURR_EL  = 0x21,  // AArch64 alias
+        PC_ALIGNMENT            = 0x22,
+        DATA_ABORT_TO_HYP       = 0x24,
+        DATA_ABORT_LOWER_EL     = 0x24,  // AArch64 alias
+        DATA_ABORT_FROM_HYP     = 0x25,
+        DATA_ABORT_CURR_EL      = 0x25,  // AArch64 alias
+        STACK_PTR_ALIGNMENT     = 0x26,
+        FP_EXCEPTION            = 0x28,
+        FP_EXCEPTION_64         = 0x2C,
+        SERROR                  = 0x2F,
+        HW_BREAKPOINT           = 0x30,
+        HW_BREAKPOINT_LOWER_EL  = 0x30,
+        HW_BREAKPOINT_CURR_EL   = 0x31,
+        SOFTWARE_STEP           = 0x32,
+        SOFTWARE_STEP_LOWER_EL  = 0x32,
+        SOFTWARE_STEP_CURR_EL   = 0x33,
+        WATCHPOINT              = 0x34,
+        WATCHPOINT_LOWER_EL     = 0x34,
+        WATCHPOINT_CURR_EL      = 0x35,
+        SOFTWARE_BREAKPOINT     = 0x38,
+        VECTOR_CATCH            = 0x3A,
+        SOFTWARE_BREAKPOINT_64  = 0x3C,
     };
 
     /**
      * Instruction decoder fault codes in ExtMachInst.
      */
-    enum DecoderFault : std::uint8_t {
+    enum DecoderFault : std::uint8_t
+    {
         OK = 0x0, ///< No fault
         UNALIGNED = 0x1, ///< Unaligned instruction fault
 
@@ -693,7 +455,7 @@ namespace ArmISA
     }
 
     static inline bool
-    badMode(OperatingMode mode)
+    unknownMode(OperatingMode mode)
     {
         switch (mode) {
           case MODE_EL0T:
@@ -718,9 +480,8 @@ namespace ArmISA
         }
     }
 
-
     static inline bool
-    badMode32(OperatingMode mode)
+    unknownMode32(OperatingMode mode)
     {
         switch (mode) {
           case MODE_USER:
@@ -738,20 +499,64 @@ namespace ArmISA
         }
     }
 
-} // namespace ArmISA
-
-__hash_namespace_begin
-
-template<>
-struct hash<ArmISA::ExtMachInst> :
-        public hash<ArmISA::ExtMachInst::__DataType> {
-
-    size_t operator()(const ArmISA::ExtMachInst &emi) const {
-        return hash<ArmISA::ExtMachInst::__DataType>::operator()(emi);
+    static inline const char*
+    regimeToStr(TranslationRegime regime)
+    {
+        switch (regime) {
+          case TranslationRegime::EL10:
+            return "EL10";
+          case TranslationRegime::EL20:
+            return "EL20";
+          case TranslationRegime::EL2:
+            return "EL2";
+          case TranslationRegime::EL3:
+            return "EL3";
+          default:
+            GEM5_UNREACHABLE;
+        }
     }
 
-};
+    static inline std::ostream&
+    operator<<(std::ostream& os, SecurityState ss)
+    {
+        switch (ss) {
+          case SecurityState::NonSecure:
+            os << "NonSecure";
+            break;
+          case SecurityState::Secure:
+            os << "Secure";
+            break;
+          default:
+            panic("Invalid SecurityState\n");
+        }
+        return os;
+    }
 
-__hash_namespace_end
+    constexpr unsigned MaxSveVecLenInBits = 2048;
+    static_assert(MaxSveVecLenInBits >= 128 &&
+                  MaxSveVecLenInBits <= 2048 &&
+                  MaxSveVecLenInBits % 128 == 0,
+                  "Unsupported max. SVE vector length");
+    constexpr unsigned MaxSveVecLenInBytes  = MaxSveVecLenInBits >> 3;
+    constexpr unsigned MaxSveVecLenInWords  = MaxSveVecLenInBits >> 5;
+    constexpr unsigned MaxSveVecLenInDWords = MaxSveVecLenInBits >> 6;
+
+    constexpr unsigned VecRegSizeBytes = MaxSveVecLenInBytes;
+    constexpr unsigned VecPredRegSizeBits = MaxSveVecLenInBytes;
+
+    constexpr unsigned MaxSmeVecLenInBits = 2048;
+    static_assert(MaxSmeVecLenInBits >= 128 &&
+                  MaxSmeVecLenInBits <= 2048 &&
+                  // Only powers of two are supported. We don't need to
+                  // check for the zero case here as we already know it
+                  // is over 128.
+                  (MaxSmeVecLenInBits & (MaxSmeVecLenInBits - 1)) == 0,
+                  "Unsupported max. SME vector length");
+    constexpr unsigned MaxSmeVecLenInBytes  = MaxSmeVecLenInBits >> 3;
+    constexpr unsigned MaxSmeVecLenInWords  = MaxSmeVecLenInBits >> 5;
+    constexpr unsigned MaxSmeVecLenInDWords = MaxSmeVecLenInBits >> 6;
+
+} // namespace ArmISA
+} // namespace gem5
 
 #endif

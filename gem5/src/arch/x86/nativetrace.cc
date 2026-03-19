@@ -24,79 +24,80 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Gabe Black
  */
 
+#include "arch/x86/nativetrace.hh"
+
+#include "arch/x86/pcstate.hh"
 #include "arch/x86/regs/float.hh"
 #include "arch/x86/regs/int.hh"
-#include "arch/x86/isa_traits.hh"
-#include "arch/x86/nativetrace.hh"
 #include "cpu/thread_context.hh"
 #include "debug/ExecRegDelta.hh"
 #include "params/X86NativeTrace.hh"
 #include "sim/byteswap.hh"
 
-namespace Trace {
+namespace gem5
+{
+
+namespace trace {
 
 void
 X86NativeTrace::ThreadState::update(NativeTrace *parent)
 {
     parent->read(this, sizeof(*this));
-    rax = X86ISA::gtoh(rax);
-    rcx = X86ISA::gtoh(rcx);
-    rdx = X86ISA::gtoh(rdx);
-    rbx = X86ISA::gtoh(rbx);
-    rsp = X86ISA::gtoh(rsp);
-    rbp = X86ISA::gtoh(rbp);
-    rsi = X86ISA::gtoh(rsi);
-    rdi = X86ISA::gtoh(rdi);
-    r8 = X86ISA::gtoh(r8);
-    r9 = X86ISA::gtoh(r9);
-    r10 = X86ISA::gtoh(r10);
-    r11 = X86ISA::gtoh(r11);
-    r12 = X86ISA::gtoh(r12);
-    r13 = X86ISA::gtoh(r13);
-    r14 = X86ISA::gtoh(r14);
-    r15 = X86ISA::gtoh(r15);
-    rip = X86ISA::gtoh(rip);
+    rax = letoh(rax);
+    rcx = letoh(rcx);
+    rdx = letoh(rdx);
+    rbx = letoh(rbx);
+    rsp = letoh(rsp);
+    rbp = letoh(rbp);
+    rsi = letoh(rsi);
+    rdi = letoh(rdi);
+    r8 = letoh(r8);
+    r9 = letoh(r9);
+    r10 = letoh(r10);
+    r11 = letoh(r11);
+    r12 = letoh(r12);
+    r13 = letoh(r13);
+    r14 = letoh(r14);
+    r15 = letoh(r15);
+    rip = letoh(rip);
     //This should be expanded if x87 registers are considered
     for (int i = 0; i < 8; i++)
-        mmx[i] = X86ISA::gtoh(mmx[i]);
+        mmx[i] = letoh(mmx[i]);
     for (int i = 0; i < 32; i++)
-        xmm[i] = X86ISA::gtoh(xmm[i]);
+        xmm[i] = letoh(xmm[i]);
 }
 
 void
 X86NativeTrace::ThreadState::update(ThreadContext *tc)
 {
-    rax = tc->readIntReg(X86ISA::INTREG_RAX);
-    rcx = tc->readIntReg(X86ISA::INTREG_RCX);
-    rdx = tc->readIntReg(X86ISA::INTREG_RDX);
-    rbx = tc->readIntReg(X86ISA::INTREG_RBX);
-    rsp = tc->readIntReg(X86ISA::INTREG_RSP);
-    rbp = tc->readIntReg(X86ISA::INTREG_RBP);
-    rsi = tc->readIntReg(X86ISA::INTREG_RSI);
-    rdi = tc->readIntReg(X86ISA::INTREG_RDI);
-    r8 = tc->readIntReg(X86ISA::INTREG_R8);
-    r9 = tc->readIntReg(X86ISA::INTREG_R9);
-    r10 = tc->readIntReg(X86ISA::INTREG_R10);
-    r11 = tc->readIntReg(X86ISA::INTREG_R11);
-    r12 = tc->readIntReg(X86ISA::INTREG_R12);
-    r13 = tc->readIntReg(X86ISA::INTREG_R13);
-    r14 = tc->readIntReg(X86ISA::INTREG_R14);
-    r15 = tc->readIntReg(X86ISA::INTREG_R15);
-    rip = tc->pcState().npc();
+    rax = tc->getReg(X86ISA::int_reg::Rax);
+    rcx = tc->getReg(X86ISA::int_reg::Rcx);
+    rdx = tc->getReg(X86ISA::int_reg::Rdx);
+    rbx = tc->getReg(X86ISA::int_reg::Rbx);
+    rsp = tc->getReg(X86ISA::int_reg::Rsp);
+    rbp = tc->getReg(X86ISA::int_reg::Rbp);
+    rsi = tc->getReg(X86ISA::int_reg::Rsi);
+    rdi = tc->getReg(X86ISA::int_reg::Rdi);
+    r8 = tc->getReg(X86ISA::int_reg::R8);
+    r9 = tc->getReg(X86ISA::int_reg::R9);
+    r10 = tc->getReg(X86ISA::int_reg::R10);
+    r11 = tc->getReg(X86ISA::int_reg::R11);
+    r12 = tc->getReg(X86ISA::int_reg::R12);
+    r13 = tc->getReg(X86ISA::int_reg::R13);
+    r14 = tc->getReg(X86ISA::int_reg::R14);
+    r15 = tc->getReg(X86ISA::int_reg::R15);
+    rip = tc->pcState().as<X86ISA::PCState>().npc();
     //This should be expanded if x87 registers are considered
     for (int i = 0; i < 8; i++)
-        mmx[i] = tc->readFloatRegBits(X86ISA::FLOATREG_MMX(i));
+        mmx[i] = tc->getReg(X86ISA::float_reg::mmx(i));
     for (int i = 0; i < 32; i++)
-        xmm[i] = tc->readFloatRegBits(X86ISA::FLOATREG_XMM_BASE + i);
+        xmm[i] = tc->getReg(X86ISA::float_reg::xmm(i));
 }
 
 
-X86NativeTrace::X86NativeTrace(const Params *p)
-    : NativeTrace(p)
+X86NativeTrace::X86NativeTrace(const Params &p) : NativeTrace(p)
 {
     checkRcx = true;
     checkR11 = true;
@@ -105,9 +106,9 @@ X86NativeTrace::X86NativeTrace(const Params *p)
 bool
 X86NativeTrace::checkRcxReg(const char * name, uint64_t &mVal, uint64_t &nVal)
 {
-    if(!checkRcx)
+    if (!checkRcx)
         checkRcx = (mVal != oldRcxVal || nVal != oldRealRcxVal);
-    if(checkRcx)
+    if (checkRcx)
         return checkReg(name, mVal, nVal);
     return true;
 }
@@ -115,9 +116,9 @@ X86NativeTrace::checkRcxReg(const char * name, uint64_t &mVal, uint64_t &nVal)
 bool
 X86NativeTrace::checkR11Reg(const char * name, uint64_t &mVal, uint64_t &nVal)
 {
-    if(!checkR11)
+    if (!checkR11)
         checkR11 = (mVal != oldR11Val || nVal != oldRealR11Val);
-    if(checkR11)
+    if (checkR11)
         return checkReg(name, mVal, nVal);
     return true;
 }
@@ -142,7 +143,7 @@ X86NativeTrace::check(NativeTraceRecord *record)
     nState.update(this);
     mState.update(record->getThread());
 
-    if(record->getStaticInst()->isSyscall())
+    if (record->getStaticInst()->isSyscall())
     {
         checkRcx = false;
         checkR11 = false;
@@ -187,14 +188,5 @@ X86NativeTrace::check(NativeTraceRecord *record)
     checkXMM(15, mState.xmm, nState.xmm);
 }
 
-} // namespace Trace
-
-////////////////////////////////////////////////////////////////////////
-//
-//  ExeTracer Simulation Object
-//
-Trace::X86NativeTrace *
-X86NativeTraceParams::create()
-{
-    return new Trace::X86NativeTrace(this);
-}
+} // namespace trace
+} // namespace gem5

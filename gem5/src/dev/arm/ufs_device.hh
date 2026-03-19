@@ -33,8 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Rene de Jong
  */
 
 
@@ -145,6 +143,7 @@
 #define __DEV_ARM_UFS_DEVICE_HH__
 
 #include <deque>
+#include <functional>
 
 #include "base/addr_range.hh"
 #include "base/bitfield.hh"
@@ -152,14 +151,18 @@
 #include "debug/UFSHostDevice.hh"
 #include "dev/arm/abstract_nvm.hh"
 #include "dev/arm/base_gic.hh"
-#include "dev/disk_image.hh"
 #include "dev/dma_device.hh"
 #include "dev/io_device.hh"
+#include "dev/storage/disk_image.hh"
 #include "mem/packet.hh"
 #include "mem/packet_access.hh"
-#include "params/UFSHostDevice.hh"
 #include "sim/serialize.hh"
 #include "sim/stats.hh"
+
+namespace gem5
+{
+
+struct UFSHostDeviceParams;
 
 /**
  * Host controller layer: This is your Host controller
@@ -171,12 +174,12 @@ class UFSHostDevice : public DmaDevice
 {
   public:
 
-    UFSHostDevice(const UFSHostDeviceParams* p);
+    UFSHostDevice(const UFSHostDeviceParams &p);
 
-    DrainState drain() M5_ATTR_OVERRIDE;
+    DrainState drain() override;
     void checkDrain();
-    void serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE;
-    void unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE;
+    void serialize(CheckpointOut &cp) const override;
+    void unserialize(CheckpointIn &cp) override;
 
   private:
     /**
@@ -186,7 +189,8 @@ class UFSHostDevice : public DmaDevice
      * As defined in:
      * http://www.jedec.org/standards-documents/results/jesd223
      */
-    struct HCIMem {
+    struct HCIMem
+    {
         /**
          * Specify the host capabilities
          */
@@ -254,7 +258,8 @@ class UFSHostDevice : public DmaDevice
      * dWord1: UPIU header DW-1
      * dWord2: UPIU header DW-2
      */
-    struct UTPUPIUHeader {
+    struct UTPUPIUHeader
+    {
         uint32_t dWord0;
         uint32_t dWord1;
         uint32_t dWord2;
@@ -268,7 +273,8 @@ class UFSHostDevice : public DmaDevice
      * senseDataLen: Sense data length DW-8 U16
      * senseData: Sense data field DW-8 to DW-12
      */
-    struct UTPUPIURSP {
+    struct UTPUPIURSP
+    {
         struct UTPUPIUHeader header;
         uint32_t residualTransferCount;
         uint32_t reserved[4];
@@ -284,7 +290,8 @@ class UFSHostDevice : public DmaDevice
      * inputParam3: Input param 3 DW-5
      * reserved: Reserver DW-6 to DW-7
      */
-    struct UTPUPIUTaskReq {
+    struct UTPUPIUTaskReq
+    {
         struct UTPUPIUHeader header;
         uint32_t inputParam1;
         uint32_t inputParam2;
@@ -299,7 +306,8 @@ class UFSHostDevice : public DmaDevice
      * reserved: Reserved for future use DW-2
      * size: size of physical segment DW-3
      */
-    struct UFSHCDSGEntry {
+    struct UFSHCDSGEntry
+    {
         uint32_t baseAddr;
         uint32_t upperAddr;
         uint32_t reserved;
@@ -313,7 +321,8 @@ class UFSHostDevice : public DmaDevice
      * PRDTable: Physcial Region Descriptor
      * All lengths as defined by JEDEC220
      */
-    struct UTPTransferCMDDesc {
+    struct UTPTransferCMDDesc
+    {
         uint8_t commandUPIU[128];
         uint8_t responseUPIU[128];
         struct UFSHCDSGEntry PRDTable[128];
@@ -322,7 +331,8 @@ class UFSHostDevice : public DmaDevice
     /**
      * UPIU tranfer message.
      */
-    struct UPIUMessage {
+    struct UPIUMessage
+    {
         struct UTPUPIUHeader header;
         uint32_t dataOffset;
         uint32_t dataCount;
@@ -339,7 +349,8 @@ class UFSHostDevice : public DmaDevice
      * PRDTableLength: Physical region descriptor length DW-7
      * PRDTableOffset: Physical region descriptor offset DW-7
      */
-    struct UTPTransferReqDesc {
+    struct UTPTransferReqDesc
+    {
 
         /**
          * struct RequestDescHeader
@@ -348,7 +359,8 @@ class UFSHostDevice : public DmaDevice
          * dword2: Descriptor Header DW2
          * dword3: Descriptor Header DW3
          */
-        struct RequestDescHeader {
+        struct RequestDescHeader
+        {
             uint32_t dWord0;
             uint32_t dWord1;
             uint32_t dWord2;
@@ -372,7 +384,12 @@ class UFSHostDevice : public DmaDevice
      * SCSI reply structure. In here is all the information that is needed to
      * build a SCSI reply.
      */
-    struct SCSIReply {
+    struct SCSIReply
+    {
+        void reset() {
+            memset(static_cast<void*>(this), 0, sizeof(*this));
+        }
+
         uint8_t status;
         uint32_t msgSize;
         uint8_t LUN;
@@ -388,7 +405,8 @@ class UFSHostDevice : public DmaDevice
      * This structure is defined in the SCSI standard, and can also be found in
      * the UFS standard. http://www.jedec.org/standards-documents/results/jesd220
      */
-    struct LUNInfo {
+    struct LUNInfo
+    {
         uint32_t dWord0;
         uint32_t dWord1;
         uint32_t vendor0;
@@ -419,7 +437,8 @@ class UFSHostDevice : public DmaDevice
      * @filePointer this does not point to a file, but to a position on the disk
      * image (which is from the software systems perspective a position in a file)
      */
-    struct transferInfo {
+    struct transferInfo
+    {
         std::vector <uint8_t> buffer;
         uint32_t size;
         uint64_t offset;
@@ -431,7 +450,8 @@ class UFSHostDevice : public DmaDevice
      * transfer completion info.
      * This information is needed by transferDone to finish the transfer.
      */
-    struct transferDoneInfo {
+    struct transferDoneInfo
+    {
         Addr responseStartAddr;
         uint32_t reqPos;
         struct UTPUPIURSP requestOut;
@@ -445,7 +465,8 @@ class UFSHostDevice : public DmaDevice
     /**
      * Transfer start information.
      */
-    struct transferStart {
+    struct transferStart
+    {
         struct UTPTransferReqDesc* destination;
         uint32_t mask;
         Addr address;
@@ -457,7 +478,8 @@ class UFSHostDevice : public DmaDevice
     /**
      * Task start information. This is for the device, so no lun id needed.
      */
-    struct taskStart {
+    struct taskStart
+    {
         struct UTPUPIUTaskReq destination;
         uint32_t mask;
         Addr address;
@@ -469,7 +491,8 @@ class UFSHostDevice : public DmaDevice
      * After a SCSI command has been identified, the SCSI resume function will
      * handle it. This information will provide context information.
      */
-    struct SCSIResumeInfo {
+    struct SCSIResumeInfo
+    {
         struct UTPTransferReqDesc* RequestIn;
         int reqPos;
         Addr finalAddress;
@@ -482,7 +505,8 @@ class UFSHostDevice : public DmaDevice
      * Disk transfer burst information. Needed to allow communication between the
      * disk transactions and dma transactions.
      */
-    struct writeToDiskBurst {
+    struct writeToDiskBurst
+    {
         Addr start;
         uint64_t SCSIDiskOffset;
         uint32_t size;
@@ -492,37 +516,40 @@ class UFSHostDevice : public DmaDevice
     /**
      * Statistics
      */
-    struct UFSHostDeviceStats {
+    struct UFSHostDeviceStats : public statistics::Group
+    {
+        UFSHostDeviceStats(UFSHostDevice *parent);
+
         /** Queue lengths */
-        Stats::Scalar currentSCSIQueue;
-        Stats::Scalar currentReadSSDQueue;
-        Stats::Scalar currentWriteSSDQueue;
+        statistics::Scalar currentSCSIQueue;
+        statistics::Scalar currentReadSSDQueue;
+        statistics::Scalar currentWriteSSDQueue;
 
         /** Amount of data read/written */
-        Stats::Scalar totalReadSSD;
-        Stats::Scalar totalWrittenSSD;
-        Stats::Scalar totalReadDiskTransactions;
-        Stats::Scalar totalWriteDiskTransactions;
-        Stats::Scalar totalReadUFSTransactions;
-        Stats::Scalar totalWriteUFSTransactions;
+        statistics::Scalar totalReadSSD;
+        statistics::Scalar totalWrittenSSD;
+        statistics::Scalar totalReadDiskTransactions;
+        statistics::Scalar totalWriteDiskTransactions;
+        statistics::Scalar totalReadUFSTransactions;
+        statistics::Scalar totalWriteUFSTransactions;
 
         /** Average bandwidth for reads and writes */
-        Stats::Formula averageReadSSDBW;
-        Stats::Formula averageWriteSSDBW;
+        statistics::Formula averageReadSSDBW;
+        statistics::Formula averageWriteSSDBW;
 
         /** Average Queue lengths*/
-        Stats::Average averageSCSIQueue;
-        Stats::Average averageReadSSDQueue;
-        Stats::Average averageWriteSSDQueue;
+        statistics::Average averageSCSIQueue;
+        statistics::Average averageReadSSDQueue;
+        statistics::Average averageWriteSSDQueue;
 
         /** Number of doorbells rung*/
-        Stats::Formula curDoorbell;
-        Stats::Scalar maxDoorbell;
-        Stats::Average averageDoorbell;
+        statistics::Formula curDoorbell;
+        statistics::Scalar maxDoorbell;
+        statistics::Average averageDoorbell;
 
         /** Histogram of latencies*/
-        Stats::Histogram transactionLatency;
-        Stats::Histogram idleTimes;
+        statistics::Histogram transactionLatency;
+        statistics::Histogram idleTimes;
     };
 
     /**
@@ -533,11 +560,13 @@ class UFSHostDevice : public DmaDevice
     class UFSSCSIDevice: SimObject
     {
       public:
+        using Callback = std::function<void()>;
+
         /**
          * Constructor and destructor
          */
-        UFSSCSIDevice(const UFSHostDeviceParams* p, uint32_t lun_id, Callback*
-                      transfer_cb, Callback *read_cb);
+        UFSSCSIDevice(const UFSHostDeviceParams &p, uint32_t lun_id,
+                      const Callback &transfer_cb, const Callback &read_cb);
         ~UFSSCSIDevice();
 
         /**
@@ -720,14 +749,14 @@ class UFSHostDevice : public DmaDevice
         /**
          * Callbacks between Host and Device
          */
-        Callback* signalDone;
-        Callback* deviceReadCallback;
+        Callback signalDone;
+        Callback deviceReadCallback;
 
         /**
          * Callbacks between Device and Memory
          */
-        Callback* memReadCallback;
-        Callback* memWriteCallback;
+        Callback memReadCallback;
+        Callback memWriteCallback;
 
         /*
          * Default response header layout. For more information refer to
@@ -751,7 +780,8 @@ class UFSHostDevice : public DmaDevice
          * SCSI command set; defined in
          * http://www.jedec.org/standards-documents/results/jesd220
          */
-        enum SCSICommandSet {
+        enum SCSICommandSet
+        {
             SCSIInquiry = 0x12,
             SCSIRead6 = 0x08,
             SCSIRead10 = 0x28,
@@ -784,7 +814,8 @@ class UFSHostDevice : public DmaDevice
          * SCSI status codes; defined in
          * http://www.jedec.org/standards-documents/results/jesd220
          */
-        enum SCSIStatusCodes {
+        enum SCSIStatusCodes
+        {
             SCSIGood = 0x00,
             SCSICheckCondition = 0x02,
             SCSIConditionGood = 0x04,
@@ -802,7 +833,8 @@ class UFSHostDevice : public DmaDevice
          * SCSI sense codes; defined in
          * http://www.jedec.org/standards-documents/results/jesd220
          */
-        enum SCSISenseCodes {
+        enum SCSISenseCodes
+        {
             SCSINoSense = 0x00,
             SCSIRecoverdError = 0x01,
             SCSINotReady = 0x02,
@@ -823,13 +855,13 @@ class UFSHostDevice : public DmaDevice
     /**
      * Address range functions
      */
-    AddrRangeList getAddrRanges() const;
+    AddrRangeList getAddrRanges() const override;
 
     /**
      * register access functions
      */
-    Tick read(PacketPtr pkt);
-    Tick write(PacketPtr pkt);
+    Tick read(PacketPtr pkt) override;
+    Tick write(PacketPtr pkt) override;
     // end of access functions
 
     /**
@@ -987,9 +1019,6 @@ class UFSHostDevice : public DmaDevice
      */
     void readGarbage();
 
-    /**register statistics*/
-    void regStats();
-
     /**
      * Host controller information
      */
@@ -1129,18 +1158,8 @@ class UFSHostDevice : public DmaDevice
      * because the flow of the events is completely in the control of these
      * classes. (Whereas in the DMA case we rely on an external class)
      */
-    std::deque<EventWrapper<UFSHostDevice, &UFSHostDevice::readDone> >
-    readDoneEvent;
-    std::deque<EventWrapper<UFSHostDevice, &UFSHostDevice::writeDone> >
-    writeDoneEvent;
-
-    /**
-     * Callbacks for the logic units. One to indicate the completion of a
-     * transaction, the other one to indicate the completion of a read
-     * action.
-     */
-    Callback* transferDoneCallback;
-    Callback* memReadCallback;
+    std::deque<EventFunctionWrapper> readDoneEvent;
+    std::deque<EventFunctionWrapper> writeDoneEvent;
 
     /**
      * The events that control the functionality.
@@ -1152,28 +1171,25 @@ class UFSHostDevice : public DmaDevice
     /**
      * Wait for the SCSI specific data to arive
      */
-    EventWrapper<UFSHostDevice, &UFSHostDevice::SCSIStart> SCSIResumeEvent;
+    EventFunctionWrapper SCSIResumeEvent;
 
     /**
      * Wait for the moment where we can send the last frame
      */
-    EventWrapper<UFSHostDevice, &UFSHostDevice::finalUTP> UTPEvent;
+    EventFunctionWrapper UTPEvent;
 
     /**
      * Event after a read to clean up the UTP data structures
      */
-    std::deque<EventWrapper<UFSHostDevice, &UFSHostDevice::readGarbage> >
-    readGarbageEventQueue;
+    std::deque<EventFunctionWrapper> readGarbageEventQueue;
 
     /**
      * Multiple tasks transfers can be scheduled at once for the device, the
      * only thing we know for sure about them is that they will happen in a
      * first come first serve order; hence we need to queue.
      */
-    std::deque<EventWrapper<UFSHostDevice, &UFSHostDevice::taskStart> >
-    taskEventQueue;
-    std::deque<EventWrapper<UFSHostDevice, &UFSHostDevice::transferStart> >
-    transferEventQueue;
+    std::deque<EventFunctionWrapper> taskEventQueue;
+    std::deque<EventFunctionWrapper> transferEventQueue;
 
     /**
      * Bits of interest within UFS data packages
@@ -1188,7 +1204,8 @@ class UFSHostDevice : public DmaDevice
      * http://www.jedec.org/standards-documents/results/jesd223
      * for their definition.
      */
-    enum UFSHCIRegisters {
+    enum UFSHCIRegisters
+    {
         regControllerCapabilities = 0x00,
         regUFSVersion = 0x08,
         regControllerDEVID = 0x10,
@@ -1219,5 +1236,7 @@ class UFSHostDevice : public DmaDevice
         regUICCommandArg3 = 0x9C
     };
 };
+
+} // namespace gem5
 
 #endif //__DEV_ARM_UFS_DEVICE_HH__

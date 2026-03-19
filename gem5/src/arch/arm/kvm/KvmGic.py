@@ -1,4 +1,4 @@
-# Copyright (c) 2015 ARM Limited
+# Copyright (c) 2015, 2017, 2021 Arm Limited
 # All rights reserved.
 #
 # The license below extends only to copyright in the software and shall
@@ -32,23 +32,34 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Andreas Sandberg
 
+from m5.objects.Gic import (
+    GicV2,
+    Gicv3,
+)
 from m5.params import *
 from m5.proxy import *
 
-from Gic import BaseGic
-from KvmVM import KvmVM
-from System import System
 
-class KvmGic(BaseGic):
-    type = 'KvmGic'
+class MuxingKvmGicV2(GicV2):
+    type = "MuxingKvmGicV2"
     cxx_header = "arch/arm/kvm/gic.hh"
+    cxx_class = "gem5::MuxingKvmGic<gem5::GicV2Types>"
+    cxx_template_params = ["class Types"]
 
-    dist_addr = Param.Addr(0x1f001000, "Address for distributor")
-    cpu_addr = Param.Addr(0x1f000100, "Address for cpu")
+    simulate_gic = Param.Bool(
+        False,
+        "Forcing the simulation to use the gem5 GIC instead of the host GIC",
+    )
 
-    system = Param.System(Parent.any,
-                          'System this interrupt controller belongs to')
-    kvmVM = Param.KvmVM(Parent.any, 'KVM VM (i.e., shared memory domain)')
+
+class MuxingKvmGicV3(Gicv3):
+    type = "MuxingKvmGicV3"
+    cxx_header = "arch/arm/kvm/gic.hh"
+    cxx_class = "gem5::MuxingKvmGic<gem5::GicV3Types>"
+    cxx_template_params = ["class Types"]
+
+    simulate_gic = Param.Bool(
+        False,
+        "Forcing the simulation to use the gem5 GIC instead of the host GIC",
+    )

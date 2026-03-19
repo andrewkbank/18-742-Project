@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015 ARM Limited
+ * Copyright (c) 2015, 2017 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -33,18 +33,20 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andreas Sandberg
  */
 
 #ifndef __ARCH_ARM_KVM_ARMV8_CPU_HH__
 #define __ARCH_ARM_KVM_ARMV8_CPU_HH__
 
+#include <set>
 #include <vector>
 
-#include "arch/arm/intregs.hh"
 #include "arch/arm/kvm/base_cpu.hh"
-#include "arch/arm/miscregs.hh"
+#include "arch/arm/regs/int.hh"
+#include "arch/arm/regs/misc.hh"
+
+namespace gem5
+{
 
 struct ArmV8KvmCPUParams;
 
@@ -80,40 +82,47 @@ struct ArmV8KvmCPUParams;
 class ArmV8KvmCPU : public BaseArmKvmCPU
 {
   public:
-    ArmV8KvmCPU(ArmV8KvmCPUParams *params);
+    ArmV8KvmCPU(const ArmV8KvmCPUParams &params);
     virtual ~ArmV8KvmCPU();
 
-    void dump() M5_ATTR_OVERRIDE;
+    void startup() override;
+
+    void dump() const override;
 
   protected:
-    void updateKvmState() M5_ATTR_OVERRIDE;
-    void updateThreadContext() M5_ATTR_OVERRIDE;
+    void updateKvmState() override;
+    void updateThreadContext() override;
 
   protected:
     /** Mapping between integer registers in gem5 and KVM */
-    struct IntRegInfo {
-        IntRegInfo(uint64_t _kvm, IntRegIndex _idx, const char *_name)
+    struct IntRegInfo
+    {
+        IntRegInfo(uint64_t _kvm, RegIndex _idx, const char *_name)
             : kvm(_kvm), idx(_idx), name(_name) {}
 
         /** Register index in KVM */
         uint64_t kvm;
         /** Register index in gem5 */
-        IntRegIndex idx;
+        RegIndex idx;
         /** Name to use in debug dumps */
         const char *name;
     };
 
     /** Mapping between misc registers in gem5 and registers in KVM */
-    struct MiscRegInfo {
-        MiscRegInfo(uint64_t _kvm, MiscRegIndex _idx, const char *_name)
-            : kvm(_kvm), idx(_idx), name(_name) {}
+    struct MiscRegInfo
+    {
+        MiscRegInfo(uint64_t _kvm, ArmISA::MiscRegIndex _idx,
+                    const char *_name, bool _is_device = false)
+            : kvm(_kvm), idx(_idx), name(_name), is_device(_is_device) {}
 
         /** Register index in KVM */
         uint64_t kvm;
         /** Register index in gem5 */
-        MiscRegIndex idx;
+        ArmISA::MiscRegIndex idx;
         /** Name to use in debug dumps */
         const char *name;
+        /** is device register? (needs 'effectful' state update) */
+        bool is_device;
     };
 
     /**
@@ -130,11 +139,17 @@ class ArmV8KvmCPU : public BaseArmKvmCPU
 
     /** Mapping between gem5 integer registers and integer registers in kvm */
     static const std::vector<ArmV8KvmCPU::IntRegInfo> intRegMap;
-    /** Mapping between gem5 misc registers registers and registers in kvm */
+    /** Mapping between gem5 misc registers and registers in kvm */
     static const std::vector<ArmV8KvmCPU::MiscRegInfo> miscRegMap;
+    /** Device registers (needing "effectful" MiscReg writes) */
+    static const std::set<ArmISA::MiscRegIndex> deviceRegSet;
+    /** Mapping between gem5 ID misc registers and registers in kvm */
+    static const std::vector<ArmV8KvmCPU::MiscRegInfo> miscRegIdMap;
 
     /** Cached mapping between system registers in kvm and misc regs in gem5 */
     mutable std::vector<ArmV8KvmCPU::MiscRegInfo> sysRegMap;
 };
+
+} // namespace gem5
 
 #endif // __ARCH_ARM_KVM_ARMV8_CPU_HH__

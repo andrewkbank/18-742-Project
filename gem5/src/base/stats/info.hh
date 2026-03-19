@@ -24,20 +24,30 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nathan Binkert
  */
 
 #ifndef __BASE_STATS_INFO_HH__
 #define __BASE_STATS_INFO_HH__
 
-#include "base/stats/types.hh"
-#include "base/flags.hh"
+#include <cstdint>
+#include <map>
+#include <memory>
+#include <string>
+#include <vector>
 
-namespace Stats {
+#include "base/compiler.hh"
+#include "base/flags.hh"
+#include "base/stats/types.hh"
+#include "base/stats/units.hh"
+
+namespace gem5
+{
+
+namespace statistics
+{
 
 typedef uint16_t FlagsType;
-typedef ::Flags<FlagsType> Flags;
+typedef gem5::Flags<FlagsType> Flags;
 
 /** Nothing extra to print. */
 const FlagsType none =          0x0000;
@@ -73,6 +83,8 @@ class Info
     std::string name;
     /** The separator string used for vectors, dist, etc. */
     static std::string separatorString;
+    /** The unit of the stat. */
+    const units::Base* unit = units::Unspecified::get();
     /** The description of the stat. */
     std::string desc;
     /** The formatting flags. */
@@ -88,16 +100,32 @@ class Info
     static int id_count;
     int id;
 
-  public:
-    const StorageParams *storageParams;
+  private:
+    std::unique_ptr<const StorageParams> storageParams;
 
   public:
     Info();
     virtual ~Info();
 
-    /** Set the name of this statistic */
-    void setName(const std::string &name);
+    /**
+     * Set the name of this statistic. Special handling must be done when
+     * creating an old-style statistic (i.e., stats without a parent group).
+     *
+     * @param name The new name.
+     * @param old_style Whether we are using the old style.
+     */
+    void setName(const std::string &name, bool old_style=true);
+
     void setSeparator(std::string _sep) { separatorString = _sep;}
+
+    /**
+     * Getter for the storage params. These parameters should only be modified
+     * using the respective setter.
+     * @sa setStorageParams
+     */
+    StorageParams const* getStorageParams() const;
+    /** Setter for the storage params. */
+    void setStorageParams(const StorageParams *const params);
 
     /**
      * Check that this stat has been set up properly and is ready for
@@ -169,26 +197,6 @@ class VectorInfo : public Info
     virtual Result total() const = 0;
 };
 
-enum DistType { Deviation, Dist, Hist };
-
-struct DistData
-{
-    DistType type;
-    Counter min;
-    Counter max;
-    Counter bucket_size;
-
-    Counter min_val;
-    Counter max_val;
-    Counter underflow;
-    Counter overflow;
-    VCounter cvec;
-    Counter sum;
-    Counter squares;
-    Counter logs;
-    Counter samples;
-};
-
 class DistInfo : public Info
 {
   public:
@@ -229,6 +237,8 @@ class Vector2dInfo : public Info
     mutable VCounter cvec;
 
     void enable();
+
+    virtual Result total() const = 0;
 };
 
 class FormulaInfo : public VectorInfo
@@ -237,14 +247,6 @@ class FormulaInfo : public VectorInfo
     virtual std::string str() const = 0;
 };
 
-/** Data structure of sparse histogram */
-struct SparseHistData
-{
-    MCounter cmap;
-    Counter samples;
-};
-
-
 class SparseHistInfo : public Info
 {
   public:
@@ -252,6 +254,10 @@ class SparseHistInfo : public Info
     SparseHistData data;
 };
 
-} // namespace Stats
+typedef std::map<std::string, Info *> NameMapType;
+NameMapType &nameMap();
+
+} // namespace statistics
+} // namespace gem5
 
 #endif // __BASE_STATS_INFO_HH__

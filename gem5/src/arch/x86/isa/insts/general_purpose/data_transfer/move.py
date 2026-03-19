@@ -32,10 +32,8 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Gabe Black
 
-microcode = '''
+microcode = """
 
 #
 # Regular moves
@@ -174,56 +172,56 @@ def macroop MOVZX_W_R_P {
 };
 
 def macroop MOV_C_R {
-    .serializing
+    .serialize_after
     .adjust_env maxOsz
-    wrcr reg, regm
+    wrcr cr, regm
 };
 
 def macroop MOV_R_C {
-    .serializing
+    .serialize_after
     .adjust_env maxOsz
-    rdcr reg, regm
+    rdcr reg, crm
 };
 
 def macroop MOV_D_R {
-    .serializing
+    .serialize_after
     .adjust_env maxOsz
-    wrdr reg, regm
+    wrdr dr, regm
 };
 
 def macroop MOV_R_D {
     .adjust_env maxOsz
-    rddr reg, regm
+    rddr reg, drm
 };
 
 def macroop MOV_R_S {
-    rdsel reg, regm
+    rdsel reg, srm
 };
 
 def macroop MOV_M_S {
-    rdsel t1, reg
+    rdsel t1, sr
     st t1, seg, sib, disp, dataSize=2
 };
 
 def macroop MOV_P_S {
     rdip t7
-    rdsel t1, reg
+    rdsel t1, sr
     st t1, seg, riprel, disp, dataSize=2
 };
 
 def macroop MOV_REAL_S_R {
     zexti t2, regm, 15, dataSize=8
     slli t3, t2, 4, dataSize=8
-    wrsel reg, regm
-    wrbase reg, t3, dataSize=8
+    wrsel sr, regm
+    wrbase sr, t3, dataSize=8
 };
 
 def macroop MOV_REAL_S_M {
     ld t1, seg, sib, disp, dataSize=2
     zexti t2, t1, 15, dataSize=8
     slli t3, t2, 4, dataSize=8
-    wrsel reg, t1
-    wrbase reg, t3, dataSize=8
+    wrsel sr, t1
+    wrbase sr, t3, dataSize=8
 };
 
 def macroop MOV_REAL_S_P {
@@ -242,8 +240,8 @@ globalDescriptor:
     ld t3, tsg, [1, t0, t2], dataSize=8, addressSize=8
 processDescriptor:
     chks regm, t3, dataSize=8
-    wrdl reg, t3, regm
-    wrsel reg, regm
+    wrdl sr, t3, regm
+    wrsel sr, regm
 };
 
 def macroop MOV_S_M {
@@ -259,8 +257,8 @@ globalDescriptor:
     ld t3, tsg, [1, t0, t2], dataSize=8, addressSize=8
 processDescriptor:
     chks t1, t3, dataSize=8
-    wrdl reg, t3, t1
-    wrsel reg, t1
+    wrdl sr, t3, t1
+    wrsel sr, t1
 };
 
 def macroop MOV_S_P {
@@ -277,8 +275,8 @@ globalDescriptor:
     ld t3, tsg, [1, t0, t2], dataSize=8, addressSize=8
 processDescriptor:
     chks t1, t3, dataSize=8
-    wrdl reg, t3, t1
-    wrsel reg, t1
+    wrdl sr, t3, t1
+    wrsel sr, t1
 };
 
 def macroop MOVSS_S_R {
@@ -293,8 +291,8 @@ globalDescriptor:
     ld t3, tsg, [1, t0, t2], dataSize=8, addressSize=8
 processDescriptor:
     chks regm, t3, SSCheck, dataSize=8
-    wrdl reg, t3, regm
-    wrsel reg, regm
+    wrdl sr, t3, regm
+    wrsel sr, regm
 };
 
 def macroop MOVSS_S_M {
@@ -310,8 +308,8 @@ globalDescriptor:
     ld t3, tsg, [1, t0, t2], dataSize=8, addressSize=8
 processDescriptor:
     chks t1, t3, SSCheck, dataSize=8
-    wrdl reg, t3, t1
-    wrsel reg, t1
+    wrdl sr, t3, t1
+    wrsel sr, t1
 };
 
 def macroop MOVSS_S_P {
@@ -328,15 +326,17 @@ globalDescriptor:
     ld t3, tsg, [1, t0, t2], dataSize=8, addressSize=8
 processDescriptor:
     chks t1, t3, SSCheck, dataSize=8
-    wrdl reg, t3, t1
-    wrsel reg, t1
+    wrdl sr, t3, t1
+    wrsel sr, t1
 };
 
 def macroop MOVNTI_M_R {
+    warn_once "MOVNTI: Ignoring non-temporal hint, modeling as cacheable!"
     st reg, seg, sib, disp
 };
 
 def macroop MOVNTI_P_R {
+    warn_once "MOVNTI_P: Ignoring non-temporal hint, modeling as cacheable!"
     rdip t7
     st reg, seg, riprel, disp
 };
@@ -370,8 +370,8 @@ def macroop MOVD_P_XMM {
     stfp xmml, seg, riprel, disp, dataSize=dsz
 };
 
-'''
-#let {{
+"""
+# let {{
 #    class MOVD(Inst):
 #       "GenFault ${new UnimpInstFault}"
-#}};
+# }};

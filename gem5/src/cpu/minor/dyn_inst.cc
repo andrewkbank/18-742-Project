@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2014 ARM Limited
+ * Copyright (c) 2013-2014, 2016,2018 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -33,24 +33,31 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andrew Bardsley
  */
+
+#include "cpu/minor/dyn_inst.hh"
 
 #include <iomanip>
 #include <sstream>
 
-#include "arch/isa.hh"
-#include "arch/registers.hh"
-#include "cpu/minor/dyn_inst.hh"
-#include "cpu/minor/trace.hh"
 #include "cpu/base.hh"
+#include "cpu/minor/trace.hh"
+#include "cpu/null_static_inst.hh"
 #include "cpu/reg_class.hh"
 #include "debug/MinorExecute.hh"
 #include "enums/OpClass.hh"
 
-namespace Minor
+namespace gem5
 {
+
+namespace minor
+{
+
+const InstSeqNum InstId::firstStreamSeqNum;
+const InstSeqNum InstId::firstPredictionSeqNum;
+const InstSeqNum InstId::firstLineSeqNum;
+const InstSeqNum InstId::firstFetchSeqNum;
+const InstSeqNum InstId::firstExecSeqNum;
 
 std::ostream &
 operator <<(std::ostream &os, const InstId &id)
@@ -68,18 +75,13 @@ operator <<(std::ostream &os, const InstId &id)
     return os;
 }
 
-MinorDynInstPtr MinorDynInst::bubbleInst = NULL;
-
-void
-MinorDynInst::init()
-{
-    if (!bubbleInst) {
-        bubbleInst = new MinorDynInst();
-        assert(bubbleInst->isBubble());
-        /* Make bubbleInst immortal */
-        bubbleInst->incref();
-    }
-}
+MinorDynInstPtr MinorDynInst::bubbleInst = []() {
+    auto *inst = new MinorDynInst(nullStaticInstPtr);
+    assert(inst->isBubble());
+    // Make bubbleInst immortal.
+    inst->incref();
+    return inst;
+}();
 
 bool
 MinorDynInst::isLastOpInInst() const
@@ -101,6 +103,8 @@ MinorDynInst::reportData(std::ostream &os) const
         os << "-";
     else if (isFault())
         os << "F;" << id;
+    else if (translationFault != NoFault)
+        os << "TF;" << id;
     else
         os << id;
 }
@@ -108,11 +112,18 @@ MinorDynInst::reportData(std::ostream &os) const
 std::ostream &
 operator <<(std::ostream &os, const MinorDynInst &inst)
 {
+    if (!inst.pc) {
+        os << inst.id << " pc: 0x???????? (bubble)";
+        return os;
+    }
+
     os << inst.id << " pc: 0x"
-        << std::hex << inst.pc.instAddr() << std::dec << " (";
+        << std::hex << inst.pc->instAddr() << std::dec << " (";
 
     if (inst.isFault())
         os << "fault: \"" << inst.fault->name() << '"';
+    else if (inst.translationFault != NoFault)
+        os << "translation fault: \"" << inst.translationFault->name() << '"';
     else if (inst.staticInst)
         os << inst.staticInst->getName();
     else
@@ -123,40 +134,38 @@ operator <<(std::ostream &os, const MinorDynInst &inst)
     return os;
 }
 
-/** Print a register in the form r<n>, f<n>, m<n>(<name>), z for integer,
- *  float, misc and zero registers given an 'architectural register number' */
+/** Print a register in the form r<n>, f<n>, m<n>(<name>) for integer,
+ *  float, and misc given an 'architectural register number' */
 static void
-printRegName(std::ostream &os, TheISA::RegIndex reg)
+printRegName(std::ostream &os, const RegId& reg)
 {
-    RegClass reg_class = regIdxToClass(reg);
-
-    switch (reg_class)
-    {
+    switch (reg.classValue()) {
+      case InvalidRegClass:
+        os << 'z';
+        break;
       case MiscRegClass:
         {
-            TheISA::RegIndex misc_reg = reg - TheISA::Misc_Reg_Base;
-
-        /* This is an ugly test because not all archs. have miscRegName */
-#if THE_ISA == ARM_ISA
-            os << 'm' << misc_reg << '(' << TheISA::miscRegName[misc_reg] <<
-                ')';
-#else
-            os << 'n' << misc_reg;
-#endif
+            RegIndex misc_reg = reg.index();
+            os << 'm' << misc_reg << '(' << reg << ')';
         }
         break;
       case FloatRegClass:
-        os << 'f' << static_cast<unsigned int>(reg - TheISA::FP_Reg_Base);
+        os << 'f' << reg.index();
+        break;
+      case VecRegClass:
+        os << 'v' << reg.index();
+        break;
+      case VecElemClass:
+        os << reg;
         break;
       case IntRegClass:
-        if (reg == TheISA::ZeroReg) {
-            os << 'z';
-        } else {
-            os << 'r' << static_cast<unsigned int>(reg);
-        }
+        os << 'r' << reg.index();
         break;
       case CCRegClass:
-        os << 'c' << static_cast<unsigned int>(reg - TheISA::CC_Reg_Base);
+        os << 'c' << reg.index();
+        break;
+      default:
+        panic("Unknown register class: %d", (int)reg.classValue());
     }
 }
 
@@ -164,8 +173,8 @@ void
 MinorDynInst::minorTraceInst(const Named &named_object) const
 {
     if (isFault()) {
-        MINORINST(&named_object, "id=F;%s addr=0x%x fault=\"%s\"\n",
-            id, pc.instAddr(), fault->name());
+        minorInst(named_object, "id=F;%s addr=0x%x fault=\"%s\"\n",
+            id, pc ? pc->instAddr() : 0, fault->name());
     } else {
         unsigned int num_src_regs = staticInst->numSrcRegs();
         unsigned int num_dest_regs = staticInst->numDestRegs();
@@ -197,21 +206,18 @@ MinorDynInst::minorTraceInst(const Named &named_object) const
                     regs_str << ',';
             }
 
-#if THE_ISA == ARM_ISA
-            regs_str << " extMachInst=" << std::hex << std::setw(16)
-                << std::setfill('0') << staticInst->machInst << std::dec;
-#endif
+            ccprintf(regs_str, " extMachInst=%160x", staticInst->getEMI());
         }
 
         std::ostringstream flags;
         staticInst->printFlags(flags, " ");
 
-        MINORINST(&named_object, "id=%s addr=0x%x inst=\"%s\" class=%s"
+        minorInst(named_object, "id=%s addr=0x%x inst=\"%s\" class=%s"
             " flags=\"%s\"%s%s\n",
-            id, pc.instAddr(),
+            id, pc ? pc->instAddr() : 0,
             (staticInst->opClass() == No_OpClass ?
                 "(invalid)" : staticInst->disassemble(0,NULL)),
-            Enums::OpClassStrings[staticInst->opClass()],
+            enums::OpClassStrings[staticInst->opClass()],
             flags.str(),
             regs_str.str(),
             (predictedTaken ? " predictedTaken" : ""));
@@ -224,4 +230,5 @@ MinorDynInst::~MinorDynInst()
         delete traceData;
 }
 
-}
+} // namespace minor
+} // namespace gem5

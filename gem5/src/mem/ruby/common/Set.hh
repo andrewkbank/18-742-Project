@@ -36,16 +36,20 @@
 #include <cassert>
 #include <iostream>
 
-#include "base/misc.hh"
+#include "base/logging.hh"
 #include "mem/ruby/common/TypeDefines.hh"
 
-// Change for systems with more than 64 controllers of a particular type.
-const int NUMBER_BITS_PER_SET = 64;
+namespace gem5
+{
+
+namespace ruby
+{
 
 class Set
 {
   private:
     // Number of bits in use in this set.
+    // can be defined in build_opts file (default=64).
     int m_nSize;
     std::bitset<NUMBER_BITS_PER_SET> bits;
 
@@ -227,5 +231,8 @@ operator<<(std::ostream& out, const Set& obj)
     out << std::flush;
     return out;
 }
+
+} // namespace ruby
+} // namespace gem5
 
 #endif // __MEM_RUBY_COMMON_SET_HH__

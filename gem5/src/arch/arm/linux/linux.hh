@@ -13,6 +13,7 @@
  *
  * Copyright (c) 2003-2005 The Regents of The University of Michigan
  * Copyright (c) 2007-2008 The Florida State University
+ * Copyright 2020,2025 Google Inc.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -37,26 +38,82 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Ali Saidi
- *          Stephen Hines
  */
 
 #ifndef __ARCH_ARM_LINUX_LINUX_HH__
 #define __ARCH_ARM_LINUX_LINUX_HH__
 
+#include <map>
+
+#include "arch/arm/regs/int.hh"
+#include "arch/arm/regs/misc.hh"
+#include "base/compiler.hh"
+#include "cpu/thread_context.hh"
+#include "kern/linux/flag_tables.hh"
 #include "kern/linux/linux.hh"
 
-class ArmLinux32 : public Linux
+namespace gem5
+{
+
+class ArmLinux : public Linux
+{
+  public:
+    static const ByteOrder byteOrder = ByteOrder::little;
+
+    static void
+    archClone(uint64_t flags,
+              Process *pp, Process *cp,
+              ThreadContext *ptc, ThreadContext *ctc,
+              uint64_t stack, uint64_t tls)
+    {
+        ctc->getIsaPtr()->copyRegsFrom(ptc);
+
+        if (flags & TGT_CLONE_SETTLS) {
+            /* TPIDR_EL0 is architecturally mapped to TPIDRURW, so
+             * this works for both aarch32 and aarch64. */
+            ctc->setMiscReg(ArmISA::MISCREG_TPIDR_EL0, tls);
+        }
+    }
+};
+
+class ArmLinux32 : public ArmLinux, public OpenFlagTable<ArmLinux32>
 {
   public:
 
-    /// This table maps the target open() flags to the corresponding
-    /// host open() flags.
-    static OpenFlagTransTable openFlagTable[];
-
-    /// Number of entries in openFlagTable[].
-    static const int NUM_OPEN_FLAGS;
+    static const int TGT_SIGHUP         = 0x000001;
+    static const int TGT_SIGINT         = 0x000002;
+    static const int TGT_SIGQUIT        = 0x000003;
+    static const int TGT_SIGILL         = 0x000004;
+    static const int TGT_SIGTRAP        = 0x000005;
+    static const int TGT_SIGABRT        = 0x000006;
+    static const int TGT_SIGIOT         = 0x000006;
+    static const int TGT_SIGBUS         = 0x000007;
+    static const int TGT_SIGFPE         = 0x000008;
+    static const int TGT_SIGKILL        = 0x000009;
+    static const int TGT_SIGUSR1        = 0x00000a;
+    static const int TGT_SIGSEGV        = 0x00000b;
+    static const int TGT_SIGUSR2        = 0x00000c;
+    static const int TGT_SIGPIPE        = 0x00000d;
+    static const int TGT_SIGALRM        = 0x00000e;
+    static const int TGT_SIGTERM        = 0x00000f;
+    static const int TGT_SIGSTKFLT      = 0x000010;
+    static const int TGT_SIGCHLD        = 0x000011;
+    static const int TGT_SIGCONT        = 0x000012;
+    static const int TGT_SIGSTOP        = 0x000013;
+    static const int TGT_SIGTSTP        = 0x000014;
+    static const int TGT_SIGTTIN        = 0x000015;
+    static const int TGT_SIGTTOU        = 0x000016;
+    static const int TGT_SIGURG         = 0x000017;
+    static const int TGT_SIGXCPU        = 0x000018;
+    static const int TGT_SIGXFSZ        = 0x000019;
+    static const int TGT_SIGVTALRM      = 0x00001a;
+    static const int TGT_SIGPROF        = 0x00001b;
+    static const int TGT_SIGWINCH       = 0x00001c;
+    static const int TGT_SIGIO          = 0x00001d;
+    static const int TGT_SIGPOLL        = 0x00001d;
+    static const int TGT_SIGPWR         = 0x00001e;
+    static const int TGT_SIGSYS         = 0x00001f;
+    static const int TGT_SIGUNUSED      = 0x00001f;
 
     //@{
     /// Basic ARM Linux types
@@ -68,59 +125,76 @@ class ArmLinux32 : public Linux
 
     //@{
     /// open(2) flag values.
-    static const int TGT_O_RDONLY    = 00000000; //!< O_RDONLY
-    static const int TGT_O_WRONLY    = 00000001; //!< O_WRONLY
-    static const int TGT_O_RDWR      = 00000002; //!< O_RDWR
-    static const int TGT_O_CREAT     = 00000100; //!< O_CREAT
-    static const int TGT_O_EXCL      = 00000200; //!< O_EXCL
-    static const int TGT_O_NOCTTY    = 00000400; //!< O_NOCTTY
-    static const int TGT_O_TRUNC     = 00001000; //!< O_TRUNC
-    static const int TGT_O_APPEND    = 00002000; //!< O_APPEND
-    static const int TGT_O_NONBLOCK  = 00004000; //!< O_NONBLOCK
-    static const int TGT_O_SYNC      = 00010000; //!< O_SYNC
-    static const int TGT_FASYNC      = 00020000; //!< FASYNC
-    static const int TGT_O_DIRECT    = 00040000; //!< O_DIRECT
-    static const int TGT_O_LARGEFILE = 00100000; //!< O_LARGEFILE
-    static const int TGT_O_DIRECTORY = 00200000; //!< O_DIRECTORY
-    static const int TGT_O_NOFOLLOW  = 00400000; //!< O_NOFOLLOW
-    static const int TGT_O_NOATIME   = 01000000; //!< O_NOATIME
-    static const int TGT_O_CLOEXEC   = 02000000; //!< O_NOATIME
-
-
+    static constexpr int TGT_O_RDONLY    = 000000000; //!< O_RDONLY
+    static constexpr int TGT_O_WRONLY    = 000000001; //!< O_WRONLY
+    static constexpr int TGT_O_RDWR      = 000000002; //!< O_RDWR
+    static constexpr int TGT_O_CREAT     = 000000100; //!< O_CREAT
+    static constexpr int TGT_O_EXCL      = 000000200; //!< O_EXCL
+    static constexpr int TGT_O_NOCTTY    = 000000400; //!< O_NOCTTY
+    static constexpr int TGT_O_TRUNC     = 000001000; //!< O_TRUNC
+    static constexpr int TGT_O_APPEND    = 000002000; //!< O_APPEND
+    static constexpr int TGT_O_NONBLOCK  = 000004000; //!< O_NONBLOCK
+    static constexpr int TGT_O_DSYNC     = 000010000; //!< O_DSYNC
+    static constexpr int TGT_FASYNC      = 000020000; //!< FASYNC
+    static constexpr int TGT_O_DIRECT    = 000200000; //!< O_DIRECT
+    static constexpr int TGT_O_LARGEFILE = 000400000; //!< O_LARGEFILE
+    static constexpr int TGT_O_DIRECTORY = 000040000; //!< O_DIRECTORY
+    static constexpr int TGT_O_NOFOLLOW  = 000100000; //!< O_NOFOLLOW
+    static constexpr int TGT_O_NOATIME   = 001000000; //!< O_NOATIME
+    static constexpr int TGT_O_CLOEXEC   = 002000000; //!< O_NOATIME
+    static constexpr int TGT_O_SYNC      = 004010000; //!< O_SYNC
+    static constexpr int TGT_O_PATH      = 010000000; //!< O_PATH
     //@}
 
-    /// For mmap().
-    static const unsigned TGT_MAP_ANONYMOUS = 0x20;
-    static const unsigned TGT_MAP_FIXED     = 0x10;
+    static constexpr unsigned TGT_MAP_SHARED        = 0x00001;
+    static constexpr unsigned TGT_MAP_PRIVATE       = 0x00002;
+    static constexpr unsigned TGT_MAP_ANON          = 0x00020;
+    static constexpr unsigned TGT_MAP_DENYWRITE     = 0x00800;
+    static constexpr unsigned TGT_MAP_EXECUTABLE    = 0x01000;
+    static constexpr unsigned TGT_MAP_FILE          = 0x00000;
+    static constexpr unsigned TGT_MAP_GROWSDOWN     = 0x00100;
+    static constexpr unsigned TGT_MAP_HUGETLB       = 0x40000;
+    static constexpr unsigned TGT_MAP_LOCKED        = 0x02000;
+    static constexpr unsigned TGT_MAP_NONBLOCK      = 0x10000;
+    static constexpr unsigned TGT_MAP_NORESERVE     = 0x04000;
+    static constexpr unsigned TGT_MAP_POPULATE      = 0x08000;
+    static constexpr unsigned TGT_MAP_STACK         = 0x20000;
+    static constexpr unsigned TGT_MAP_ANONYMOUS     = 0x00020;
+    static constexpr unsigned TGT_MAP_FIXED         = 0x00010;
 
     /// For table().
     static const int TBL_SYSINFO = 12;
 
     /// Limit struct for getrlimit/setrlimit.
-    struct rlimit {
+    struct rlimit
+    {
         uint32_t  rlim_cur;     //!< soft limit
         uint32_t  rlim_max;     //!< hard limit
     };
 
     /// For gettimeofday().
-    struct timeval {
+    struct timeval
+    {
         int32_t tv_sec;         //!< seconds
         int32_t tv_usec;        //!< microseconds
     };
 
-    struct timespec {
+    struct timespec
+    {
         int32_t tv_sec;   //!< seconds
         int32_t tv_nsec;  //!< nanoseconds
     };
 
     // For writev/readv
-    struct tgt_iovec {
+    struct tgt_iovec
+    {
         uint32_t iov_base; // void *
         uint32_t iov_len;
     };
 
 
-    typedef struct {
+    struct tgt_stat
+    {
         uint32_t st_dev;
         uint32_t st_ino;
         uint16_t st_mode;
@@ -139,9 +213,10 @@ class ArmLinux32 : public Linux
         uint32_t st_mtime_nsec;
         uint32_t st_ctimeX;
         uint32_t st_ctime_nsec;
-    } tgt_stat;
+    };
 
-    typedef struct {
+    struct tgt_stat64
+    {
         uint64_t  st_dev;
         uint8_t   __pad0[4];
         uint32_t  __st_ino;
@@ -151,9 +226,9 @@ class ArmLinux32 : public Linux
         uint32_t  st_gid;
         uint64_t  st_rdev;
         uint8_t   __pad3[4];
-        int64_t   __attribute__ ((aligned (8))) st_size;
+        GEM5_ALIGNED(8) int64_t st_size;
         uint32_t  st_blksize;
-        uint64_t  __attribute__ ((aligned (8))) st_blocks;
+        GEM5_ALIGNED(8) uint64_t st_blocks;
         uint32_t  st_atimeX;
         uint32_t  st_atime_nsec;
         uint32_t  st_mtimeX;
@@ -161,9 +236,10 @@ class ArmLinux32 : public Linux
         uint32_t  st_ctimeX;
         uint32_t  st_ctime_nsec;
         uint64_t  st_ino;
-    } tgt_stat64;
+    };
 
-    typedef struct {
+    struct tgt_sysinfo
+    {
         int32_t  uptime;    /* Seconds since boot */
         uint32_t loads[3];  /* 1, 5, and 15 minute load averages */
         uint32_t totalram;  /* Total usable main memory size */
@@ -176,10 +252,11 @@ class ArmLinux32 : public Linux
         uint32_t totalhigh; /* Total high memory size */
         uint32_t freehigh;  /* Available high memory size */
         uint32_t mem_unit;  /* Memory unit size in bytes */
-    } tgt_sysinfo;
-   
+    };
+
     /// For getrusage().
-    struct rusage {
+    struct rusage
+    {
         struct timeval ru_utime;        //!< user time used
         struct timeval ru_stime;        //!< system time used
         int32_t ru_maxrss;              //!< max rss
@@ -199,24 +276,81 @@ class ArmLinux32 : public Linux
     };
 
     /// For times().
-    struct tms {
+    struct tms
+    {
         int32_t tms_utime;      //!< user time
         int32_t tms_stime;      //!< system time
         int32_t tms_cutime;     //!< user time of children
         int32_t tms_cstime;     //!< system time of children
     };
+
+    // For clone(3)
+    struct tgt_clone_args
+    {
+        uint64_t flags;
+        uint64_t pidfd;
+        uint64_t child_tid;
+        uint64_t parent_tid;
+        uint64_t exit_signal;
+        uint64_t stack;
+        uint64_t stack_size;
+        uint64_t tls;
+        uint64_t set_tid;
+        uint64_t set_tid_size;
+        uint64_t cgroup;
+    };
+
+    static void
+    archClone(uint64_t flags,
+              Process *pp, Process *cp,
+              ThreadContext *ptc, ThreadContext *ctc,
+              uint64_t stack, uint64_t tls)
+    {
+        ArmLinux::archClone(flags, pp, cp, ptc, ctc, stack, tls);
+
+        if (stack)
+            ctc->setReg(ArmISA::int_reg::Sp, stack);
+    }
 };
 
-class ArmLinux64 : public Linux
+class ArmLinux64 : public ArmLinux, public OpenFlagTable<ArmLinux64>
 {
   public:
 
-    /// This table maps the target open() flags to the corresponding
-    /// host open() flags.
-    static OpenFlagTransTable openFlagTable[];
-
-    /// Number of entries in openFlagTable[].
-    static const int NUM_OPEN_FLAGS;
+    static const int TGT_SIGHUP         = 0x000001;
+    static const int TGT_SIGINT         = 0x000002;
+    static const int TGT_SIGQUIT        = 0x000003;
+    static const int TGT_SIGILL         = 0x000004;
+    static const int TGT_SIGTRAP        = 0x000005;
+    static const int TGT_SIGABRT        = 0x000006;
+    static const int TGT_SIGIOT         = 0x000006;
+    static const int TGT_SIGBUS         = 0x000007;
+    static const int TGT_SIGFPE         = 0x000008;
+    static const int TGT_SIGKILL        = 0x000009;
+    static const int TGT_SIGUSR1        = 0x00000a;
+    static const int TGT_SIGSEGV        = 0x00000b;
+    static const int TGT_SIGUSR2        = 0x00000c;
+    static const int TGT_SIGPIPE        = 0x00000d;
+    static const int TGT_SIGALRM        = 0x00000e;
+    static const int TGT_SIGTERM        = 0x00000f;
+    static const int TGT_SIGSTKFLT      = 0x000010;
+    static const int TGT_SIGCHLD        = 0x000011;
+    static const int TGT_SIGCONT        = 0x000012;
+    static const int TGT_SIGSTOP        = 0x000013;
+    static const int TGT_SIGTSTP        = 0x000014;
+    static const int TGT_SIGTTIN        = 0x000015;
+    static const int TGT_SIGTTOU        = 0x000016;
+    static const int TGT_SIGURG         = 0x000017;
+    static const int TGT_SIGXCPU        = 0x000018;
+    static const int TGT_SIGXFSZ        = 0x000019;
+    static const int TGT_SIGVTALRM      = 0x00001a;
+    static const int TGT_SIGPROF        = 0x00001b;
+    static const int TGT_SIGWINCH       = 0x00001c;
+    static const int TGT_SIGIO          = 0x00001d;
+    static const int TGT_SIGPOLL        = 0x00001d;
+    static const int TGT_SIGPWR         = 0x00001e;
+    static const int TGT_SIGSYS         = 0x00001f;
+    static const int TGT_SIGUNUSED      = 0x00001f;
 
     //@{
     /// Basic ARM Linux types
@@ -228,28 +362,42 @@ class ArmLinux64 : public Linux
 
     //@{
     /// open(2) flag values.
-    static const int TGT_O_RDONLY    = 00000000; //!< O_RDONLY
-    static const int TGT_O_WRONLY    = 00000001; //!< O_WRONLY
-    static const int TGT_O_RDWR      = 00000002; //!< O_RDWR
-    static const int TGT_O_CREAT     = 00000100; //!< O_CREAT
-    static const int TGT_O_EXCL      = 00000200; //!< O_EXCL
-    static const int TGT_O_NOCTTY    = 00000400; //!< O_NOCTTY
-    static const int TGT_O_TRUNC     = 00001000; //!< O_TRUNC
-    static const int TGT_O_APPEND    = 00002000; //!< O_APPEND
-    static const int TGT_O_NONBLOCK  = 00004000; //!< O_NONBLOCK
-    static const int TGT_O_SYNC      = 00010000; //!< O_SYNC
-    static const int TGT_FASYNC      = 00020000; //!< FASYNC
-    static const int TGT_O_DIRECT    = 00040000; //!< O_DIRECT
-    static const int TGT_O_LARGEFILE = 00100000; //!< O_LARGEFILE
-    static const int TGT_O_DIRECTORY = 00200000; //!< O_DIRECTORY
-    static const int TGT_O_NOFOLLOW  = 00400000; //!< O_NOFOLLOW
-    static const int TGT_O_NOATIME   = 01000000; //!< O_NOATIME
-    static const int TGT_O_CLOEXEC   = 02000000; //!< O_NOATIME
+    static constexpr int TGT_O_RDONLY    = 000000000; //!< O_RDONLY
+    static constexpr int TGT_O_WRONLY    = 000000001; //!< O_WRONLY
+    static constexpr int TGT_O_RDWR      = 000000002; //!< O_RDWR
+    static constexpr int TGT_O_CREAT     = 000000100; //!< O_CREAT
+    static constexpr int TGT_O_EXCL      = 000000200; //!< O_EXCL
+    static constexpr int TGT_O_NOCTTY    = 000000400; //!< O_NOCTTY
+    static constexpr int TGT_O_TRUNC     = 000001000; //!< O_TRUNC
+    static constexpr int TGT_O_APPEND    = 000002000; //!< O_APPEND
+    static constexpr int TGT_O_NONBLOCK  = 000004000; //!< O_NONBLOCK
+    static constexpr int TGT_O_DSYNC     = 000010000; //!< O_DSYNC
+    static constexpr int TGT_FASYNC      = 000020000; //!< FASYNC
+    static constexpr int TGT_O_DIRECT    = 000200000; //!< O_DIRECT
+    static constexpr int TGT_O_LARGEFILE = 000400000; //!< O_LARGEFILE
+    static constexpr int TGT_O_DIRECTORY = 000040000; //!< O_DIRECTORY
+    static constexpr int TGT_O_NOFOLLOW  = 000100000; //!< O_NOFOLLOW
+    static constexpr int TGT_O_NOATIME   = 001000000; //!< O_NOATIME
+    static constexpr int TGT_O_CLOEXEC   = 002000000; //!< O_NOATIME
+    static constexpr int TGT_O_SYNC      = 004010000; //!< O_SYNC
+    static constexpr int TGT_O_PATH      = 010000000; //!< O_PATH
     //@}
 
-    /// For mmap().
-    static const unsigned TGT_MAP_ANONYMOUS = 0x20;
-    static const unsigned TGT_MAP_FIXED     = 0x10;
+    static constexpr unsigned TGT_MAP_SHARED        = 0x00001;
+    static constexpr unsigned TGT_MAP_PRIVATE       = 0x00002;
+    static constexpr unsigned TGT_MAP_ANON          = 0x00020;
+    static constexpr unsigned TGT_MAP_DENYWRITE     = 0x00800;
+    static constexpr unsigned TGT_MAP_EXECUTABLE    = 0x01000;
+    static constexpr unsigned TGT_MAP_FILE          = 0x00000;
+    static constexpr unsigned TGT_MAP_GROWSDOWN     = 0x00100;
+    static constexpr unsigned TGT_MAP_HUGETLB       = 0x40000;
+    static constexpr unsigned TGT_MAP_LOCKED        = 0x02000;
+    static constexpr unsigned TGT_MAP_NONBLOCK      = 0x10000;
+    static constexpr unsigned TGT_MAP_NORESERVE     = 0x04000;
+    static constexpr unsigned TGT_MAP_POPULATE      = 0x08000;
+    static constexpr unsigned TGT_MAP_STACK         = 0x20000;
+    static constexpr unsigned TGT_MAP_ANONYMOUS     = 0x00020;
+    static constexpr unsigned TGT_MAP_FIXED         = 0x00010;
 
     //@{
     /// For getrusage().
@@ -276,7 +424,8 @@ class ArmLinux64 : public Linux
     static const int TBL_SYSINFO = 12;
 
     /// Resource enumeration for getrlimit().
-    enum rlimit_resources {
+    enum rlimit_resources
+    {
         TGT_RLIMIT_CPU = 0,
         TGT_RLIMIT_FSIZE = 1,
         TGT_RLIMIT_DATA = 2,
@@ -291,29 +440,34 @@ class ArmLinux64 : public Linux
     };
 
     /// Limit struct for getrlimit/setrlimit.
-    struct rlimit {
+    struct rlimit
+    {
         uint64_t  rlim_cur;     //!< soft limit
         uint64_t  rlim_max;     //!< hard limit
     };
 
     /// For gettimeofday().
-    struct timeval {
+    struct timeval
+    {
         int64_t tv_sec;         //!< seconds
         int64_t tv_usec;        //!< microseconds
     };
 
-    struct timespec {
+    struct timespec
+    {
         int64_t tv_sec;   //!< seconds
         int64_t tv_nsec;  //!< nanoseconds
     };
 
     // For writev/readv
-    struct tgt_iovec {
+    struct tgt_iovec
+    {
         uint64_t iov_base; // void *
         uint64_t iov_len;
     };
 
-    typedef struct {
+    struct tgt_stat
+    {
         uint64_t st_dev;
         uint64_t st_ino;
         uint64_t st_nlink;
@@ -331,9 +485,10 @@ class ArmLinux64 : public Linux
         uint64_t st_mtime_nsec;
         uint64_t st_ctimeX;
         uint64_t st_ctime_nsec;
-    } tgt_stat;
+    };
 
-    typedef struct {
+    struct tgt_stat64
+    {
         uint64_t st_dev;
         uint64_t st_ino;
         uint32_t st_mode;
@@ -351,9 +506,10 @@ class ArmLinux64 : public Linux
         uint64_t st_mtime_nsec;
         uint64_t st_ctimeX;
         uint64_t st_ctime_nsec;
-    } tgt_stat64;
+    };
 
-    typedef struct {
+    struct tgt_sysinfo
+    {
         int64_t  uptime;    /* Seconds since boot */
         uint64_t loads[3];  /* 1, 5, and 15 minute load averages */
         uint64_t totalram;  /* Total usable main memory size */
@@ -367,10 +523,11 @@ class ArmLinux64 : public Linux
         uint64_t totalhigh; /* Total high memory size */
         uint64_t freehigh;  /* Available high memory size */
         uint32_t mem_unit;  /* Memory unit size in bytes */
-    } tgt_sysinfo;
+    };
 
     /// For getrusage().
-    struct rusage {
+    struct rusage
+    {
         struct timeval ru_utime;        //!< user time used
         struct timeval ru_stime;        //!< system time used
         int64_t ru_maxrss;              //!< max rss
@@ -390,12 +547,88 @@ class ArmLinux64 : public Linux
     };
 
     /// For times().
-    struct tms {
+    struct tms
+    {
         int64_t tms_utime;      //!< user time
         int64_t tms_stime;      //!< system time
         int64_t tms_cutime;     //!< user time of children
         int64_t tms_cstime;     //!< system time of children
     };
+
+    // For clone(3)
+    struct tgt_clone_args
+    {
+        uint64_t flags;
+        uint64_t pidfd;
+        uint64_t child_tid;
+        uint64_t parent_tid;
+        uint64_t exit_signal;
+        uint64_t stack;
+        uint64_t stack_size;
+        uint64_t tls;
+        uint64_t set_tid;
+        uint64_t set_tid_size;
+        uint64_t cgroup;
+    };
+
+    // For sigreturn
+    struct tgt_sigframe
+    {
+        struct tgt_siginfo
+        {
+            int32_t si_signo;
+            int32_t si_errno;
+            int32_t si_code;
+            // union sigval... Not used by us. Pad to correct size instead.
+            uint8_t _pad[128 - 3 * sizeof(int)];
+        } info;
+
+        struct tgt_ucontext
+        {
+            uint64_t uc_flags;
+            uint64_t uc_link; // (void*) not used by us
+            struct
+            {
+                uint64_t ss_sp; // (void*)
+                uint64_t ss_size;
+                int32_t ss_flags;
+            } uc_stack;
+            uint8_t uc_sigset_ex[136];
+            struct
+            {
+                uint64_t fault_address;
+                uint64_t regs[31];
+                uint64_t sp;
+                uint64_t pc;
+                uint64_t pstate;
+                // For FP/SIMD state.
+                uint8_t __reserved[4096] __attribute__((__aligned__(16)));
+            } uc_mcontext; // Note: This is 304B offset from sp
+            // The start of uc_mcontext is 176B offset from ucontext.
+            int64_t __glibc_reserved1[5];
+        } uc;
+    };
+
+    static void archClone(uint64_t flags,
+                          Process *pp, Process *cp,
+                          ThreadContext *ptc, ThreadContext *ctc,
+                          uint64_t stack, uint64_t tls)
+    {
+        ArmLinux::archClone(flags, pp, cp, ptc, ctc, stack, tls);
+
+        if (stack)
+            ctc->setReg(ArmISA::int_reg::Sp0, stack);
+    }
+
+    /**
+     * This function is called when the kernel restores the context of a
+     * signal handler. The current implementation is a partitial implementation
+     * that only updates the registers and the pc. This is to "restore" state
+     * for binary-based user-mode application snippets.
+     */
+    static void archSigreturn(ThreadContext *ctc);
 };
+
+} // namespace gem5
 
 #endif

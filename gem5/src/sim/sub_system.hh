@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 ARM Limited
+ * Copyright (c) 2014-2016 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -33,8 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Geoffrey Blake
  */
 
 /**
@@ -45,7 +43,15 @@
 #ifndef __SIM_SUB_SYSTEM_HH__
 #define __SIM_SUB_SYSTEM_HH__
 
+#include <vector>
+
+#include "params/SubSystem.hh"
 #include "sim/sim_object.hh"
+
+namespace gem5
+{
+
+class PowerModel;
 
 /**
  * The SubSystem simobject does nothing, it is just a container for
@@ -54,9 +60,21 @@
 class SubSystem : public SimObject
 {
   public:
-    SubSystem(const Params *p) :
-        SimObject(p)
-    {}
+    typedef SubSystemParams Params;
+    SubSystem(const Params &p);
+
+    double getDynamicPower() const;
+
+    double getStaticPower() const;
+
+    void registerPowerProducer(PowerModel *pm) {
+        powerProducers.push_back(pm);
+    }
+
+  protected:
+    std::vector<PowerModel*> powerProducers;
 };
+
+} // namespace gem5
 
 #endif

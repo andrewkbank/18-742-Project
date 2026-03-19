@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 ARM Limited
+ * Copyright (c) 2014, 2017 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -33,15 +33,18 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andreas Sandberg
  */
 
 #ifndef __ARCH_ARM_ISA_DEVICE_HH__
 #define __ARCH_ARM_ISA_DEVICE_HH__
 
-#include "arch/arm/registers.hh"
 #include "base/compiler.hh"
+#include "base/types.hh"
+
+namespace gem5
+{
+
+class ThreadContext;
 
 namespace ArmISA
 {
@@ -62,22 +65,23 @@ class BaseISADevice
     virtual ~BaseISADevice() {}
 
     virtual void setISA(ISA *isa);
+    virtual void setThreadContext(ThreadContext *tc) {}
 
     /**
      * Write to a system register belonging to this device.
      *
-     * @param misc_reg Register number (see miscregs.hh)
+     * @param misc_reg Register number (see regs/misc.hh)
      * @param val Value to store
      */
-    virtual void setMiscReg(int misc_reg, MiscReg val) = 0;
+    virtual void setMiscReg(int misc_reg, RegVal val) = 0;
 
     /**
      * Read a system register belonging to this device.
      *
-     * @param misc_reg Register number (see miscregs.hh)
+     * @param misc_reg Register number (see regs/misc.hh)
      * @return Register value.
      */
-    virtual MiscReg readMiscReg(int misc_reg) = 0;
+    virtual RegVal readMiscReg(int misc_reg) = 0;
 
   protected:
     ISA *isa;
@@ -97,10 +101,11 @@ class DummyISADevice : public BaseISADevice
         : BaseISADevice() {}
     ~DummyISADevice() {}
 
-    void setMiscReg(int misc_reg, MiscReg val) M5_ATTR_OVERRIDE;
-    MiscReg readMiscReg(int misc_reg) M5_ATTR_OVERRIDE;
+    void setMiscReg(int misc_reg, RegVal val) override;
+    RegVal readMiscReg(int misc_reg) override;
 };
 
-}
+} // namespace ArmISA
+} // namespace gem5
 
 #endif // __ARCH_ARM_ISA_DEVICE_HH__

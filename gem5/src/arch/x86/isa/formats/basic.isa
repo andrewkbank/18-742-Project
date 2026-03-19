@@ -35,50 +35,38 @@
 // THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// Authors: Gabe Black
-
-// Declarations for execute() methods.
-def template BasicExecDeclare {{
-        Fault execute(%(CPU_exec_context)s *, Trace::InstRecord *) const;
-}};
-
-// Definitions of execute methods that panic.
-def template BasicExecPanic {{
-        Fault execute(%(CPU_exec_context)s *, Trace::InstRecord *) const
-        {
-            panic("Execute method called when it shouldn't!");
-            M5_DUMMY_RETURN
-        }
-}};
 
 // Basic instruction class declaration template.
 def template BasicDeclare {{
-        /**
-         * Static instruction class for "%(mnemonic)s".
-         */
-        class %(class_name)s : public %(base_class)s
-        {
-          public:
-            // Constructor.
-            %(class_name)s(ExtMachInst machInst);
-            %(BasicExecDeclare)s
-        };
+    /**
+     * Static instruction class for "%(mnemonic)s".
+     */
+    class %(class_name)s : public %(base_class)s
+    {
+      private:
+        %(reg_idx_arr_decl)s;
+
+      public:
+        // Constructor.
+        %(class_name)s(ExtMachInst machInst);
+        Fault execute(ExecContext *, trace::InstRecord *) const override;
+    };
 }};
 
 // Basic instruction class constructor template.
 def template BasicConstructor {{
-        %(class_name)s::%(class_name)s(ExtMachInst machInst)
-            : %(base_class)s("%(mnemonic)s", machInst, %(op_class)s)
-        {
-                %(constructor)s;
-        }
+    %(class_name)s::%(class_name)s(ExtMachInst machInst) :
+        %(base_class)s("%(mnemonic)s", machInst, %(op_class)s)
+    {
+        %(set_reg_idx_arr)s;
+        %(constructor)s;
+    }
 }};
 
 // Basic instruction class execute method template.
 def template BasicExecute {{
-        Fault %(class_name)s::execute(CPU_EXEC_CONTEXT *xc,
-                Trace::InstRecord *traceData) const
+        Fault %(class_name)s::execute(ExecContext *xc,
+                trace::InstRecord *traceData) const
         {
             Fault fault = NoFault;
 

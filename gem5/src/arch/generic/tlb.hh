@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011 ARM Limited
+ * Copyright (c) 2011, 2021 Arm Limited
  * All rights reserved.
  *
  * The license below extends only to copyright in the software and shall
@@ -36,99 +36,50 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Gabe Black
  */
 
 #ifndef __ARCH_GENERIC_TLB_HH__
 #define __ARCH_GENERIC_TLB_HH__
 
-#include "base/misc.hh"
+#include <type_traits>
+
+#include "arch/generic/mmu.hh"
+#include "base/logging.hh"
+#include "enums/TypeTLB.hh"
 #include "mem/request.hh"
+#include "params/BaseTLB.hh"
 #include "sim/sim_object.hh"
 
+namespace gem5
+{
+
 class ThreadContext;
-class BaseMasterPort;
 
 class BaseTLB : public SimObject
 {
   protected:
-    BaseTLB(const Params *p)
-        : SimObject(p)
+    BaseTLB(const BaseTLBParams &p)
+      : SimObject(p), _type(p.entry_type), _nextLevel(p.next_level)
     {}
 
-  public:
-    enum Mode { Read, Write, Execute };
+    TypeTLB _type;
+
+    BaseTLB *_nextLevel;
 
   public:
     virtual void demapPage(Addr vaddr, uint64_t asn) = 0;
 
-    /**
-     * Remove all entries from the TLB
-     */
-    virtual void flushAll() = 0;
-
-    /**
-     * Take over from an old tlb context
-     */
-    virtual void takeOverFrom(BaseTLB *otlb) = 0;
-
-    /**
-     * Get the table walker master port if present. This is used for
-     * migrating port connections during a CPU takeOverFrom()
-     * call. For architectures that do not have a table walker, NULL
-     * is returned, hence the use of a pointer rather than a
-     * reference.
-     *
-     * @return A pointer to the walker master port or NULL if not present
-     */
-    virtual BaseMasterPort* getMasterPort() { return NULL; }
-
-    void memInvalidate() { flushAll(); }
-
-    class Translation
+    virtual Fault translateAtomic(
+            const RequestPtr &req, ThreadContext *tc, BaseMMU::Mode mode) = 0;
+    virtual void translateTiming(
+            const RequestPtr &req, ThreadContext *tc,
+            BaseMMU::Translation *translation, BaseMMU::Mode mode) = 0;
+    virtual Fault
+    translateFunctional(const RequestPtr &req, ThreadContext *tc,
+                        BaseMMU::Mode mode)
     {
-      public:
-        virtual ~Translation()
-        {}
-
-        /**
-         * Signal that the translation has been delayed due to a hw page table
-         * walk.
-         */
-        virtual void markDelayed() = 0;
-
-        /*
-         * The memory for this object may be dynamically allocated, and it may
-         * be responsible for cleaning itself up which will happen in this
-         * function. Once it's called, the object is no longer valid.
-         */
-        virtual void finish(const Fault &fault, RequestPtr req,
-                            ThreadContext *tc, Mode mode) = 0;
-
-        /** This function is used by the page table walker to determine if it
-         * should translate the a pending request or if the underlying request
-         * has been squashed.
-         * @ return Is the instruction that requested this translation squashed?
-         */
-        virtual bool squashed() const { return false; }
-    };
-};
-
-class GenericTLB : public BaseTLB
-{
-  protected:
-    GenericTLB(const Params *p)
-        : BaseTLB(p)
-    {}
-
-  public:
-    void demapPage(Addr vaddr, uint64_t asn);
-
-    Fault translateAtomic(RequestPtr req, ThreadContext *tc, Mode mode);
-    void translateTiming(RequestPtr req, ThreadContext *tc,
-                         Translation *translation, Mode mode);
-
+        panic("Not implemented.\n");
+    }
 
     /**
      * Do post-translation physical address finalization.
@@ -144,7 +95,53 @@ class GenericTLB : public BaseTLB
      * @param mode Request type (read/write/execute).
      * @return A fault on failure, NoFault otherwise.
      */
-    Fault finalizePhysical(RequestPtr req, ThreadContext *tc, Mode mode) const;
+    virtual Fault finalizePhysical(
+            const RequestPtr &req, ThreadContext *tc,
+            BaseMMU::Mode mode) const = 0;
+
+    /**
+     * Remove all entries from the TLB
+     */
+    virtual void flushAll() = 0;
+
+    /**
+     * Take over from an old tlb context
+     */
+    virtual void takeOverFrom(BaseTLB *otlb) = 0;
+
+    /**
+     * Get the table walker port if present. This is used for
+     * migrating port connections during a CPU takeOverFrom()
+     * call. For architectures that do not have a table walker, NULL
+     * is returned, hence the use of a pointer rather than a
+     * reference.
+     *
+     * @return A pointer to the walker port or NULL if not present
+     */
+    virtual Port* getTableWalkerPort() { return NULL; }
+
+    void memInvalidate() { flushAll(); }
+
+    TypeTLB type() const { return _type; }
+
+    BaseTLB* nextLevel() const { return _nextLevel; }
 };
+
+/** Implementing the "&" bitwise operator for TypeTLB allows us to handle
+ * TypeTLB::unified efficiently. For example if I want to check if a TLB
+ * is storing instruction entries I can do this with:
+ *
+ * tlb->type() & TypeTLB::instruction
+ *
+ * which will cover both TypeTLB::instruction and TypeTLB::unified TLBs
+ */
+inline auto
+operator&(TypeTLB lhs, TypeTLB rhs)
+{
+    using T = std::underlying_type_t<TypeTLB>;
+    return static_cast<T>(lhs) & static_cast<T>(rhs);
+}
+
+} // namespace gem5
 
 #endif // __ARCH_GENERIC_TLB_HH__

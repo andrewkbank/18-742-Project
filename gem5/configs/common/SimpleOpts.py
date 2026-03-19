@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2015 Jason Power
 # All rights reserved.
 #
@@ -24,12 +23,10 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Jason Power
 
-""" Options wrapper for simple gem5 configuration scripts
+"""Options wrapper for simple gem5 configuration scripts
 
-This module wraps the optparse class so that we can register options
+This module wraps the argparse class so that we can register options
 from each class instead of only from the configuration script.
 
 """
@@ -37,27 +34,24 @@ from each class instead of only from the configuration script.
 # Module-level variable to track if we've called the parse_args function yet
 called_parse_args = False
 
+# import the argument parser
+from argparse import ArgumentParser
+
 # For fatal
 import m5
 
-# import the options parser
-from optparse import OptionParser
+# add the args we want to be able to control from the command line
+parser = ArgumentParser()
 
-# add the options we want to be able to control from the command line
-parser = OptionParser()
 
 def add_option(*args, **kwargs):
-    """Call "add_option" to the global options parser
-    """
-
-    if (parser.has_option(args[0]) or
-            (len(args) > 1 and parser.has_option(args[1])) ):
-        m5.fatal("Duplicate option: %s" % str(args))
+    """Call "add_option" to the global options parser"""
 
     if called_parse_args:
         m5.fatal("Can't add an option after calling SimpleOpts.parse_args")
 
-    parser.add_option(*args, **kwargs)
+    parser.add_argument(*args, **kwargs)
+
 
 def parse_args():
     global called_parse_args
@@ -65,9 +59,6 @@ def parse_args():
 
     return parser.parse_args()
 
-def set_usage(*args, **kwargs):
-    parser.set_usage(*args, **kwargs)
 
 def print_help(*args, **kwargs):
     parser.print_help(*args, **kwargs)
-

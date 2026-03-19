@@ -1,4 +1,16 @@
 /*
+ * Copyright (c) 2023 Arm Limited
+ * All rights reserved
+ *
+ * The license below extends only to copyright in the software and shall
+ * not be construed as granting a license to any other intellectual
+ * property including but not limited to intellectual property relating
+ * to a hardware implementation of the functionality of the software
+ * licensed hereunder.  You may use the software subject to the license
+ * terms below provided that you ensure that this notice is replicated
+ * unmodified and in its entirety in all distributions of the software,
+ * modified or unmodified, in source code or in binary form.
+ *
  * Copyright (c) 2006-2009 The Regents of The University of Michigan
  * All rights reserved.
  *
@@ -24,8 +36,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Gabe Black
  */
 
 #ifndef __CPU_NATIVETRACE_HH__
@@ -41,28 +51,27 @@
 #include "cpu/exetrace.hh"
 #include "cpu/static_inst.hh"
 
+namespace gem5
+{
+
 class ThreadContext;
 
-namespace Trace {
+namespace trace {
 
 class NativeTrace;
 
 class NativeTraceRecord : public ExeTracerRecord
 {
-  protected:
-    NativeTrace * parent;
-
   public:
-    NativeTraceRecord(NativeTrace * _parent,
+    NativeTraceRecord(NativeTrace *_parent,
                Tick _when, ThreadContext *_thread,
-               const StaticInstPtr _staticInst, TheISA::PCState _pc,
-               const StaticInstPtr _macroStaticInst = NULL)
-        : ExeTracerRecord(_when, _thread, _staticInst, _pc, _macroStaticInst),
-        parent(_parent)
-    {
-    }
+               const StaticInstPtr _staticInst, const PCStateBase &_pc,
+               const StaticInstPtr _macroStaticInst=nullptr);
 
     void dump();
+
+  private:
+    NativeTrace *parent;
 };
 
 class NativeTrace : public ExeTracer
@@ -70,17 +79,17 @@ class NativeTrace : public ExeTracer
   protected:
     int fd;
 
-    ListenSocket native_listener;
+    ListenSocketPtr native_listener;
 
   public:
 
-    NativeTrace(const Params *p);
+    NativeTrace(const Params &p);
     virtual ~NativeTrace() {}
 
     NativeTraceRecord *
     getInstRecord(Tick when, ThreadContext *tc,
-            const StaticInstPtr staticInst, TheISA::PCState pc,
-            const StaticInstPtr macroStaticInst = NULL)
+            const StaticInstPtr staticInst, const PCStateBase &pc,
+            const StaticInstPtr macroStaticInst=nullptr) override
     {
         return new NativeTraceRecord(this, when, tc,
                 staticInst, pc, macroStaticInst);
@@ -90,7 +99,7 @@ class NativeTrace : public ExeTracer
     bool
     checkReg(const char * regName, T &val, T &realVal)
     {
-        if(val != realVal)
+        if (val != realVal)
         {
             DPRINTFN("Register %s should be %#x but is %#x.\n",
                     regName, realVal, val);
@@ -116,6 +125,7 @@ class NativeTrace : public ExeTracer
     check(NativeTraceRecord *record) = 0;
 };
 
-} // namespace Trace
+} // namespace trace
+} // namespace gem5
 
 #endif // __CPU_NATIVETRACE_HH__

@@ -25,13 +25,9 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nathan Binkert
- *          Steve Reinhardt
- *          Jaidev Patwardhan
- *          Zhengxing Li
- *          Deyuan Guo
  */
+
+#include "arch/mips/tlb.hh"
 
 #include <string>
 #include <vector>
@@ -39,7 +35,6 @@
 #include "arch/mips/faults.hh"
 #include "arch/mips/pagetable.hh"
 #include "arch/mips/pra_constants.hh"
-#include "arch/mips/tlb.hh"
 #include "arch/mips/utility.hh"
 #include "base/inifile.hh"
 #include "base/str.hh"
@@ -51,7 +46,9 @@
 #include "params/MipsTLB.hh"
 #include "sim/process.hh"
 
-using namespace std;
+namespace gem5
+{
+
 using namespace MipsISA;
 
 ///////////////////////////////////////////////////////////////////////
@@ -59,18 +56,16 @@ using namespace MipsISA;
 //  MIPS TLB
 //
 
-TLB::TLB(const Params *p)
-    : BaseTLB(p), size(p->size), nlu(0)
+TLB::TLB(const Params &p) : BaseTLB(p), size(p.size), nlu(0)
 {
     table = new PTE[size];
-    memset(table, 0, sizeof(PTE[size]));
+    memset(table, 0, sizeof(PTE) * size);
     smallPages = 0;
 }
 
 TLB::~TLB()
 {
-    if (table)
-        delete [] table;
+    delete [] table;
 }
 
 // look up an entry in the TLB
@@ -141,7 +136,7 @@ TLB::probeEntry(Addr vpn, uint8_t asn) const
 }
 
 inline Fault
-TLB::checkCacheability(RequestPtr &req)
+TLB::checkCacheability(const RequestPtr &req)
 {
     Addr VAddrUncacheable = 0xA0000000;
     // In MIPS, cacheability is controlled by certain bits of the virtual
@@ -176,7 +171,7 @@ TLB::insertAt(PTE &pte, unsigned Index, int _smallPages)
         }
         table[Index]=pte;
         // Update fast lookup table
-        lookupTable.insert(make_pair(table[Index].VPN, Index));
+        lookupTable.insert(std::make_pair(table[Index].VPN, Index));
     }
 }
 
@@ -191,7 +186,7 @@ void
 TLB::flushAll()
 {
     DPRINTF(TLB, "flushAll\n");
-    memset(table, 0, sizeof(PTE[size]));
+    memset(table, 0, sizeof(PTE) * size);
     lookupTable.clear();
     nlu = 0;
 }
@@ -218,122 +213,38 @@ TLB::unserialize(CheckpointIn &cp)
         ScopedCheckpointSection sec(cp, csprintf("PTE%d", i));
         table[i].unserialize(cp);
         if (table[i].V0 || table[i].V1) {
-            lookupTable.insert(make_pair(table[i].VPN, i));
+            lookupTable.insert(std::make_pair(table[i].VPN, i));
         }
     }
 }
 
-void
-TLB::regStats()
-{
-    read_hits
-        .name(name() + ".read_hits")
-        .desc("DTB read hits")
-        ;
-
-    read_misses
-        .name(name() + ".read_misses")
-        .desc("DTB read misses")
-        ;
-
-
-    read_accesses
-        .name(name() + ".read_accesses")
-        .desc("DTB read accesses")
-        ;
-
-    write_hits
-        .name(name() + ".write_hits")
-        .desc("DTB write hits")
-        ;
-
-    write_misses
-        .name(name() + ".write_misses")
-        .desc("DTB write misses")
-        ;
-
-
-    write_accesses
-        .name(name() + ".write_accesses")
-        .desc("DTB write accesses")
-        ;
-
-    hits
-        .name(name() + ".hits")
-        .desc("DTB hits")
-        ;
-
-    misses
-        .name(name() + ".misses")
-        .desc("DTB misses")
-        ;
-
-    accesses
-        .name(name() + ".accesses")
-        .desc("DTB accesses")
-        ;
-
-    hits = read_hits + write_hits;
-    misses = read_misses + write_misses;
-    accesses = read_accesses + write_accesses;
-}
-
 Fault
-TLB::translateInst(RequestPtr req, ThreadContext *tc)
+TLB::translateAtomic(const RequestPtr &req, ThreadContext *tc,
+                     BaseMMU::Mode mode)
 {
-    if (FullSystem)
-        panic("translateInst not implemented in MIPS.\n");
-
-    Process * p = tc->getProcessPtr();
-
-    Fault fault = p->pTable->translate(req);
-    if (fault != NoFault)
-        return fault;
-
-    return NoFault;
-}
-
-Fault
-TLB::translateData(RequestPtr req, ThreadContext *tc, bool write)
-{
-    if (FullSystem)
-        panic("translateData not implemented in MIPS.\n");
-
-    Process * p = tc->getProcessPtr();
-
-    Fault fault = p->pTable->translate(req);
-    if (fault != NoFault)
-        return fault;
-
-    return NoFault;
-}
-
-Fault
-TLB::translateAtomic(RequestPtr req, ThreadContext *tc, Mode mode)
-{
-    if (mode == Execute)
-        return translateInst(req, tc);
-    else
-        return translateData(req, tc, mode == Write);
+    panic_if(FullSystem, "translateAtomic not implemented in full system.");
+    return tc->getProcessPtr()->pTable->translate(req);
 }
 
 void
-TLB::translateTiming(RequestPtr req, ThreadContext *tc,
-        Translation *translation, Mode mode)
+TLB::translateTiming(const RequestPtr &req, ThreadContext *tc,
+                     BaseMMU::Translation *translation, BaseMMU::Mode mode)
 {
     assert(translation);
     translation->finish(translateAtomic(req, tc, mode), req, tc, mode);
 }
 
 Fault
-TLB::translateFunctional(RequestPtr req, ThreadContext *tc, Mode mode)
+TLB::translateFunctional(const RequestPtr &req, ThreadContext *tc,
+                         BaseMMU::Mode mode)
 {
-    panic("Not implemented\n");
-    return NoFault;
+    panic_if(FullSystem, "translateAtomic not implemented in full system.");
+    return tc->getProcessPtr()->pTable->translate(req);
 }
 
 Fault
-TLB::finalizePhysical(RequestPtr req, ThreadContext *tc, Mode mode) const
+TLB::finalizePhysical(const RequestPtr &req,
+                      ThreadContext *tc, BaseMMU::Mode mode) const
 {
     return NoFault;
 }
@@ -350,8 +261,4 @@ TLB::index(bool advance)
     return *pte;
 }
 
-MipsISA::TLB *
-MipsTLBParams::create()
-{
-    return new TLB(this);
-}
+} // namespace gem5

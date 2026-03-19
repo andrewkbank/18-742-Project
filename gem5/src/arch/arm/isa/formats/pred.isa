@@ -37,11 +37,9 @@
 // THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// Authors: Stephen Hines
 
 let {{
- 
+
      calcCcCode = '''
         if (%(canOverflow)s){
            cprintf("canOverflow: %%d\\n", Rd < resTemp);
@@ -52,7 +50,7 @@ let {{
             _iz = (resTemp == 0);
             _iv = %(ivValue)s;
             _ic = %(icValue)s;
-            
+
             CondCodesNZ =  (_in << 1) | (_iz);
             CondCodesC  =  _ic;
             CondCodesV  =  _iv;
@@ -79,7 +77,7 @@ let {{
             iv = 'CondCodesV'
             negBit = 63
         elif flagtype == "overflow":
-            canOverflow = "true" 
+            canOverflow = "true"
             icReg = icImm = iv = '0'
         elif flagtype == "add":
             icReg = icImm = 'findCarry(32, resTemp, Rn, op2)'
@@ -94,12 +92,12 @@ let {{
             icReg = 'shift_carry_rs(Rm, Rs<7:0>, shift, CondCodesC)'
             icImm = 'shift_carry_imm(Rm, shift_size, shift, CondCodesC)'
             iv = 'CondCodesV'
-        return (calcCcCode % {"icValue" : icReg, 
-                              "ivValue" : iv, 
+        return (calcCcCode % {"icValue" : icReg,
+                              "ivValue" : iv,
                               "negBit" : negBit,
                               "canOverflow" : canOverflow },
-               calcCcCode % {"icValue" : icImm, 
-                              "ivValue" : iv, 
+               calcCcCode % {"icValue" : icImm,
+                              "ivValue" : iv,
                               "negBit" : negBit,
                               "canOverflow" : canOverflow })
 
@@ -116,7 +114,7 @@ let {{
             negBit = 63
         elif flagtype == "overflow":
             icVaule = ivValue = '0'
-            canOverflow = "true" 
+            canOverflow = "true"
         elif flagtype == "add":
             icValue = 'findCarry(32, resTemp, Rn, rotated_imm)'
             ivValue = 'findOverflow(32, resTemp, Rn, rotated_imm)'
@@ -143,18 +141,16 @@ def format DataOp(code, flagtype = logic) {{
     immCode = '''uint32_t op2 = shift_rm_imm(Rm, shift_size,
                                              shift, OptShiftRmCondCodesC);
                  op2 = op2;''' + code
-    regIop = InstObjParams(name, Name, 'PredIntOp',
-                           {"code": regCode,
-                            "predicate_test": pickPredicate(regCode)})
-    immIop = InstObjParams(name, Name + "Imm", 'PredIntOp',
-                           {"code": immCode,
-                            "predicate_test": pickPredicate(imm)})
-    regCcIop = InstObjParams(name, Name + "Cc", 'PredIntOp',
-                         {"code": regCode + regCcCode,
-                          "predicate_test": pickPredicate(regCode + regCcCode)})
-    immCcIop = InstObjParams(name, Name + "ImmCc", 'PredIntOp',
-                         {"code": immCode + immCcCode,
-                          "predicate_test": pickPredicate(immCode + immCcCode)})
+    regIop = ArmInstObjParams(name, Name, 'PredIntOp',
+            { "code" : regCode, "predicate_test" : pickPredicate(regCode) })
+    immIop = ArmInstObjParams(name, Name + "Imm", 'PredIntOp',
+            { "code" : immCode, "predicate_test" : pickPredicate(imm) })
+    regCcIop = ArmInstObjParams(name, Name + "Cc", 'PredIntOp',
+            { "code" : regCode + regCcCode,
+              "predicate_test" : pickPredicate(regCode + regCcCode) })
+    immCcIop = ArmInstObjParams(name, Name + "ImmCc", 'PredIntOp',
+            { "code" : immCode + immCcCode,
+              "predicate_test" : pickPredicate(immCode + immCcCode) })
     header_output = BasicDeclare.subst(regIop) + \
                     BasicDeclare.subst(immIop) + \
                     BasicDeclare.subst(regCcIop) + \
@@ -172,12 +168,12 @@ def format DataOp(code, flagtype = logic) {{
 
 def format DataImmOp(code, flagtype = logic) {{
     code += "resTemp = resTemp;"
-    iop = InstObjParams(name, Name, 'PredImmOp',
-                        {"code": code,
-                         "predicate_test": pickPredicate(code)})
-    ccIop = InstObjParams(name, Name + "Cc", 'PredImmOp',
-              {"code": code + getImmCcCode(flagtype),
-               "predicate_test": pickPredicate(code + getImmCcCode(flagtype))})
+    iop = ArmInstObjParams(name, Name, 'PredImmOp',
+            { "code" : code, "predicate_test" : pickPredicate(code) })
+    ccIop = ArmInstObjParams(name, Name + "Cc", 'PredImmOp',
+            { "code" : code + getImmCcCode(flagtype),
+              "predicate_test" :
+                  pickPredicate(code + getImmCcCode(flagtype)) })
     header_output = BasicDeclare.subst(iop) + \
                     BasicDeclare.subst(ccIop)
     decoder_output = BasicConstructor.subst(iop) + \
@@ -188,10 +184,9 @@ def format DataImmOp(code, flagtype = logic) {{
 }};
 
 def format PredOp(code, *opt_flags) {{
-    iop = InstObjParams(name, Name, 'PredOp',
-                        {"code": code,
-                         "predicate_test": pickPredicate(code)},
-                        opt_flags)
+    iop = ArmInstObjParams(name, Name, 'PredOp',
+            { "code" : code, "predicate_test" : pickPredicate(code) },
+            opt_flags)
     header_output = BasicDeclare.subst(iop)
     decoder_output = BasicConstructor.subst(iop)
     decode_block = BasicDecode.subst(iop)
@@ -199,13 +194,11 @@ def format PredOp(code, *opt_flags) {{
 }};
 
 def format PredImmOp(code, *opt_flags) {{
-    iop = InstObjParams(name, Name, 'PredImmOp',
-                        {"code": code,
-                         "predicate_test": pickPredicate(code)},
-                        opt_flags)
+    iop = ArmInstObjParams(name, Name, 'PredImmOp',
+            { "code" : code, "predicate_test": pickPredicate(code) },
+            opt_flags)
     header_output = BasicDeclare.subst(iop)
     decoder_output = BasicConstructor.subst(iop)
     decode_block = BasicDecode.subst(iop)
     exec_output = PredOpExecute.subst(iop)
 }};
-

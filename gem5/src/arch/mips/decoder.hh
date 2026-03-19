@@ -24,72 +24,53 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Gabe Black
  */
 
 #ifndef __ARCH_MIPS_DECODER_HH__
 #define __ARCH_MIPS_DECODER_HH__
 
 #include "arch/generic/decode_cache.hh"
+#include "arch/generic/decoder.hh"
 #include "arch/mips/types.hh"
-#include "base/misc.hh"
+#include "base/logging.hh"
 #include "base/types.hh"
 #include "cpu/static_inst.hh"
+#include "debug/Decode.hh"
+#include "params/MipsDecoder.hh"
+
+namespace gem5
+{
+
+class BaseISA;
 
 namespace MipsISA
 {
 
-class Decoder
+class Decoder : public InstDecoder
 {
   protected:
     //The extended machine instruction being generated
     ExtMachInst emi;
-    bool instDone;
+    uint32_t machInst;
 
   public:
-    Decoder() : instDone(false)
+    Decoder(const MipsDecoderParams &p) : InstDecoder(p, &machInst)
     {}
-
-    void
-    process()
-    {
-    }
-
-    void
-    reset()
-    {
-        instDone = false;
-    }
 
     //Use this to give data to the decoder. This should be used
     //when there is control flow.
     void
-    moreBytes(const PCState &pc, Addr fetchPC, MachInst inst)
+    moreBytes(const PCStateBase &pc, Addr fetchPC) override
     {
-        emi = inst;
+        emi = letoh(machInst);
         instDone = true;
     }
 
-    bool
-    needMoreBytes()
-    {
-        return true;
-    }
-
-    bool
-    instReady()
-    {
-        return instDone;
-    }
-
-    void takeOverFrom(Decoder *old) {}
-
   protected:
     /// A cache of decoded instruction objects.
-    static GenericISA::BasicDecodeCache defaultCache;
+    static GenericISA::BasicDecodeCache<Decoder, ExtMachInst> defaultCache;
+    friend class GenericISA::BasicDecodeCache<Decoder, ExtMachInst>;
 
-  public:
     StaticInstPtr decodeInst(ExtMachInst mach_inst);
 
     /// Decode a machine instruction.
@@ -98,19 +79,24 @@ class Decoder
     StaticInstPtr
     decode(ExtMachInst mach_inst, Addr addr)
     {
-        return defaultCache.decode(this, mach_inst, addr);
+        StaticInstPtr si = defaultCache.decode(this, mach_inst, addr);
+        DPRINTF(Decode, "Decode: Decoded %s instruction: %#x\n",
+                si->getName(), mach_inst);
+        return si;
     }
 
+  public:
     StaticInstPtr
-    decode(MipsISA::PCState &nextPC)
+    decode(PCStateBase &next_pc) override
     {
         if (!instDone)
             return NULL;
         instDone = false;
-        return decode(emi, nextPC.instAddr());
+        return decode(emi, next_pc.instAddr());
     }
 };
 
 } // namespace MipsISA
+} // namespace gem5
 
 #endif // __ARCH_MIPS_DECODER_HH__

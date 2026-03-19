@@ -32,10 +32,8 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Gabe Black
 
-microcode = '''
+microcode = """
 def macroop PUNPCKLBW_XMM_XMM {
     unpack xmmh, xmml, xmmlm, ext=1, size=1
     unpack xmml, xmml, xmmlm, ext=0, size=1
@@ -182,4 +180,4 @@ def macroop PUNPCKLQDQ_XMM_P {
     rdip t7
     ldfp xmmh, seg, riprel, disp, dataSize=8
 };
-'''
+"""

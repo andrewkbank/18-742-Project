@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015 ARM Limited
+ * Copyright (c) 2015,2017-2018 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -33,8 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andreas Sandberg
  */
 
 #ifndef __BASE_CIRCLEBUF_HH__
@@ -42,57 +40,46 @@
 
 #include <algorithm>
 #include <cassert>
+#include <iterator>
 #include <vector>
 
-#include "base/misc.hh"
+#include "base/logging.hh"
 #include "sim/serialize.hh"
 
+namespace gem5
+{
+
 /**
- * Circular buffer backed by a vector
+ * Circular buffer backed by a vector.
  *
- * The data in the cricular buffer is stored in a standard
- * vector. _start designates the first element in the buffer and _stop
- * points to the last element + 1 (i.e., the position of the next
- * insertion). The _stop index may be outside the range of the backing
- * store, which means that the actual index must be calculated as
- * _stop % capacity.
- *
- * Invariants:
- * <ul>
- *   <li>_start <= _stop
- *   <li>_start < capacity
- *   <li>_stop < 2 * capacity
- * </ul>
+ * The data in the cricular buffer is stored in a standard vector.
  */
 template<typename T>
 class CircleBuf
 {
-  public:
-    typedef T value_type;
+  private:
+    std::vector<T> buffer;
+    size_t start = 0;
+    size_t used = 0;
+    size_t maxSize;
 
   public:
-    explicit CircleBuf(size_t size)
-        : buf(size), _start(0), _stop(0) {}
+    using value_type = T;
 
-    /** Is the buffer empty? */
-    bool empty() const { return _stop == _start; }
-    /**
-     * Return the maximum number of elements that can be stored in
-     * the buffer at any one time.
-     */
-    size_t capacity() const { return buf.size(); }
-    /** Return the number of elements stored in the buffer. */
-    size_t size() const { return _stop - _start; }
+    explicit CircleBuf(size_t size) : buffer(size), maxSize(size) {}
+
+    bool empty() const { return used == 0; }
+    size_t size() const { return used; }
+    size_t capacity() const { return maxSize; }
 
     /**
-     * Remove all the elements in the buffer.
-     *
-     * Note: This does not actually remove elements from the backing
-     * store.
+     * Throw away any data in the buffer.
      */
-    void flush() {
-        _start = 0;
-        _stop = 0;
+    void
+    flush()
+    {
+        start = 0;
+        used = 0;
     }
 
     /**
@@ -102,24 +89,45 @@ class CircleBuf
      * @param len Number of elements to copy
      */
     template <class OutputIterator>
-    void peek(OutputIterator out, size_t len) const {
-        panic_if(len > size(),
-                 "Trying to read past end of circular buffer.\n");
-
-        if (_start + len <= buf.size()) {
-            std::copy(buf.begin() + _start,
-                      buf.begin() + _start + len,
-                      out);
-        } else {
-            const size_t head_size(buf.size() - _start);
-            const size_t tail_size(len - head_size);
-            std::copy(buf.begin() + _start, buf.end(),
-                      out);
-            std::copy(buf.begin(), buf.begin() + tail_size,
-                      out + head_size);
-        }
+    void
+    peek(OutputIterator out, size_t len) const
+    {
+        peek(out, 0, len);
     }
 
+    /**
+     * Copy buffer contents without advancing the read pointer
+     *
+     * @param out Output iterator/pointer
+     * @param offset Offset into the ring buffer
+     * @param len Number of elements to copy
+     */
+    template <class OutputIterator>
+    void
+    peek(OutputIterator out, off_t offset, size_t len) const
+    {
+        panic_if(offset + len > used,
+                 "Trying to read past end of circular buffer.");
+
+        if (!len)
+            return;
+
+        // The iterator for the next byte to copy out.
+        auto next_it = buffer.begin() + (start + offset) % maxSize;
+        // How much there is to copy from until the end of the buffer.
+        const size_t to_end = buffer.end() - next_it;
+
+        // If the data to be copied wraps, take care of the first part.
+        if (to_end < len) {
+            // Copy it.
+            out = std::copy_n(next_it, to_end, out);
+            // Start copying again at the start of buffer.
+            next_it = buffer.begin();
+            len -= to_end;
+        }
+        // Copy the remaining (or only) chunk of data.
+        std::copy_n(next_it, len, out);
+    }
 
     /**
      * Copy buffer contents and advance the read pointer
@@ -128,67 +136,67 @@ class CircleBuf
      * @param len Number of elements to read
      */
     template <class OutputIterator>
-    void read(OutputIterator out, size_t len) {
+    void
+    read(OutputIterator out, size_t len)
+    {
         peek(out, len);
-
-        _start += len;
-        normalize();
+        used -= len;
+        start += len;
     }
 
     /**
-     * Add elements to the end of the ring buffers and advance.
+     * Add elements to the end of the ring buffers and advance. Writes which
+     * would exceed the capacity of the queue fill the avaialble space, and
+     * then continue overwriting the head of the queue. The head advances as
+     * if that data had been read out.
      *
      * @param in Input iterator/pointer
      * @param len Number of elements to read
      */
     template <class InputIterator>
-    void write(InputIterator in, size_t len) {
-        // Writes that are larger than the backing store are allowed,
-        // but only the last part of the buffer will be written.
-        if (len > buf.size()) {
-            in += len - buf.size();
-            len = buf.size();
+    void
+    write(InputIterator in, size_t len)
+    {
+        if (!len)
+            return;
+
+        // Writes that are larger than the buffer size are allowed, but only
+        // the last part of the date will be written since the rest will be
+        // overwritten and not remain in the buffer.
+        if (len > maxSize) {
+            in += len - maxSize;
+            flush();
+            len = maxSize;
         }
 
-        const size_t next(_stop % buf.size());
-        const size_t head_len(std::min(buf.size() - next, len));
+        // How much existing data will be overwritten?
+        const size_t total_bytes = used + len;
+        const size_t overflow = total_bytes > maxSize ?
+                                total_bytes - maxSize : 0;
+        // The iterator of the next byte to add.
+        auto next_it = buffer.begin() + (start + used) % maxSize;
+        // How much there is to copy to the end of the buffer.
+        const size_t to_end = buffer.end() - next_it;
 
-        std::copy(in, in + head_len, buf.begin() + next);
-        std::copy(in + head_len, in + len, buf.begin());
-
-        _stop += len;
-        // We may have written past the old _start pointer. Readjust
-        // the _start pointer to remove the oldest entries in that
-        // case.
-        if (size() > buf.size())
-            _start = _stop - buf.size();
-
-        normalize();
-    }
-
-  protected:
-    /**
-     * Normalize the start and stop pointers to ensure that pointer
-     * invariants hold after updates.
-     */
-    void normalize() {
-        if (_start >= buf.size()) {
-            _stop -= buf.size();
-            _start -= buf.size();
+        // If this addition wraps, take care of the first part here.
+        if (to_end < len) {
+            // Copy it.
+            std::copy_n(in, to_end, next_it);
+            // Update state to reflect what's left.
+            next_it = buffer.begin();
+            std::advance(in, to_end);
+            len -= to_end;
+            used += to_end;
         }
+        // Copy the remaining (or only) chunk of data.
+        std::copy_n(in, len, next_it);
+        used += len;
 
-        assert(_start < buf.size());
-        assert(_stop < 2 * buf.size());
-        assert(_start <= _stop);
+        // Don't count data that was overwritten.
+        used -= overflow;
+        start += overflow;
     }
-
-  protected:
-    std::vector<value_type> buf;
-    size_t _start;
-    size_t _stop;
-
 };
-
 
 /**
  * Simple FIFO implementation backed by a circular buffer.
@@ -208,8 +216,7 @@ class Fifo
     typedef T value_type;
 
   public:
-    Fifo(size_t size)
-        : buf(size) {}
+    Fifo(size_t size) : buf(size) {}
 
     bool empty() const { return buf.empty(); }
     size_t size() const { return buf.size(); }
@@ -223,9 +230,10 @@ class Fifo
     void read(OutputIterator out, size_t len) { buf.read(out, len); }
 
     template <class InputIterator>
-    void write(InputIterator in, size_t len) {
-        panic_if(size() + len > capacity(),
-                 "Trying to overfill FIFO buffer.\n");
+    void
+    write(InputIterator in, size_t len)
+    {
+        panic_if(size() + len > capacity(), "Trying to overfill FIFO buffer.");
         buf.write(in, len);
     }
 
@@ -235,7 +243,7 @@ class Fifo
 
 
 template <typename T>
-static void
+void
 arrayParamOut(CheckpointOut &cp, const std::string &name,
               const CircleBuf<T> &param)
 {
@@ -245,9 +253,8 @@ arrayParamOut(CheckpointOut &cp, const std::string &name,
 }
 
 template <typename T>
-static void
-arrayParamIn(CheckpointIn &cp, const std::string &name,
-             CircleBuf<T> &param)
+void
+arrayParamIn(CheckpointIn &cp, const std::string &name, CircleBuf<T> &param)
 {
     std::vector<T> temp;
     arrayParamIn(cp, name, temp);
@@ -257,9 +264,8 @@ arrayParamIn(CheckpointIn &cp, const std::string &name,
 }
 
 template <typename T>
-static void
-arrayParamOut(CheckpointOut &cp, const std::string &name,
-              const Fifo<T> &param)
+void
+arrayParamOut(CheckpointOut &cp, const std::string &name, const Fifo<T> &param)
 {
     std::vector<T> temp(param.size());
     param.peek(temp.begin(), temp.size());
@@ -267,18 +273,19 @@ arrayParamOut(CheckpointOut &cp, const std::string &name,
 }
 
 template <typename T>
-static void
-arrayParamIn(CheckpointIn &cp, const std::string &name,
-             Fifo<T> &param)
+void
+arrayParamIn(CheckpointIn &cp, const std::string &name, Fifo<T> &param)
 {
     std::vector<T> temp;
     arrayParamIn(cp, name, temp);
 
     fatal_if(param.capacity() < temp.size(),
-             "Trying to unserialize data into too small FIFO\n");
+             "Trying to unserialize data into too small FIFO");
 
     param.flush();
     param.write(temp.cbegin(), temp.size());
 }
+
+} // namespace gem5
 
 #endif // __BASE_CIRCLEBUF_HH__

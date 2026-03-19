@@ -33,8 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Ali Saidi
  */
 
 #ifndef __DEV_ARM_RV_HH__
@@ -42,17 +40,23 @@
 
 #include "base/bitunion.hh"
 #include "dev/io_device.hh"
-#include "params/RealViewCtrl.hh"
-#include "params/RealViewOsc.hh"
 
 /** @file
  * This implements the simple real view registers on a PBXA9
  */
 
+namespace gem5
+{
+
+struct RealViewCtrlParams;
+struct RealViewOscParams;
+struct RealViewTemperatureSensorParams;
+
 class RealViewCtrl : public BasicPioDevice
 {
   public:
-    enum DeviceFunc {
+    enum DeviceFunc
+    {
         FUNC_OSC      = 1,
         FUNC_VOLT     = 2,
         FUNC_AMP      = 3,
@@ -83,7 +87,8 @@ class RealViewCtrl : public BasicPioDevice
     };
 
   protected:
-    enum {
+    enum
+    {
         IdReg      = 0x00,
         SwReg      = 0x04,
         Led        = 0x08,
@@ -154,34 +159,30 @@ class RealViewCtrl : public BasicPioDevice
     uint32_t scData;
 
   public:
-    typedef RealViewCtrlParams Params;
-    const Params *
-    params() const
-    {
-        return dynamic_cast<const Params *>(_params);
-    }
+    PARAMS(RealViewCtrl);
+
     /**
       * The constructor for RealView just registers itself with the MMU.
       * @param p params structure
       */
-    RealViewCtrl(Params *p);
+    RealViewCtrl(const Params &p);
 
     /**
      * Handle a read to the device
      * @param pkt The memory request.
      * @param data Where to put the data.
      */
-    Tick read(PacketPtr pkt) M5_ATTR_OVERRIDE;
+    Tick read(PacketPtr pkt) override;
 
     /**
      * All writes are simply ignored.
      * @param pkt The memory request.
      * @param data the data
      */
-    Tick write(PacketPtr pkt) M5_ATTR_OVERRIDE;
+    Tick write(PacketPtr pkt) override;
 
-    void serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE;
-    void unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE;
+    void serialize(CheckpointOut &cp) const override;
+    void unserialize(CheckpointIn &cp) override;
 
   public:
     void registerDevice(DeviceFunc func, uint8_t site, uint8_t pos,
@@ -203,21 +204,44 @@ class RealViewOsc
     : public ClockDomain, RealViewCtrl::Device
 {
   public:
-    RealViewOsc(RealViewOscParams *p);
+    RealViewOsc(const RealViewOscParams &p);
     virtual ~RealViewOsc() {};
 
-    void startup() M5_ATTR_OVERRIDE;
+    void startup() override;
 
-    void serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE;
-    void unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE;
+    void serialize(CheckpointOut &cp) const override;
+    void unserialize(CheckpointIn &cp) override;
 
   public: // RealViewCtrl::Device interface
-    uint32_t read() const M5_ATTR_OVERRIDE;
-    void write(uint32_t freq) M5_ATTR_OVERRIDE;
+    uint32_t read() const override;
+    void write(uint32_t freq) override;
 
   protected:
     void clockPeriod(Tick clock_period);
 };
 
+/**
+ * This device implements the temperature sensor used in the
+ * RealView/Versatile Express platform.
+ *
+ * See ARM DUI 0447J (ARM  Motherboard Express uATX -- V2M-P1).
+ */
+class RealViewTemperatureSensor
+    : public SimObject, RealViewCtrl::Device
+{
+  public:
+    RealViewTemperatureSensor(const RealViewTemperatureSensorParams &p);
+    virtual ~RealViewTemperatureSensor() {};
+
+  public: // RealViewCtrl::Device interface
+    uint32_t read() const override;
+    void write(uint32_t temp) override {}
+
+  protected:
+    /** The system this RV device belongs to */
+    System * system;
+};
+
+} // namespace gem5
 
 #endif // __DEV_ARM_RV_HH__

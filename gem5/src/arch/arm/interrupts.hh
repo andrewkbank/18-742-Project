@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012-2013 ARM Limited
+ * Copyright (c) 2010, 2012-2013, 2016, 2023 Arm Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -36,58 +36,56 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Ali Saidi
  */
 
 #ifndef __ARCH_ARM_INTERRUPT_HH__
 #define __ARCH_ARM_INTERRUPT_HH__
 
 #include "arch/arm/faults.hh"
-#include "arch/arm/isa_traits.hh"
-#include "arch/arm/miscregs.hh"
-#include "arch/arm/registers.hh"
+#include "arch/arm/regs/misc.hh"
 #include "arch/arm/utility.hh"
+#include "arch/generic/interrupts.hh"
 #include "cpu/thread_context.hh"
 #include "debug/Interrupt.hh"
-#include "params/ArmInterrupts.hh"
-#include "sim/sim_object.hh"
+#include "enums/ArmExtension.hh"
+
+namespace gem5
+{
+
+struct ArmInterruptsParams;
 
 namespace ArmISA
 {
 
-class Interrupts : public SimObject
+enum InterruptTypes
+{
+    INT_RST,
+    INT_ABT,
+    INT_IRQ,
+    INT_FIQ,
+    INT_SEV, // Special interrupt for recieving SEV's
+    INT_VIRT_IRQ,
+    INT_VIRT_FIQ,
+    NumInterruptTypes,
+    // Cannot be raised by an external signal
+    // (for now) from the IC so we don't instantiate a
+    // interrupt entry in the state array
+    INT_VIRT_ABT
+};
+
+class Interrupts : public BaseInterrupts
 {
   private:
-    BaseCPU * cpu;
-
     bool interrupts[NumInterruptTypes];
     uint64_t intStatus;
 
   public:
+    using Params = ArmInterruptsParams;
+
+    Interrupts(const Params &p);
 
     void
-    setCPU(BaseCPU * _cpu)
-    {
-        cpu = _cpu;
-    }
-
-    typedef ArmInterruptsParams Params;
-
-    const Params *
-    params() const
-    {
-        return dynamic_cast<const Params *>(_params);
-    }
-
-    Interrupts(Params * p) : SimObject(p), cpu(NULL)
-    {
-        clearAll();
-    }
-
-
-    void
-    post(int int_num, int index)
+    post(int int_num, int index) override
     {
         DPRINTF(Interrupt, "Interrupt %d:%d posted\n", int_num, index);
 
@@ -98,11 +96,11 @@ class Interrupts : public SimObject
             panic("No support for other interrupt indexes\n");
 
         interrupts[int_num] = true;
-        intStatus |= ULL(1) << int_num;
+        intStatus |= 1ULL << int_num;
     }
 
     void
-    clear(int int_num, int index)
+    clear(int int_num, int index) override
     {
         DPRINTF(Interrupt, "Interrupt %d:%d cleared\n", int_num, index);
 
@@ -113,53 +111,49 @@ class Interrupts : public SimObject
             panic("No support for other interrupt indexes\n");
 
         interrupts[int_num] = false;
-        intStatus &= ~(ULL(1) << int_num);
+        intStatus &= ~(1ULL << int_num);
     }
 
     void
-    clearAll()
+    clearAll() override
     {
         DPRINTF(Interrupt, "Interrupts all cleared\n");
         intStatus = 0;
         memset(interrupts, 0, sizeof(interrupts));
     }
 
-    enum InterruptMask {
+    enum InterruptMask
+    {
         INT_MASK_M, // masked (subject to PSTATE.{A,I,F} mask bit
         INT_MASK_T, // taken regardless of mask
         INT_MASK_P  // pending
     };
 
-    bool takeInt(ThreadContext *tc, InterruptTypes int_type) const;
+    bool takeInt(InterruptTypes int_type) const;
+    bool takeInt32(InterruptTypes int_type) const;
+    bool takeInt64(InterruptTypes int_type) const;
+
+    bool takeVirtualInt(InterruptTypes int_type) const;
+    bool takeVirtualInt32(InterruptTypes int_type) const;
+    bool takeVirtualInt64(InterruptTypes int_type) const;
 
     bool
-    checkInterrupts(ThreadContext *tc) const
+    checkInterrupts() const override
     {
-        HCR  hcr  = tc->readMiscReg(MISCREG_HCR);
+        HCR  hcr  = tc->readMiscReg(MISCREG_HCR_EL2);
 
         if (!(intStatus || hcr.va || hcr.vi || hcr.vf))
             return false;
 
-        CPSR cpsr = tc->readMiscReg(MISCREG_CPSR);
-        SCR  scr  = tc->readMiscReg(MISCREG_SCR);
-
-        bool isHypMode   = cpsr.mode == MODE_HYP;
-        bool isSecure    = inSecureState(scr, cpsr);
-        bool allowVIrq   = !cpsr.i && hcr.imo && !isSecure && !isHypMode;
-        bool allowVFiq   = !cpsr.f && hcr.fmo && !isSecure && !isHypMode;
-        bool allowVAbort = !cpsr.a && hcr.amo && !isSecure && !isHypMode;
-
-        bool take_irq = takeInt(tc, INT_IRQ);
-        bool take_fiq = takeInt(tc, INT_FIQ);
-        bool take_ea =  takeInt(tc, INT_ABT);
-
-        return ((interrupts[INT_IRQ] && take_irq)                   ||
-                (interrupts[INT_FIQ] && take_fiq)                   ||
-                (interrupts[INT_ABT] && take_ea)                    ||
-                ((interrupts[INT_VIRT_IRQ] || hcr.vi) && allowVIrq) ||
-                ((interrupts[INT_VIRT_FIQ] || hcr.vf) && allowVFiq) ||
-                (hcr.va && allowVAbort)                             ||
-                (interrupts[INT_RST])                               ||
+        return ((interrupts[INT_IRQ] && takeInt(INT_IRQ)) ||
+                (interrupts[INT_FIQ] && takeInt(INT_FIQ)) ||
+                (interrupts[INT_ABT] && takeInt(INT_ABT)) ||
+                ((interrupts[INT_VIRT_IRQ] || hcr.vi) &&
+                    takeVirtualInt(INT_VIRT_IRQ)) ||
+                ((interrupts[INT_VIRT_FIQ] || hcr.vf) &&
+                    takeVirtualInt(INT_VIRT_FIQ)) ||
+                (hcr.va && takeVirtualInt(INT_VIRT_ABT)) ||
+                (interrupts[INT_RST]) ||
                 (interrupts[INT_SEV])
                );
     }
@@ -172,30 +166,29 @@ class Interrupts : public SimObject
     bool
     checkWfiWake(HCR hcr, CPSR cpsr, SCR scr) const
     {
-        uint64_t maskedIntStatus;
-        bool     virtWake;
+        uint64_t masked_int_status;
+        bool     virt_wake;
 
-        maskedIntStatus = intStatus & ~((1 << INT_VIRT_IRQ) |
-                                        (1 << INT_VIRT_FIQ));
-        virtWake  = (hcr.vi || interrupts[INT_VIRT_IRQ]) && hcr.imo;
-        virtWake |= (hcr.vf || interrupts[INT_VIRT_FIQ]) && hcr.fmo;
-        virtWake |=  hcr.va                              && hcr.amo;
-        virtWake &= (cpsr.mode != MODE_HYP) && !inSecureState(scr, cpsr);
-        return maskedIntStatus || virtWake;
+        masked_int_status = intStatus & ~((1 << INT_VIRT_IRQ) |
+                                          (1 << INT_VIRT_FIQ));
+        virt_wake  = (hcr.vi || interrupts[INT_VIRT_IRQ]) && hcr.imo;
+        virt_wake |= (hcr.vf || interrupts[INT_VIRT_FIQ]) && hcr.fmo;
+        virt_wake |=  hcr.va                              && hcr.amo;
+        virt_wake &= currEL(cpsr) < EL2 && EL2Enabled(tc);
+        return masked_int_status || virt_wake;
     }
 
     uint32_t
     getISR(HCR hcr, CPSR cpsr, SCR scr)
     {
-        bool useHcrMux;
-        CPSR isr = 0; // ARM ARM states ISR reg uses same bit possitions as CPSR
+        bool use_hcr_mux = currEL(cpsr) < EL2 && EL2Enabled(tc);
+        ISR isr = 0;
 
-        useHcrMux = (cpsr.mode != MODE_HYP) && !inSecureState(scr, cpsr);
-        isr.i = (useHcrMux & hcr.imo) ? (interrupts[INT_VIRT_IRQ] || hcr.vi)
-                                      :  interrupts[INT_IRQ];
-        isr.f = (useHcrMux & hcr.fmo) ? (interrupts[INT_VIRT_FIQ] || hcr.vf)
-                                      :  interrupts[INT_FIQ];
-        isr.a = (useHcrMux & hcr.amo) ?  hcr.va : interrupts[INT_ABT];
+        isr.i = (use_hcr_mux & hcr.imo) ? (interrupts[INT_VIRT_IRQ] || hcr.vi)
+                                        :  interrupts[INT_IRQ];
+        isr.f = (use_hcr_mux & hcr.fmo) ? (interrupts[INT_VIRT_FIQ] || hcr.vf)
+                                        :  interrupts[INT_FIQ];
+        isr.a = (use_hcr_mux & hcr.amo) ?  hcr.va : interrupts[INT_ABT];
         return isr;
     }
 
@@ -219,43 +212,27 @@ class Interrupts : public SimObject
     }
 
     Fault
-    getInterrupt(ThreadContext *tc)
+    getInterrupt() override
     {
-        HCR  hcr  = tc->readMiscReg(MISCREG_HCR);
-        CPSR cpsr = tc->readMiscReg(MISCREG_CPSR);
-        SCR  scr  = tc->readMiscReg(MISCREG_SCR);
+        assert(checkInterrupts());
 
-        // Calculate a few temp vars so we can work out if there's a pending
-        // virtual interrupt, and if its allowed to happen
-        // ARM ARM Issue C section B1.9.9, B1.9.11, and B1.9.13
-        bool isHypMode   = cpsr.mode == MODE_HYP;
-        bool isSecure    = inSecureState(scr, cpsr);
-        bool allowVIrq   = !cpsr.i && hcr.imo && !isSecure && !isHypMode;
-        bool allowVFiq   = !cpsr.f && hcr.fmo && !isSecure && !isHypMode;
-        bool allowVAbort = !cpsr.a && hcr.amo && !isSecure && !isHypMode;
+        HCR  hcr  = tc->readMiscReg(MISCREG_HCR_EL2);
 
-        if ( !(intStatus || (hcr.vi && allowVIrq) || (hcr.vf && allowVFiq) ||
-               (hcr.va && allowVAbort)) )
-            return NoFault;
-
-        bool take_irq = takeInt(tc, INT_IRQ);
-        bool take_fiq = takeInt(tc, INT_FIQ);
-        bool take_ea =  takeInt(tc, INT_ABT);
-
-
-        if (interrupts[INT_IRQ] && take_irq)
+        if (interrupts[INT_IRQ] && takeInt(INT_IRQ))
             return std::make_shared<Interrupt>();
-        if ((interrupts[INT_VIRT_IRQ] || hcr.vi) && allowVIrq)
+        if ((interrupts[INT_VIRT_IRQ] || hcr.vi) &&
+            takeVirtualInt(INT_VIRT_IRQ))
             return std::make_shared<VirtualInterrupt>();
-        if (interrupts[INT_FIQ] && take_fiq)
+        if (interrupts[INT_FIQ] && takeInt(INT_FIQ))
             return std::make_shared<FastInterrupt>();
-        if ((interrupts[INT_VIRT_FIQ] || hcr.vf) && allowVFiq)
+        if ((interrupts[INT_VIRT_FIQ] || hcr.vf) &&
+            takeVirtualInt(INT_VIRT_FIQ))
             return std::make_shared<VirtualFastInterrupt>();
-        if (interrupts[INT_ABT] && take_ea)
+        if (interrupts[INT_ABT] && takeInt(INT_ABT))
             return std::make_shared<SystemError>();
-        if (hcr.va && allowVAbort)
+        if (hcr.va && takeVirtualInt(INT_VIRT_ABT))
             return std::make_shared<VirtualDataAbort>(
-                0, TlbEntry::DomainType::NoAccess, false,
+                0, DomainType::NoAccess, false,
                 ArmFault::AsynchronousExternalAbort);
         if (interrupts[INT_RST])
             return std::make_shared<Reset>();
@@ -265,26 +242,24 @@ class Interrupts : public SimObject
         panic("intStatus and interrupts not in sync\n");
     }
 
-    void
-    updateIntrInfo(ThreadContext *tc)
-    {
-        ; // nothing to do
-    }
+    void updateIntrInfo() override {} // nothing to do
 
     void
-    serialize(CheckpointOut &cp) const
+    serialize(CheckpointOut &cp) const override
     {
         SERIALIZE_ARRAY(interrupts, NumInterruptTypes);
         SERIALIZE_SCALAR(intStatus);
     }
 
     void
-    unserialize(CheckpointIn &cp)
+    unserialize(CheckpointIn &cp) override
     {
         UNSERIALIZE_ARRAY(interrupts, NumInterruptTypes);
         UNSERIALIZE_SCALAR(intStatus);
     }
 };
+
 } // namespace ARM_ISA
+} // namespace gem5
 
 #endif // __ARCH_ARM_INTERRUPT_HH__

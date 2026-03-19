@@ -23,68 +23,76 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Nathan Binkert
 
-import sys
+import decimal
+
 from m5.util import warn
 
-tps = 1.0e12         # default to 1 THz (1 Tick == 1 ps)
-tps_fixed = False    # once set to true, can't be changed
 
-# fix the global frequency and tell C++ about it
+# fix the global frequency
 def fixGlobalFrequency():
-    import internal
-    global tps, tps_fixed
-    if not tps_fixed:
-        tps_fixed = True
-        internal.core.setClockFrequency(int(tps))
-        print "Global frequency set at %d ticks per second" % int(tps)
+    from _m5 import core
+
+    core.fixClockFrequency()
+
 
 def setGlobalFrequency(ticksPerSecond):
     from m5.util import convert
 
-    global tps, tps_fixed
+    from _m5 import core
 
-    if tps_fixed:
-        raise AttributeError, \
-              "Global frequency already fixed at %f ticks/s." % tps
-
-    if isinstance(ticksPerSecond, (int, long)):
+    if isinstance(ticksPerSecond, int):
         tps = ticksPerSecond
     elif isinstance(ticksPerSecond, float):
         tps = ticksPerSecond
     elif isinstance(ticksPerSecond, str):
         tps = round(convert.anyToFrequency(ticksPerSecond))
     else:
-        raise TypeError, \
-              "wrong type '%s' for ticksPerSecond" % type(ticksPerSecond)
+        raise TypeError(
+            f"wrong type '{type(ticksPerSecond)}' for ticksPerSecond"
+        )
+    core.setClockFrequency(int(tps))
+
 
 # how big does a rounding error need to be before we warn about it?
 frequency_tolerance = 0.001  # 0.1%
 
+
 def fromSeconds(value):
+    from _m5 import core
+
     if not isinstance(value, float):
-        raise TypeError, "can't convert '%s' to type tick" % type(value)
+        raise TypeError(f"can't convert '{type(value)}' to type tick")
 
     # once someone needs to convert to seconds, the global frequency
     # had better be fixed
-    if not tps_fixed:
-        raise AttributeError, \
-              "In order to do conversions, the global frequency must be fixed"
+    if not core.clockFrequencyFixed():
+        raise AttributeError(
+            "In order to do conversions, the global frequency must be fixed"
+        )
 
     if value == 0:
         return 0
 
     # convert the value from time to ticks
-    value *= tps
+    value *= core.getClockFrequency()
 
-    int_value = int(round(value))
+    int_value = int(
+        decimal.Decimal(value).to_integral_value(decimal.ROUND_HALF_UP)
+    )
     err = (value - int_value) / value
     if err > frequency_tolerance:
-        warn("rounding error > tolerance\n    %f rounded to %d", value,
-            int_value)
+        warn(
+            "rounding error > tolerance\n    %f rounded to %d",
+            value,
+            int_value,
+        )
     return int_value
 
-__all__ = [ 'setGlobalFrequency', 'fixGlobalFrequency', 'fromSeconds',
-            'frequency_tolerance' ]
+
+__all__ = [
+    "setGlobalFrequency",
+    "fixGlobalFrequency",
+    "fromSeconds",
+    "frequency_tolerance",
+]

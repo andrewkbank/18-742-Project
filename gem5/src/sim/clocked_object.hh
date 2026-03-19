@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2013 ARM Limited
+ * Copyright (c) 2012-2013, 2015-2017, 2019-2020 ARM Limited
  * Copyright (c) 2013 Cornell University
  * All rights reserved
  *
@@ -34,9 +34,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andreas Hansson
- *          Christopher Torng
  */
 
 /**
@@ -47,12 +44,15 @@
 #ifndef __SIM_CLOCKED_OBJECT_HH__
 #define __SIM_CLOCKED_OBJECT_HH__
 
-#include "base/intmath.hh"
-#include "base/misc.hh"
+
 #include "params/ClockedObject.hh"
 #include "sim/core.hh"
 #include "sim/clock_domain.hh"
+#include "sim/power_state.hh"
 #include "sim/sim_object.hh"
+
+namespace gem5
+{
 
 /**
  * Helper class for objects that need to be clocked. Clocked objects
@@ -75,7 +75,8 @@ class Clocked
      *  Align cycle and tick to the next clock edge if not already done. When
      *  complete, tick must be at least curTick().
      */
-    void update() const
+    void
+    update() const
     {
         // both tick and cycle are up-to-date and we are done, note
         // that the >= is important as it captures cases where tick
@@ -132,22 +133,30 @@ class Clocked
      * to be used only when the global clock is reset. Currently, this done
      * only when Ruby is done warming up the memory system.
      */
-    void resetClock() const
+    void
+    resetClock() const
     {
         Cycles elapsedCycles(divCeil(curTick(), clockPeriod()));
         cycle = elapsedCycles;
         tick = elapsedCycles * clockPeriod();
     }
 
+    /**
+     * A hook subclasses can implement so they can do any extra work that's
+     * needed when the clock rate is changed.
+     */
+    virtual void clockPeriodUpdated() {}
+
   public:
 
     /**
      * Update the tick to the current tick.
-     *
      */
-    inline void updateClockPeriod() const
+    void
+    updateClockPeriod()
     {
         update();
+        clockPeriodUpdated();
     }
 
     /**
@@ -164,7 +173,8 @@ class Clocked
      * this tick can be
      *     curTick() + [0, clockPeriod()) + clockPeriod() * cycles
      */
-    inline Tick clockEdge(Cycles cycles = Cycles(0)) const
+    Tick
+    clockEdge(Cycles cycles=Cycles(0)) const
     {
         // align tick to the next clock edge
         update();
@@ -181,7 +191,8 @@ class Clocked
      * to that clock edge. When curTick() is not on a clock edge, return the
      * Cycle corresponding to the next clock edge.
      */
-    inline Cycles curCycle() const
+    Cycles
+    curCycle() const
     {
         // align cycle to the next clock edge.
         update();
@@ -199,36 +210,41 @@ class Clocked
      * the future. Precisely, the returned tick can be in the range
      *     curTick() + [clockPeriod(), 2 * clockPeriod())
      */
-    Tick nextCycle() const
-    { return clockEdge(Cycles(1)); }
+    Tick nextCycle() const { return clockEdge(Cycles(1)); }
 
-    inline uint64_t frequency() const
+    uint64_t frequency() const { return sim_clock::Frequency / clockPeriod(); }
+
+    Tick clockPeriod() const { return clockDomain.clockPeriod(); }
+
+    double voltage() const { return clockDomain.voltage(); }
+
+    Cycles
+    ticksToCycles(Tick t) const
     {
-        return SimClock::Frequency / clockPeriod();
+        return Cycles(divCeil(t, clockPeriod()));
     }
 
-    inline Tick clockPeriod() const
-    {
-        return clockDomain.clockPeriod();
-    }
-
-    inline Cycles ticksToCycles(Tick t) const
-    { return Cycles(divCeil(t, clockPeriod())); }
-
-    inline Tick cyclesToTicks(Cycles c) const
-    { return clockPeriod() * c; }
+    Tick cyclesToTicks(Cycles c) const { return clockPeriod() * c; }
 };
 
 /**
  * The ClockedObject class extends the SimObject with a clock and
  * accessor functions to relate ticks to the cycles of the object.
  */
-class ClockedObject
-    : public SimObject, public Clocked
+class ClockedObject : public SimObject, public Clocked
 {
   public:
-    ClockedObject(const ClockedObjectParams *p)
-        : SimObject(p), Clocked(*p->clk_domain) { }
+    ClockedObject(const ClockedObjectParams &p);
+
+    /** Parameters of ClockedObject */
+    using Params = ClockedObjectParams;
+
+    void serialize(CheckpointOut &cp) const override;
+    void unserialize(CheckpointIn &cp) override;
+
+    PowerState *powerState;
 };
+
+} // namespace gem5
 
 #endif //__SIM_CLOCKED_OBJECT_HH__

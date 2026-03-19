@@ -1,4 +1,16 @@
 /*
+ * Copyright (c) 2022-2023 The University of Edinburgh
+ * All rights reserved
+ *
+ * The license below extends only to copyright in the software and shall
+ * not be construed as granting a license to any other intellectual
+ * property including but not limited to intellectual property relating
+ * to a hardware implementation of the functionality of the software
+ * licensed hereunder.  You may use the software subject to the license
+ * terms below provided that you ensure that this notice is replicated
+ * unmodified and in its entirety in all distributions of the software,
+ * modified or unmodified, in source code or in binary form.
+ *
  * Copyright (c) 2014 The Regents of The University of Michigan
  * All rights reserved.
  *
@@ -24,51 +36,47 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Anthony Gutierrez
  */
 
 /* @file
  * Implementation of a bi-mode branch predictor
  */
 
-#include "base/bitfield.hh"
-#include "base/intmath.hh"
 #include "cpu/pred/bi_mode.hh"
 
-BiModeBP::BiModeBP(const BiModeBPParams *params)
-    : BPredUnit(params),
-      globalHistoryReg(0),
-      globalHistoryBits(ceilLog2(params->globalPredictorSize)),
-      choicePredictorSize(params->choicePredictorSize),
-      choiceCtrBits(params->choiceCtrBits),
-      globalPredictorSize(params->globalPredictorSize),
-      globalCtrBits(params->globalCtrBits)
+#include "base/bitfield.hh"
+#include "base/intmath.hh"
+
+namespace gem5
+{
+
+namespace branch_prediction
+{
+
+BiModeBP::BiModeBP(const BiModeBPParams &params)
+    : ConditionalPredictor(params),
+      globalHistoryReg(params.numThreads, 0),
+      globalHistoryBits(ceilLog2(params.globalPredictorSize)),
+      choicePredictorSize(params.choicePredictorSize),
+      choiceCtrBits(params.choiceCtrBits),
+      globalPredictorSize(params.globalPredictorSize),
+      globalCtrBits(params.globalCtrBits),
+      choiceCounters(choicePredictorSize, SatCounter8(choiceCtrBits)),
+      takenCounters(globalPredictorSize, SatCounter8(globalCtrBits)),
+      notTakenCounters(globalPredictorSize, SatCounter8(globalCtrBits))
 {
     if (!isPowerOf2(choicePredictorSize))
         fatal("Invalid choice predictor size.\n");
     if (!isPowerOf2(globalPredictorSize))
         fatal("Invalid global history predictor size.\n");
 
-    choiceCounters.resize(choicePredictorSize);
-    takenCounters.resize(globalPredictorSize);
-    notTakenCounters.resize(globalPredictorSize);
-
-    for (int i = 0; i < choicePredictorSize; ++i) {
-        choiceCounters[i].setBits(choiceCtrBits);
-    }
-    for (int i = 0; i < globalPredictorSize; ++i) {
-        takenCounters[i].setBits(globalCtrBits);
-        notTakenCounters[i].setBits(globalCtrBits);
-    }
-
     historyRegisterMask = mask(globalHistoryBits);
     choiceHistoryMask = choicePredictorSize - 1;
     globalHistoryMask = globalPredictorSize - 1;
 
-    choiceThreshold = (ULL(1) << (choiceCtrBits - 1)) - 1;
-    takenThreshold = (ULL(1) << (choiceCtrBits - 1)) - 1;
-    notTakenThreshold = (ULL(1) << (choiceCtrBits - 1)) - 1;
+    choiceThreshold = (1ULL << (choiceCtrBits - 1)) - 1;
+    takenThreshold = (1ULL << (globalCtrBits - 1)) - 1;
+    notTakenThreshold = (1ULL << (globalCtrBits - 1)) - 1;
 }
 
 /*
@@ -77,25 +85,38 @@ BiModeBP::BiModeBP(const BiModeBPParams *params)
  * chooses the taken array and the taken array predicts taken.
  */
 void
-BiModeBP::uncondBranch(Addr pc, void * &bpHistory)
+BiModeBP::uncondBranch(ThreadID tid, Addr pc, void * &bp_history)
 {
     BPHistory *history = new BPHistory;
-    history->globalHistoryReg = globalHistoryReg;
+    history->globalHistoryReg = globalHistoryReg[tid];
     history->takenUsed = true;
     history->takenPred = true;
     history->notTakenPred = true;
     history->finalPred = true;
-    bpHistory = static_cast<void*>(history);
-    updateGlobalHistReg(true);
+    bp_history = static_cast<void*>(history);
 }
 
 void
-BiModeBP::squash(void *bpHistory)
+BiModeBP::updateHistories(ThreadID tid, Addr pc, bool uncond, bool taken,
+                          Addr target, const StaticInstPtr &inst,
+                          void * &bp_history)
 {
-    BPHistory *history = static_cast<BPHistory*>(bpHistory);
-    globalHistoryReg = history->globalHistoryReg;
+    assert(uncond || bp_history);
+    if (uncond) {
+        uncondBranch(tid, pc, bp_history);
+    }
+    updateGlobalHistReg(tid, taken);
+}
+
+
+void
+BiModeBP::squash(ThreadID tid, void * &bp_history)
+{
+    BPHistory *history = static_cast<BPHistory*>(bp_history);
+    globalHistoryReg[tid] = history->globalHistoryReg;
 
     delete history;
+    bp_history = nullptr;
 }
 
 /*
@@ -108,27 +129,27 @@ BiModeBP::squash(void *bpHistory)
  * direction predictors for the final branch prediction.
  */
 bool
-BiModeBP::lookup(Addr branchAddr, void * &bpHistory)
+BiModeBP::lookup(ThreadID tid, Addr branchAddr, void * &bp_history)
 {
     unsigned choiceHistoryIdx = ((branchAddr >> instShiftAmt)
                                 & choiceHistoryMask);
     unsigned globalHistoryIdx = (((branchAddr >> instShiftAmt)
-                                ^ globalHistoryReg)
+                                ^ globalHistoryReg[tid])
                                 & globalHistoryMask);
 
     assert(choiceHistoryIdx < choicePredictorSize);
     assert(globalHistoryIdx < globalPredictorSize);
 
-    bool choicePrediction = choiceCounters[choiceHistoryIdx].read()
+    bool choicePrediction = choiceCounters[choiceHistoryIdx]
                             > choiceThreshold;
-    bool takenGHBPrediction = takenCounters[globalHistoryIdx].read()
+    bool takenGHBPrediction = takenCounters[globalHistoryIdx]
                               > takenThreshold;
-    bool notTakenGHBPrediction = notTakenCounters[globalHistoryIdx].read()
+    bool notTakenGHBPrediction = notTakenCounters[globalHistoryIdx]
                                  > notTakenThreshold;
     bool finalPrediction;
 
     BPHistory *history = new BPHistory;
-    history->globalHistoryReg = globalHistoryReg;
+    history->globalHistoryReg = globalHistoryReg[tid];
     history->takenUsed = choicePrediction;
     history->takenPred = takenGHBPrediction;
     history->notTakenPred = notTakenGHBPrediction;
@@ -140,17 +161,11 @@ BiModeBP::lookup(Addr branchAddr, void * &bpHistory)
     }
 
     history->finalPred = finalPrediction;
-    bpHistory = static_cast<void*>(history);
-    updateGlobalHistReg(finalPrediction);
+    bp_history = static_cast<void*>(history);
 
     return finalPrediction;
 }
 
-void
-BiModeBP::btbUpdate(Addr branchAddr, void * &bpHistory)
-{
-    globalHistoryReg &= (historyRegisterMask & ~ULL(1));
-}
 
 /* Only the selected direction predictor will be updated with the final
  * outcome; the status of the unselected one will not be altered. The choice
@@ -159,93 +174,83 @@ BiModeBP::btbUpdate(Addr branchAddr, void * &bpHistory)
  * the direction predictors makes a correct final prediction.
  */
 void
-BiModeBP::update(Addr branchAddr, bool taken, void *bpHistory, bool squashed)
+BiModeBP::update(ThreadID tid, Addr branchAddr, bool taken,void * &bp_history,
+                 bool squashed, const StaticInstPtr & inst, Addr target)
 {
-    if (bpHistory) {
-        BPHistory *history = static_cast<BPHistory*>(bpHistory);
+    assert(bp_history);
 
-        unsigned choiceHistoryIdx = ((branchAddr >> instShiftAmt)
-                                    & choiceHistoryMask);
-        unsigned globalHistoryIdx = (((branchAddr >> instShiftAmt)
-                                    ^ history->globalHistoryReg)
-                                    & globalHistoryMask);
+    BPHistory *history = static_cast<BPHistory*>(bp_history);
 
-        assert(choiceHistoryIdx < choicePredictorSize);
-        assert(globalHistoryIdx < globalPredictorSize);
+    // We do not update the counters speculatively on a squash.
+    // We just restore the global history register.
+    if (squashed) {
+        globalHistoryReg[tid] = (history->globalHistoryReg << 1) | taken;
+        return;
+    }
 
-        if (history->takenUsed) {
-            // if the taken array's prediction was used, update it
-            if (taken) {
-                takenCounters[globalHistoryIdx].increment();
-            } else {
-                takenCounters[globalHistoryIdx].decrement();
-            }
+    unsigned choiceHistoryIdx = ((branchAddr >> instShiftAmt)
+                                & choiceHistoryMask);
+    unsigned globalHistoryIdx = (((branchAddr >> instShiftAmt)
+                                ^ history->globalHistoryReg)
+                                & globalHistoryMask);
+
+    assert(choiceHistoryIdx < choicePredictorSize);
+    assert(globalHistoryIdx < globalPredictorSize);
+
+    if (history->takenUsed) {
+        // if the taken array's prediction was used, update it
+        if (taken) {
+            takenCounters[globalHistoryIdx]++;
         } else {
-            // if the not-taken array's prediction was used, update it
-            if (taken) {
-                notTakenCounters[globalHistoryIdx].increment();
-            } else {
-                notTakenCounters[globalHistoryIdx].decrement();
-            }
+            takenCounters[globalHistoryIdx]--;
         }
-
-        if (history->finalPred == taken) {
-            /* If the final prediction matches the actual branch's
-             * outcome and the choice predictor matches the final
-             * outcome, we update the choice predictor, otherwise it
-             * is not updated. While the designers of the bi-mode
-             * predictor don't explicity say why this is done, one
-             * can infer that it is to preserve the choice predictor's
-             * bias with respect to the branch being predicted; afterall,
-             * the whole point of the bi-mode predictor is to identify the
-             * atypical case when a branch deviates from its bias.
-             */
-            if (history->finalPred == history->takenUsed) {
-                if (taken) {
-                    choiceCounters[choiceHistoryIdx].increment();
-                } else {
-                    choiceCounters[choiceHistoryIdx].decrement();
-                }
-            }
+    } else {
+        // if the not-taken array's prediction was used, update it
+        if (taken) {
+            notTakenCounters[globalHistoryIdx]++;
         } else {
-            // always update the choice predictor on an incorrect prediction
-            if (taken) {
-                choiceCounters[choiceHistoryIdx].increment();
-            } else {
-                choiceCounters[choiceHistoryIdx].decrement();
-            }
-        }
-
-        if (squashed) {
-            if (taken) {
-                globalHistoryReg = (history->globalHistoryReg << 1) | 1;
-            } else {
-                globalHistoryReg = (history->globalHistoryReg << 1);
-            }
-            globalHistoryReg &= historyRegisterMask;
-        } else {
-            delete history;
+            notTakenCounters[globalHistoryIdx]--;
         }
     }
-}
 
-void
-BiModeBP::retireSquashed(void *bp_history)
-{
-    BPHistory *history = static_cast<BPHistory*>(bp_history);
+    if (history->finalPred == taken) {
+       /* If the final prediction matches the actual branch's
+        * outcome and the choice predictor matches the final
+        * outcome, we update the choice predictor, otherwise it
+        * is not updated. While the designers of the bi-mode
+        * predictor don't explicity say why this is done, one
+        * can infer that it is to preserve the choice predictor's
+        * bias with respect to the branch being predicted; afterall,
+        * the whole point of the bi-mode predictor is to identify the
+        * atypical case when a branch deviates from its bias.
+        */
+        if (history->finalPred == history->takenUsed) {
+            if (taken) {
+                choiceCounters[choiceHistoryIdx]++;
+            } else {
+                choiceCounters[choiceHistoryIdx]--;
+            }
+        }
+    } else {
+        // always update the choice predictor on an incorrect prediction
+        if (taken) {
+            choiceCounters[choiceHistoryIdx]++;
+        } else {
+            choiceCounters[choiceHistoryIdx]--;
+        }
+    }
+
     delete history;
+    bp_history = nullptr;
 }
 
 void
-BiModeBP::updateGlobalHistReg(bool taken)
+BiModeBP::updateGlobalHistReg(ThreadID tid, bool taken)
 {
-    globalHistoryReg = taken ? (globalHistoryReg << 1) | 1 :
-                               (globalHistoryReg << 1);
-    globalHistoryReg &= historyRegisterMask;
+    globalHistoryReg[tid] = taken ? (globalHistoryReg[tid] << 1) | 1 :
+                               (globalHistoryReg[tid] << 1);
+    globalHistoryReg[tid] &= historyRegisterMask;
 }
 
-BiModeBP*
-BiModeBPParams::create()
-{
-    return new BiModeBP(this);
-}
+} // namespace branch_prediction
+} // namespace gem5

@@ -1,4 +1,16 @@
 /*
+ * Copyright (c) 2016, 2023 Arm Limited
+ * All rights reserved
+ *
+ * The license below extends only to copyright in the software and shall
+ * not be construed as granting a license to any other intellectual
+ * property including but not limited to intellectual property relating
+ * to a hardware implementation of the functionality of the software
+ * licensed hereunder.  You may use the software subject to the license
+ * terms below provided that you ensure that this notice is replicated
+ * unmodified and in its entirety in all distributions of the software,
+ * modified or unmodified, in source code or in binary form.
+ *
  * Copyright (c) 2004-2006 The Regents of The University of Michigan
  * All rights reserved.
  *
@@ -24,53 +36,125 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nathan Binkert
- *          Ali Saidi
  */
 
 #ifndef __KERN_LINUX_EVENTS_HH__
 #define __KERN_LINUX_EVENTS_HH__
 
+#include <functional>
+#include <string>
+
+#include "base/compiler.hh"
+#include "base/trace.hh"
+#include "debug/DebugPrintf.hh"
+#include "enums/KernelPanicOopsBehaviour.hh"
+#include "kern/linux/printk.hh"
 #include "kern/system_events.hh"
+#include "mem/se_translating_port_proxy.hh"
+#include "sim/guest_abi.hh"
 
-namespace Linux {
+namespace gem5
+{
 
-class DebugPrintkEvent : public SkipFuncEvent
+class ThreadContext;
+
+namespace linux
+{
+
+template <typename ABI, typename Base>
+class DebugPrintk : public Base
 {
   public:
-    DebugPrintkEvent(PCEventQueue *q, const std::string &desc, Addr addr)
-        : SkipFuncEvent(q, desc, addr) {}
-    virtual void process(ThreadContext *xc);
+    using Base::Base;
+    void
+    process(ThreadContext *tc) override
+    {
+        if (debug::DebugPrintf) {
+            std::string str;
+            std::function<int(ThreadContext *, Addr, PrintkVarArgs)> func =
+                [&str](ThreadContext *tc, Addr format_ptr,
+                    PrintkVarArgs args) -> int {
+                return printk(str, tc, format_ptr, args);
+            };
+            invokeSimcall<ABI>(tc, func);
+            DPRINTFN("%s", str);
+        }
+        Base::process(tc);
+    }
 };
 
-/** A class to skip udelay() and related calls in the kernel.
- * This class has two additional parameters that take the argument to udelay and
- * manipulated it to come up with ns and eventually ticks to quiesce for.
+/**
+ * Specify what to do on a Linux Kernel Panic or Oops.
+ *
+ * @warn This event may use linux::dumpDmesg() and comes with the same
+ * limitations. Most importantly, the kernel's address mappings must
+ * be available to the translating proxy.
+ */
+class PanicOrOopsEvent : public PCEvent
+{
+  protected:
+    std::string fname;
+    KernelPanicOopsBehaviour behaviour;
+
+  public:
+    PanicOrOopsEvent(PCEventScope *s, const std::string &desc, Addr addr,
+                     const std::string &_fname,
+                     const KernelPanicOopsBehaviour _behaviour)
+        : PCEvent(s, desc, addr)
+        , fname(_fname)
+        , behaviour(_behaviour)
+    {}
+    void process(ThreadContext *tc) override;
+};
+
+void onUDelay(ThreadContext *tc, uint64_t div, uint64_t mul, uint64_t time);
+
+/**
+ * A class to skip udelay() and related calls in the kernel.
+ * This class has two additional parameters that take the argument to udelay
+ * and manipulated it to come up with ns and eventually ticks to quiesce for.
  * See descriptions of argDivToNs and argMultToNs below.
  */
-class UDelayEvent : public SkipFuncEvent
+template <typename ABI, typename Base>
+class SkipUDelay : public Base
 {
   private:
-    /** value to divide arg by to create ns. This is present beacues the linux
+    /**
+     * Value to divide arg by to create ns. This is present beacues the linux
      * kernel code sometime precomputes the first multiply that is done in
      * udelay() if the parameter is a constant. We need to undo it so here is
-     * how. */
+     * how.
+     */
     uint64_t argDivToNs;
 
-    /** value to multiple arg by to create ns. Nominally, this is 1000 to
+    /**
+     * Value to multiple arg by to create ns. Nominally, this is 1000 to
      * convert us to ns, but since linux can do some preprocessing of constant
-     * values something else might be required. */
+     * values something else might be required.
+     */
     uint64_t argMultToNs;
 
   public:
-    UDelayEvent(PCEventQueue *q, const std::string &desc, Addr addr,
-            uint64_t mult, uint64_t div)
-        : SkipFuncEvent(q, desc, addr), argDivToNs(div), argMultToNs(mult) {}
-    virtual void process(ThreadContext *xc);
+    SkipUDelay(PCEventScope *s, const std::string &desc, Addr addr,
+            uint64_t mult, uint64_t div) :
+        Base(s, desc, addr), argDivToNs(div), argMultToNs(mult)
+    {}
+
+    void
+    process(ThreadContext *tc) override
+    {
+        // Use Addr since it's handled specially and will act as a natively
+        // sized data type.
+        std::function<void(ThreadContext *, Addr)> call_udelay =
+            [this](ThreadContext *tc, Addr time) {
+            onUDelay(tc, argDivToNs, argMultToNs, time);
+        };
+        invokeSimcall<ABI>(tc, call_udelay);
+        Base::process(tc);
+    }
 };
 
+} // namespace linux
+} // namespace gem5
 
-}
-
-#endif
+#endif // __KERN_LINUX_EVENTS_HH__

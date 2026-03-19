@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012-2013 ARM Limited
+ * Copyright (c) 2010, 2012-2013, 2016-2020, 2022-2025 Arm Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -37,34 +37,29 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Korey Sewell
- *          Stephen Hines
  */
 
 #ifndef __ARCH_ARM_UTILITY_HH__
 #define __ARCH_ARM_UTILITY_HH__
 
-#include "arch/arm/isa_traits.hh"
-#include "arch/arm/miscregs.hh"
+#include "arch/arm/regs/cc.hh"
+#include "arch/arm/regs/int.hh"
+#include "arch/arm/regs/misc_types.hh"
 #include "arch/arm/types.hh"
-#include "base/misc.hh"
+#include "base/logging.hh"
 #include "base/trace.hh"
 #include "base/types.hh"
 #include "cpu/static_inst.hh"
 #include "cpu/thread_context.hh"
+#include "enums/ArmExtension.hh"
+
+namespace gem5
+{
 
 class ArmSystem;
 
-namespace ArmISA {
-
-inline PCState
-buildRetPC(const PCState &curPC, const PCState &callPC)
+namespace ArmISA
 {
-    PCState retPC = callPC;
-    retPC.uEnd();
-    return retPC;
-}
 
 inline bool
 testPredicate(uint32_t nz, uint32_t c, uint32_t v, ConditionCode code)
@@ -72,50 +67,31 @@ testPredicate(uint32_t nz, uint32_t c, uint32_t v, ConditionCode code)
     bool n = (nz & 0x2);
     bool z = (nz & 0x1);
 
-    switch (code)
-    {
-        case COND_EQ: return  z;
-        case COND_NE: return !z;
-        case COND_CS: return  c;
-        case COND_CC: return !c;
-        case COND_MI: return  n;
-        case COND_PL: return !n;
-        case COND_VS: return  v;
-        case COND_VC: return !v;
-        case COND_HI: return  (c && !z);
-        case COND_LS: return !(c && !z);
-        case COND_GE: return !(n ^ v);
-        case COND_LT: return  (n ^ v);
-        case COND_GT: return !(n ^ v || z);
-        case COND_LE: return  (n ^ v || z);
-        case COND_AL: return true;
-        case COND_UC: return true;
-        default:
-            panic("Unhandled predicate condition: %d\n", code);
+    switch (code) {
+      case COND_EQ: return  z;
+      case COND_NE: return !z;
+      case COND_CS: return  c;
+      case COND_CC: return !c;
+      case COND_MI: return  n;
+      case COND_PL: return !n;
+      case COND_VS: return  v;
+      case COND_VC: return !v;
+      case COND_HI: return  (c && !z);
+      case COND_LS: return !(c && !z);
+      case COND_GE: return !(n ^ v);
+      case COND_LT: return  (n ^ v);
+      case COND_GT: return !(n ^ v || z);
+      case COND_LE: return  (n ^ v || z);
+      case COND_AL: return true;
+      case COND_UC: return true;
+      default:
+        panic("Unhandled predicate condition: %d\n", code);
     }
 }
 
-/**
- * Function to insure ISA semantics about 0 registers.
- * @param tc The thread context.
- */
-template <class TC>
-void zeroRegisters(TC *tc);
-
-inline void startupCPU(ThreadContext *tc, int cpuId)
-{
-    tc->activate();
-}
-
-void copyRegs(ThreadContext *src, ThreadContext *dest);
-
-static inline void
-copyMiscRegs(ThreadContext *src, ThreadContext *dest)
-{
-    panic("Copy Misc. Regs Not Implemented Yet\n");
-}
-
-void initCPU(ThreadContext *tc, int cpuId);
+/** Send an event (SEV) to a specific PE if there isn't
+ * already a pending event */
+void sendEvent(ThreadContext *tc);
 
 static inline bool
 inUserMode(CPSR cpsr)
@@ -124,42 +100,104 @@ inUserMode(CPSR cpsr)
 }
 
 static inline bool
-inUserMode(ThreadContext *tc)
-{
-    return inUserMode(tc->readMiscRegNoEffect(MISCREG_CPSR));
-}
-
-static inline bool
 inPrivilegedMode(CPSR cpsr)
 {
     return !inUserMode(cpsr);
 }
 
-static inline bool
-inPrivilegedMode(ThreadContext *tc)
-{
-    return !inUserMode(tc);
-}
+bool isSecure(ThreadContext *tc);
 
 bool inAArch64(ThreadContext *tc);
 
-static inline OperatingMode
-currOpMode(ThreadContext *tc)
+/**
+ * Returns the current Exception Level (EL) of the
+ * provided ThreadContext
+ */
+ExceptionLevel currEL(const ThreadContext *tc);
+
+inline ExceptionLevel
+currEL(CPSR cpsr)
 {
-    CPSR cpsr = tc->readMiscReg(MISCREG_CPSR);
-    return (OperatingMode) (uint8_t) cpsr.mode;
+    return opModeToEL((OperatingMode) (uint8_t)cpsr.mode);
 }
 
-static inline ExceptionLevel
-currEL(ThreadContext *tc)
-{
-    CPSR cpsr = tc->readMiscReg(MISCREG_CPSR);
-    return (ExceptionLevel) (uint8_t) cpsr.el;
-}
+/**
+ * Returns true if the provided ThreadContext supports the ArmExtension
+ * passed as a second argument.
+ */
+bool HaveExt(ThreadContext *tc, ArmExtension ext);
+
+bool IsSecureEL2Enabled(ThreadContext *tc);
+bool EL2Enabled(ThreadContext *tc);
+
+/**
+ * This function checks whether selected EL provided as an argument
+ * is using the AArch32 ISA. This information might be unavailable
+ * at the current EL status: it hence returns a pair of boolean values:
+ * a first boolean, true if information is available (known),
+ * and a second one, true if EL is using AArch32, false for AArch64.
+ *
+ * @param tc The thread context.
+ * @param el The target exception level.
+ * @retval known is FALSE for EL0 if the current Exception level
+ *               is not EL0 and EL1 is using AArch64, since it cannot
+ *               determine the state of EL0; TRUE otherwise.
+ * @retval aarch32 is TRUE if the specified Exception level is using AArch32;
+ *                 FALSE otherwise.
+ */
+std::pair<bool, bool> ELUsingAArch32K(ThreadContext *tc, ExceptionLevel el);
+
+std::pair<bool, bool> ELStateUsingAArch32K(ThreadContext *tc,
+        ExceptionLevel el, bool secure);
+
+bool ELStateUsingAArch32(ThreadContext *tc, ExceptionLevel el, bool secure);
+
+bool ELIs32(ThreadContext *tc, ExceptionLevel el);
 
 bool ELIs64(ThreadContext *tc, ExceptionLevel el);
 
-bool isBigEndian64(ThreadContext *tc);
+/**
+ * Returns true if the current exception level `el` is executing a Host OS or
+ * an application of a Host OS (Armv8.1 Virtualization Host Extensions).
+ */
+bool ELIsInHost(ThreadContext *tc, ExceptionLevel el);
+
+ExceptionLevel debugTargetFrom(ThreadContext *tc, bool secure);
+
+bool isBigEndian64(const ThreadContext *tc);
+
+
+/**
+ * badMode is checking if the execution mode provided as an argument is
+ * valid and implemented for AArch32
+ *
+ * @param tc ThreadContext
+ * @param mode OperatingMode to check
+ * @return false if mode is valid and implemented, true otherwise
+ */
+bool badMode32(ThreadContext *tc, OperatingMode mode);
+
+/**
+ * badMode is checking if the execution mode provided as an argument is
+ * valid and implemented.
+ *
+ * @param tc ThreadContext
+ * @param mode OperatingMode to check
+ * @return false if mode is valid and implemented, true otherwise
+ */
+bool badMode(ThreadContext *tc, OperatingMode mode);
+
+static inline uint8_t
+itState(CPSR psr)
+{
+    ITSTATE it = 0;
+    it.top6 = psr.it2;
+    it.bottom2 = psr.it1;
+
+    return (uint8_t)it;
+}
+
+ExceptionLevel s1TranslationRegime(ThreadContext *tc, ExceptionLevel el);
 
 /**
  * Removes the tag from tagged addresses if that mode is enabled.
@@ -169,151 +207,72 @@ bool isBigEndian64(ThreadContext *tc);
  * @return The purified address.
  */
 Addr purifyTaggedAddr(Addr addr, ThreadContext *tc, ExceptionLevel el,
-                      TTBCR tcr);
-Addr purifyTaggedAddr(Addr addr, ThreadContext *tc, ExceptionLevel el);
+                      TCR tcr, bool isInstr);
+Addr purifyTaggedAddr(Addr addr, ThreadContext *tc, ExceptionLevel el,
+                      bool isInstr);
+Addr maskTaggedAddr(Addr addr, ThreadContext *tc, ExceptionLevel el,
+                    int topbit);
+int computeAddrTop(ThreadContext *tc, bool selbit, bool isInstr,
+                   TCR tcr, ExceptionLevel el);
 
-static inline bool
-inSecureState(SCR scr, CPSR cpsr)
-{
-    switch ((OperatingMode) (uint8_t) cpsr.mode) {
-      case MODE_MON:
-      case MODE_EL3T:
-      case MODE_EL3H:
-        return true;
-      case MODE_HYP:
-      case MODE_EL2T:
-      case MODE_EL2H:
-        return false;
-      default:
-        return !scr.ns;
-    }
-}
+bool isSecureBelowEL3(ThreadContext *tc);
+
+SecurityState securityStateAtEL(ThreadContext *tc, ExceptionLevel el);
 
 bool longDescFormatInUse(ThreadContext *tc);
 
-bool inSecureState(ThreadContext *tc);
+/** This helper function is either returing the value of
+ * MPIDR_EL1 (by calling getMPIDR), or it is issuing a read
+ * to VMPIDR_EL2 (as it happens in virtualized systems) */
+RegVal readMPIDR(ArmSystem *arm_sys, ThreadContext *tc);
 
-uint32_t getMPIDR(ArmSystem *arm_sys, ThreadContext *tc);
+/** This helper function is returning the value of MPIDR_EL1 */
+RegVal getMPIDR(ArmSystem *arm_sys, ThreadContext *tc);
+
+/** Retrieves MPIDR_EL1.{Aff2,Aff1,Aff0} affinity numbers */
+Affinity getAffinity(ArmSystem *arm_sys, ThreadContext *tc);
 
 static inline uint32_t
-mcrMrcIssBuild(bool isRead, uint32_t crm, IntRegIndex rt, uint32_t crn,
+mcrMrcIssBuild(bool isRead, uint32_t crm, RegIndex rt, uint32_t crn,
                uint32_t opc1, uint32_t opc2)
 {
-    return (isRead <<  0) |
-           (crm    <<  1) |
-           (rt     <<  5) |
-           (crn    << 10) |
-           (opc1   << 14) |
-           (opc2   << 17);
+    return (isRead << 0) |
+           (crm << 1) |
+           (rt << 5) |
+           (crn << 10) |
+           (opc1 << 14) |
+           (opc2 << 17);
 }
 
 static inline void
-mcrMrcIssExtract(uint32_t iss, bool &isRead, uint32_t &crm, IntRegIndex &rt,
+mcrMrcIssExtract(uint32_t iss, bool &isRead, uint32_t &crm, RegIndex &rt,
                  uint32_t &crn, uint32_t &opc1, uint32_t &opc2)
 {
-    isRead = (iss >>  0) & 0x1;
-    crm    = (iss >>  1) & 0xF;
-    rt     = (IntRegIndex) ((iss >>  5) & 0xF);
-    crn    = (iss >> 10) & 0xF;
-    opc1   = (iss >> 14) & 0x7;
-    opc2   = (iss >> 17) & 0x7;
+    isRead = (iss >> 0) & 0x1;
+    crm = (iss >> 1) & 0xF;
+    rt = (RegIndex)((iss >> 5) & 0xF);
+    crn = (iss >> 10) & 0xF;
+    opc1 = (iss >> 14) & 0x7;
+    opc2 = (iss >> 17) & 0x7;
 }
 
 static inline uint32_t
-mcrrMrrcIssBuild(bool isRead, uint32_t crm, IntRegIndex rt, IntRegIndex rt2,
+mcrrMrrcIssBuild(bool isRead, uint32_t crm, RegIndex rt, RegIndex rt2,
                  uint32_t opc1)
 {
-    return (isRead <<  0) |
-           (crm    <<  1) |
-           (rt     <<  5) |
-           (rt2    << 10) |
-           (opc1   << 16);
+    return (isRead << 0) |
+           (crm << 1) |
+           (rt << 5) |
+           (rt2 << 10) |
+           (opc1 << 16);
 }
 
-static inline uint32_t
-msrMrs64IssBuild(bool isRead, uint32_t op0, uint32_t op1, uint32_t crn,
-                 uint32_t crm, uint32_t op2, IntRegIndex rt)
-{
-    return isRead |
-        (crm << 1) |
-        (rt << 5) |
-        (crn << 10) |
-        (op1 << 14) |
-        (op2 << 17) |
-        (op0 << 20);
-}
+bool SPAlignmentCheckEnabled(ThreadContext *tc);
 
-bool
-mcrMrc15TrapToHyp(const MiscRegIndex miscReg, HCR hcr, CPSR cpsr, SCR scr,
-                  HDCR hdcr, HSTR hstr, HCPTR hcptr, uint32_t iss);
-bool
-mcrMrc14TrapToHyp(const MiscRegIndex miscReg, HCR hcr, CPSR cpsr, SCR scr,
-                  HDCR hdcr, HSTR hstr, HCPTR hcptr, uint32_t iss);
-bool
-mcrrMrrc15TrapToHyp(const MiscRegIndex miscReg, CPSR cpsr, SCR scr, HSTR hstr,
-                    HCR hcr, uint32_t iss);
-
-bool msrMrs64TrapToSup(const MiscRegIndex miscReg, ExceptionLevel el,
-                       CPACR cpacr);
-bool msrMrs64TrapToHyp(const MiscRegIndex miscReg, bool isRead, CPTR cptr,
-                       HCR hcr, bool * isVfpNeon);
-bool msrMrs64TrapToMon(const MiscRegIndex miscReg, CPTR cptr,
-                       ExceptionLevel el, bool * isVfpNeon);
-
-bool
-vfpNeonEnabled(uint32_t &seq, HCPTR hcptr, NSACR nsacr, CPACR cpacr, CPSR cpsr,
-               uint32_t &iss, bool &trap, ThreadContext *tc,
-               FPEXC fpexc = (1<<30), bool isSIMD = false);
-
-static inline bool
-vfpNeon64Enabled(CPACR cpacr, ExceptionLevel el)
-{
-    if ((el == EL0 && cpacr.fpen != 0x3) ||
-        (el == EL1 && !(cpacr.fpen & 0x1)))
-        return false;
-    return true;
-}
-
-bool SPAlignmentCheckEnabled(ThreadContext* tc);
-
-uint64_t getArgument(ThreadContext *tc, int &number, uint16_t size, bool fp);
-
-void skipFunction(ThreadContext *tc);
-
-inline void
-advancePC(PCState &pc, const StaticInstPtr &inst)
-{
-    inst->advancePC(pc);
-}
+unsigned addrAlignmentFlags(int memsize, unsigned memAccessFlags);
 
 Addr truncPage(Addr addr);
 Addr roundPage(Addr addr);
-
-inline uint64_t
-getExecutingAsid(ThreadContext *tc)
-{
-    return tc->readMiscReg(MISCREG_CONTEXTIDR);
-}
-
-// Decodes the register index to access based on the fields used in a MSR
-// or MRS instruction
-bool
-decodeMrsMsrBankedReg(uint8_t sysM, bool r, bool &isIntReg, int &regIdx,
-                      CPSR cpsr, SCR scr, NSACR nsacr,
-                      bool checkSecurity = true);
-
-// This wrapper function is used to turn the register index into a source
-// parameter for the instruction. See Operands.isa
-static inline int
-decodeMrsMsrBankedIntRegIndex(uint8_t sysM, bool r)
-{
-    int  regIdx;
-    bool isIntReg;
-    bool validReg;
-
-    validReg = decodeMrsMsrBankedReg(sysM, r, isIntReg, regIdx, 0, 0, 0, false);
-    return (validReg && isIntReg) ? regIdx : INTREG_DUMMY;
-}
 
 /**
  * Returns the n. of PA bits corresponding to the specified encoding.
@@ -325,6 +284,30 @@ int decodePhysAddrRange64(uint8_t pa_enc);
  */
 uint8_t encodePhysAddrRange64(int pa_size);
 
+inline ByteOrder
+byteOrder(const ThreadContext *tc)
+{
+    return isBigEndian64(tc) ? ByteOrder::big : ByteOrder::little;
+};
+
+bool isUnpriviledgeAccess(ThreadContext *tc);
+
+void syncVecRegsToElems(ThreadContext *tc);
+void syncVecElemsToRegs(ThreadContext *tc);
+
+bool fgtEnabled(ThreadContext *tc);
+bool isHcrxEL2Enabled(ThreadContext *tc);
+
+TranslationRegime translationRegime(ThreadContext *tc, ExceptionLevel el);
+ExceptionLevel translationEl(TranslationRegime regime);
+
+static inline bool
+useVMID(TranslationRegime regime)
+{
+    return regime == TranslationRegime::EL10;
 }
+
+} // namespace ArmISA
+} // namespace gem5
 
 #endif

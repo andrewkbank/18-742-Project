@@ -25,11 +25,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nathan Binkert
- *          Steve Reinhardt
- *          Jaidev Patwardhan
- *          Korey Sewell
  */
 
 #ifndef __ARCH_MIPS_TLB_HH__
@@ -38,14 +33,15 @@
 #include <map>
 
 #include "arch/generic/tlb.hh"
-#include "arch/mips/isa_traits.hh"
 #include "arch/mips/pagetable.hh"
 #include "arch/mips/utility.hh"
-#include "arch/mips/vtophys.hh"
 #include "base/statistics.hh"
 #include "mem/request.hh"
 #include "params/MipsTLB.hh"
 #include "sim/sim_object.hh"
+
+namespace gem5
+{
 
 class ThreadContext;
 
@@ -67,27 +63,15 @@ class TLB : public BaseTLB
     void nextnlu() { if (++nlu >= size) nlu = 0; }
     MipsISA::PTE *lookup(Addr vpn, uint8_t asn) const;
 
-    mutable Stats::Scalar read_hits;
-    mutable Stats::Scalar read_misses;
-    mutable Stats::Scalar read_acv;
-    mutable Stats::Scalar read_accesses;
-    mutable Stats::Scalar write_hits;
-    mutable Stats::Scalar write_misses;
-    mutable Stats::Scalar write_acv;
-    mutable Stats::Scalar write_accesses;
-    Stats::Formula hits;
-    Stats::Formula misses;
-    Stats::Formula accesses;
-
   public:
     typedef MipsTLBParams Params;
-    TLB(const Params *p);
+    TLB(const Params &p);
 
     int probeEntry(Addr vpn,uint8_t) const;
     MipsISA::PTE *getEntry(unsigned) const;
     virtual ~TLB();
 
-    void takeOverFrom(BaseTLB *otlb) {}
+    void takeOverFrom(BaseTLB *otlb) override {}
 
     int smallPages;
     int getsize() const { return size; }
@@ -95,8 +79,8 @@ class TLB : public BaseTLB
     MipsISA::PTE &index(bool advance = true);
     void insert(Addr vaddr, MipsISA::PTE &pte);
     void insertAt(MipsISA::PTE &pte, unsigned Index, int _smallPages);
-    void flushAll();
-    void demapPage(Addr vaddr, uint64_t asn)
+    void flushAll() override;
+    void demapPage(Addr vaddr, uint64_t asn) override
     {
         panic("demapPage unimplemented.\n");
     }
@@ -104,31 +88,25 @@ class TLB : public BaseTLB
     // static helper functions... really
     static bool validVirtualAddress(Addr vaddr);
 
-    static Fault checkCacheability(RequestPtr &req);
+    static Fault checkCacheability(const RequestPtr &req);
 
     // Checkpointing
-    void serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE;
-    void unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE;
+    void serialize(CheckpointOut &cp) const override;
+    void unserialize(CheckpointIn &cp) override;
 
-    void regStats();
-
-    Fault translateAtomic(RequestPtr req, ThreadContext *tc, Mode mode);
-    void translateTiming(RequestPtr req, ThreadContext *tc,
-            Translation *translation, Mode mode);
-
-    /** Function stub for CheckerCPU compilation issues. MIPS does not
-     *  support the Checker model at the moment.
-     */
-    Fault translateFunctional(RequestPtr req, ThreadContext *tc, Mode mode);
-    Fault finalizePhysical(RequestPtr req, ThreadContext *tc, Mode mode) const;
-
-  private:
-    Fault translateInst(RequestPtr req, ThreadContext *tc);
-    Fault translateData(RequestPtr req, ThreadContext *tc, bool write);
+    Fault translateAtomic(
+        const RequestPtr &req, ThreadContext *tc, BaseMMU::Mode mode) override;
+    void translateTiming(
+        const RequestPtr &req, ThreadContext *tc,
+        BaseMMU::Translation *translation, BaseMMU::Mode mode) override;
+    Fault translateFunctional(
+        const RequestPtr &req, ThreadContext *tc, BaseMMU::Mode mode) override;
+    Fault finalizePhysical(
+        const RequestPtr &req,
+        ThreadContext *tc, BaseMMU::Mode mode) const override;
 };
 
-}
-
-
+} // namespace MipsISA
+} // namespace gem5
 
 #endif // __MIPS_MEMORY_HH__

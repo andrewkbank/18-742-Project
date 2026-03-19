@@ -33,47 +33,50 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: William Wang
- *          Ali Saidi
  */
 
-#include "base/vnc/vncinput.hh"
+#include "dev/arm/pl111.hh"
+
 #include "base/output.hh"
 #include "base/trace.hh"
+#include "base/vnc/vncinput.hh"
 #include "debug/PL111.hh"
 #include "debug/Uart.hh"
 #include "dev/arm/amba_device.hh"
 #include "dev/arm/base_gic.hh"
-#include "dev/arm/pl111.hh"
 #include "mem/packet.hh"
 #include "mem/packet_access.hh"
+#include "params/Pl111.hh"
 #include "sim/system.hh"
 
 // clang complains about std::set being overloaded with Packet::set if
 // we open up the entire namespace std
 using std::vector;
 
+namespace gem5
+{
+
 // initialize clcd registers
-Pl111::Pl111(const Params *p)
-    : AmbaDmaDevice(p), lcdTiming0(0), lcdTiming1(0), lcdTiming2(0),
+Pl111::Pl111(const Params &p)
+    : AmbaDmaDevice(p, 0x10000), lcdTiming0(0), lcdTiming1(0), lcdTiming2(0),
       lcdTiming3(0), lcdUpbase(0), lcdLpbase(0), lcdControl(0), lcdImsc(0),
       lcdRis(0), lcdMis(0),
       clcdCrsrCtrl(0), clcdCrsrConfig(0), clcdCrsrPalette0(0),
       clcdCrsrPalette1(0), clcdCrsrXY(0), clcdCrsrClip(0), clcdCrsrImsc(0),
       clcdCrsrIcr(0), clcdCrsrRis(0), clcdCrsrMis(0),
-      pixelClock(p->pixel_clock),
+      pixelClock(p.pixel_clock),
       converter(PixelConverter::rgba8888_le), fb(LcdMaxWidth, LcdMaxHeight),
-      vnc(p->vnc), bmp(&fb), pic(NULL),
+      vnc(p.vnc), bmp(&fb), pic(NULL),
       width(LcdMaxWidth), height(LcdMaxHeight),
       bytesPerPixel(4), startTime(0), startAddr(0), maxAddr(0), curAddr(0),
-      waterMark(0), dmaPendingNum(0), readEvent(this), fillFifoEvent(this),
+      waterMark(0), dmaPendingNum(0),
+      readEvent([this]{ readFramebuffer(); }, name()),
+      fillFifoEvent([this]{ fillFifo(); }, name()),
       dmaDoneEventAll(maxOutstandingDma, this),
       dmaDoneEventFree(maxOutstandingDma),
-      intEvent(this), enableCapture(p->enable_capture)
+      intEvent([this]{ generateInterrupt(); }, name()),
+      enableCapture(p.enable_capture)
 {
-    pioSize = 0xFFFF;
-
     dmaBuffer = new uint8_t[buffer_size];
 
     memset(lcdPalette, 0, sizeof(lcdPalette));
@@ -181,7 +184,7 @@ Pl111::read(PacketPtr pkt)
       default:
         if (readId(pkt, AMBA_ID, pioAddr)) {
             // Hack for variable size accesses
-            data = pkt->get<uint32_t>();
+            data = pkt->getUintX(ByteOrder::little);
             break;
         } else if (daddr >= CrsrImage && daddr <= 0xBFC) {
             // CURSOR IMAGE
@@ -202,21 +205,7 @@ Pl111::read(PacketPtr pkt)
         }
     }
 
-    switch(pkt->getSize()) {
-      case 1:
-        pkt->set<uint8_t>(data);
-        break;
-      case 2:
-        pkt->set<uint16_t>(data);
-        break;
-      case 4:
-        pkt->set<uint32_t>(data);
-        break;
-      default:
-        panic("CLCD controller read size too big?\n");
-        break;
-    }
-
+    pkt->setUintX(data, ByteOrder::little);
     pkt->makeAtomicResponse();
     return pioDelay;
 }
@@ -228,22 +217,7 @@ Pl111::write(PacketPtr pkt)
     // use a temporary data since the LCD registers are read/written with
     // different size operations
     //
-    uint32_t data = 0;
-
-    switch(pkt->getSize()) {
-      case 1:
-        data = pkt->get<uint8_t>();
-        break;
-      case 2:
-        data = pkt->get<uint16_t>();
-        break;
-      case 4:
-        data = pkt->get<uint32_t>();
-        break;
-      default:
-        panic("PL111 CLCD controller write size too big?\n");
-        break;
-    }
+    const uint32_t data = pkt->getUintX(ByteOrder::little);
 
     assert(pkt->getAddr() >= pioAddr &&
            pkt->getAddr() < pioAddr + pioSize);
@@ -251,7 +225,7 @@ Pl111::write(PacketPtr pkt)
     Addr daddr = pkt->getAddr() - pioAddr;
 
     DPRINTF(PL111, " write register %#x value %#x size=%d\n", daddr,
-            pkt->get<uint8_t>(), pkt->getSize());
+            pkt->getLE<uint8_t>(), pkt->getSize());
 
     switch (daddr) {
       case LcdTiming0:
@@ -302,7 +276,7 @@ Pl111::write(PacketPtr pkt)
         lcdMis = lcdImsc & lcdRis;
 
         if (!lcdMis)
-            gic->clearInt(intNum);
+            interrupt->clear();
 
          break;
       case LcdRis:
@@ -316,7 +290,7 @@ Pl111::write(PacketPtr pkt)
         lcdMis = lcdImsc & lcdRis;
 
         if (!lcdMis)
-            gic->clearInt(intNum);
+            interrupt->clear();
 
         break;
       case LcdUpCurr:
@@ -411,13 +385,13 @@ Pl111::pixelConverter() const
             bytesPerPixel,
             offsets[2], offsets[1], offsets[0],
             rw, gw, bw,
-            LittleEndianByteOrder);
+            ByteOrder::little);
     } else {
         return PixelConverter(
             bytesPerPixel,
             offsets[0], offsets[1], offsets[2],
             rw, gw, bw,
-            LittleEndianByteOrder);
+            ByteOrder::little);
     }
 }
 
@@ -523,11 +497,12 @@ Pl111::dmaDone()
             DPRINTF(PL111, "-- write out frame buffer into bmp\n");
 
             if (!pic)
-                pic = simout.create(csprintf("%s.framebuffer.bmp", sys->name()), true);
+                pic = simout.create(csprintf("%s.framebuffer.bmp", sys->name()),
+                                    true);
 
             assert(pic);
-            pic->seekp(0);
-            bmp.write(*pic);
+            pic->stream()->seekp(0);
+            bmp.write(*pic->stream());
         }
 
         // schedule the next read based on when the last frame started
@@ -757,7 +732,7 @@ Pl111::generateInterrupt()
     lcdMis = lcdImsc & lcdRis;
 
     if (lcdMis.underflow || lcdMis.baseaddr || lcdMis.vcomp || lcdMis.ahbmaster) {
-        gic->sendInt(intNum);
+        interrupt->raise();
         DPRINTF(PL111, " -- Generated\n");
     }
 }
@@ -770,10 +745,4 @@ Pl111::getAddrRanges() const
     return ranges;
 }
 
-Pl111 *
-Pl111Params::create()
-{
-    return new Pl111(this);
-}
-
-
+} // namespace gem5

@@ -34,8 +34,6 @@
 // THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// Authors: Gabe Black
 
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -44,25 +42,30 @@
 
 // Execute method for macroops.
 def template MacroExecPanic {{
-        Fault execute(%(CPU_exec_context)s *, Trace::InstRecord *) const
-        {
-            panic("Tried to execute macroop directly!");
-            return NoFault;
-        }
+    Fault
+    execute(ExecContext *, trace::InstRecord *) const override
+    {
+        panic("Tried to execute macroop directly!");
+        return NoFault;
+    }
 }};
 
 output header {{
+    // Base class for combinationally generated macroops
+    class Macroop : public X86ISA::MacroopBase
+    {
+      public:
+        Macroop(const char *mnem, ExtMachInst _machInst,
+                uint32_t _numMicroops, X86ISA::EmulEnv _env)
+                    : MacroopBase(mnem, _machInst, _numMicroops, _env)
+        {}
 
-        // Base class for combinationally generated macroops
-        class Macroop : public X86ISA::MacroopBase
+        Fault
+        execute(ExecContext *, trace::InstRecord *) const override
         {
-          public:
-            Macroop(const char *mnem, ExtMachInst _machInst,
-                    uint32_t _numMicroops, X86ISA::EmulEnv _env)
-                        : MacroopBase(mnem, _machInst, _numMicroops, _env)
-            {}
-            %(MacroExecPanic)s
-        };
+            panic("Tried to execute macroop directly!");
+        }
+    };
 }};
 
 //////////////////////////////////////////////////////////////////////////////
@@ -73,29 +76,29 @@ output header {{
 
 // Basic instruction class declaration template.
 def template MacroDeclare {{
-        namespace X86Macroop
+    namespace x86_macroop
+    {
+        /**
+         * Static instruction class for "%(mnemonic)s".
+         */
+        class %(class_name)s : public %(base_class)s
         {
-            /**
-             * Static instruction class for "%(mnemonic)s".
-             */
-            class %(class_name)s : public %(base_class)s
-            {
-              private:
-                %(declareLabels)s
-              public:
-                // Constructor.
-                %(class_name)s(ExtMachInst machInst, X86ISA::EmulEnv _env);
+          private:
+            %(declareLabels)s
+          public:
+            // Constructor.
+            %(class_name)s(ExtMachInst machInst, X86ISA::EmulEnv _env);
 
-                std::string
-                generateDisassembly(Addr pc, const SymbolTable *symtab) const;
-            };
-        }
+            std::string generateDisassembly(
+                    Addr pc, const loader::SymbolTable *symtab) const override;
+        };
+    }
 }};
 
 def template MacroDisassembly {{
     std::string
-    X86Macroop::%(class_name)s::generateDisassembly(Addr pc,
-            const SymbolTable *symtab) const
+    x86_macroop::%(class_name)s::generateDisassembly(
+            Addr pc, const loader::SymbolTable *symtab) const
     {
         std::stringstream out;
         out << mnemonic << "\t";
@@ -110,7 +113,7 @@ def template MacroDisassembly {{
 
 // Basic instruction class constructor template.
 def template MacroConstructor {{
-        X86Macroop::%(class_name)s::%(class_name)s(
+        x86_macroop::%(class_name)s::%(class_name)s(
                 ExtMachInst machInst, EmulEnv _env)
             : %(base_class)s("%(mnemonic)s", machInst, %(num_microops)s, _env)
         {
@@ -127,35 +130,40 @@ def template MacroConstructor {{
 }};
 
 let {{
-    from micro_asm import Combinational_Macroop, Rom_Macroop
-    class X86Macroop(Combinational_Macroop):
-        def add_microop(self, mnemonic, microop):
-            microop.mnemonic = mnemonic
-            microop.micropc = len(self.microops)
-            self.microops.append(microop)
+    from micro_asm import CombinationalMacroop, RomMacroop
+    class X86Macroop(CombinationalMacroop):
         def setAdjustEnv(self, val):
             self.adjust_env = val
         def adjustImm(self, val):
             self.adjust_imm += val
         def adjustDisp(self, val):
             self.adjust_disp += val
-        def serializing(self):
-            self.serializing = True
+        def serializeBefore(self):
+            self.serialize_before = True
+        def serializeAfter(self):
+            self.serialize_after = True
 
         def function_call(self):
             self.function_call = True
         def function_return(self):
             self.function_return = True
+        def control_direct(self):
+            self.control_direct = True
+        def control_indirect(self):
+            self.control_indirect = True
 
         def __init__(self, name):
-            super(X86Macroop, self).__init__(name)
+            super().__init__(name)
             self.directives = {
                 "adjust_env" : self.setAdjustEnv,
                 "adjust_imm" : self.adjustImm,
                 "adjust_disp" : self.adjustDisp,
-                "serializing" : self.serializing,
+                "serialize_before" : self.serializeBefore,
+                "serialize_after" : self.serializeAfter,
                 "function_call" : self.function_call,
-                "function_return" : self.function_return
+                "function_return" : self.function_return,
+                "control_direct" : self.control_direct,
+                "control_indirect" : self.control_indirect
             }
             self.declared = False
             self.adjust_env = ""
@@ -170,12 +178,15 @@ let {{
                 //This is to pacify gcc in case the displacement isn't used.
                 adjustedDisp = adjustedDisp;
             '''
-            self.serializing = False
+            self.serialize_before = False
+            self.serialize_after = False
             self.function_call = False
             self.function_return = False
+            self.control_direct = False
+            self.control_indirect = False
 
         def getAllocator(self, env):
-            return "new X86Macroop::%s(machInst, %s)" % \
+            return "new x86_macroop::%s(machInst, %s)" % \
                     (self.name, env.getAllocator())
         def getMnemonic(self):
             mnemonic = self.name.lower()
@@ -201,21 +212,33 @@ let {{
             micropc = 0
             for op in self.microops:
                 flags = ["IsMicroop"]
+                if micropc == 0:
+                    flags.append("IsFirstMicroop")
+
+                    if self.serialize_before:
+                        flags.append("IsSerializing")
+                        flags.append("IsSerializeBefore")
+
                 if micropc == numMicroops - 1:
                     flags.append("IsLastMicroop")
 
-                    if self.serializing:
+                    if self.serialize_after:
                         flags.append("IsSerializing")
                         flags.append("IsSerializeAfter")
 
                     if self.function_call:
                         flags.append("IsCall")
+                        flags.append("IsUncondControl")
                     if self.function_return:
                         flags.append("IsReturn")
+                        flags.append("IsUncondControl")
+                    if self.control_direct:
+                        flags.append("IsDirectControl")
+                    if self.control_indirect:
+                        flags.append("IsIndirectControl")
                 else:
                     flags.append("IsDelayedCommit")
-                if micropc == 0:
-                    flags.append("IsFirstMicroop")
+
                 allocMicroops += \
                     "microops[%d] = %s;\n" % \
                     (micropc, op.getAllocator(flags))
@@ -228,7 +251,7 @@ let {{
                 memoryInst = "true"
             else:
                 memoryInst = "false"
-            regSize = '''(%s || (env.base == INTREG_RSP && %s) ?
+            regSize = '''(%s || (env.base == int_reg::Rsp && %s) ?
                          env.stackSize :
                          env.dataSize)''' % (useStackSize, memoryInst)
             iop = InstObjParams(self.getMnemonic(), self.name, "Macroop",
@@ -251,7 +274,7 @@ let {{
             self.regUsed = False
             self.regm = "0"
             self.regmUsed = False
-            self.seg = "SEGMENT_REG_DS"
+            self.seg = "segment_idx::Ds"
             self.size = None
             self.addressSize = "ADDRSIZE"
             self.dataSize = "OPSIZE"
@@ -287,7 +310,7 @@ let {{
             elif self.size == 'z':
                 self.dataSize = "((OPSIZE == 8) ? 4 : OPSIZE)"
             elif self.size:
-                raise Exception, "Unrecognized size type %s!" % self.size
+                raise Exception("Unrecognized size type {}!".format(self.size))
             return '''EmulEnv(%(reg)s,
                               %(regm)s,
                               %(dataSize)s,
@@ -303,14 +326,15 @@ let {{
                 self.regm = reg
                 self.regmUsed = True
             else:
-                raise Exception, "EmulEnv is out of register specialization spots."
+                raise Exception("EmulEnv is out of register specialization " +
+                    "spots.")
         def setSize(self, size):
             if not self.size:
                 self.size = size
             else:
                 if self.size != size:
-                    raise Exception, "Conflicting register sizes %s and %s!" %\
-                        (self.size, size)
+                    raise Exception("Conflicting register sizes " +
+                        "{} and {}!".format(self.size, size))
 }};
 
 let {{
@@ -318,8 +342,8 @@ let {{
     noModRMString = "env.setSeg(machInst);\n"
     def genMacroop(Name, env):
         blocks = OutputBlocks()
-        if not macroopDict.has_key(Name):
-            raise Exception, "Unrecognized instruction: %s" % Name
+        if not Name in macroopDict:
+            raise Exception("Unrecognized instruction: {}".format(Name))
         macroop = macroopDict[Name]
         if not macroop.declared:
             if env.doModRM:

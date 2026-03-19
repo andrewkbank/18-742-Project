@@ -32,17 +32,17 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Gabe Black
 
-categories = ["call",
-              "conditional_jump",
-              "interrupts_and_exceptions",
-              "jump",
-              "loop",
-              "xreturn"]
+categories = [
+    "call",
+    "conditional_jump",
+    "interrupts_and_exceptions",
+    "jump",
+    "loop",
+    "xreturn",
+]
 
 microcode = ""
 for category in categories:
-    exec "import %s as cat" % category
+    exec(f"from . import {category} as cat")
     microcode += cat.microcode

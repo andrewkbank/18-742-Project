@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2014 ARM Limited
+ * Copyright (c) 2013-2014, 2016-2017 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -33,77 +33,63 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andrew Bardsley
  */
 
-#include "arch/registers.hh"
 #include "cpu/minor/scoreboard.hh"
+
 #include "cpu/reg_class.hh"
 #include "debug/MinorScoreboard.hh"
 #include "debug/MinorTiming.hh"
 
-namespace Minor
+namespace gem5
+{
+
+namespace minor
 {
 
 bool
-Scoreboard::findIndex(RegIndex reg, Index &scoreboard_index)
+Scoreboard::findIndex(const RegId& reg, Index &scoreboard_index)
 {
-    RegClass reg_class = regIdxToClass(reg);
     bool ret = false;
 
-    if (reg == TheISA::ZeroReg) {
-        /* Don't bother with the zero register */
-        ret = false;
-    } else {
-        switch (reg_class)
-        {
-          case IntRegClass:
-            scoreboard_index = reg;
-            ret = true;
-            break;
-          case FloatRegClass:
-            scoreboard_index = TheISA::NumIntRegs + TheISA::NumCCRegs +
-                reg - TheISA::FP_Reg_Base;
-            ret = true;
-            break;
-          case CCRegClass:
-            scoreboard_index = TheISA::NumIntRegs + reg - TheISA::FP_Reg_Base;
-            ret = true;
-            break;
-          case MiscRegClass:
-              /* Don't bother with Misc registers */
-            ret = false;
-            break;
-        }
-    }
-
-    return ret;
-}
-
-/** Flatten a RegIndex, irrespective of what reg type it's pointing to */
-static TheISA::RegIndex
-flattenRegIndex(TheISA::RegIndex reg, ThreadContext *thread_context)
-{
-    RegClass reg_class = regIdxToClass(reg);
-    TheISA::RegIndex ret = reg;
-
-    switch (reg_class)
-    {
+    switch (reg.classValue()) {
       case IntRegClass:
-        ret = thread_context->flattenIntIndex(reg);
+        scoreboard_index = reg.index();
+        ret = true;
         break;
       case FloatRegClass:
-        ret = thread_context->flattenFloatIndex(reg);
+        scoreboard_index = floatRegOffset + reg.index();
+        ret = true;
+        break;
+      case VecRegClass:
+        scoreboard_index = vecRegOffset + reg.index();
+        ret = true;
+        break;
+      case VecElemClass:
+        scoreboard_index = vecRegElemOffset + reg.index();
+        ret = true;
+        break;
+      case VecPredRegClass:
+        scoreboard_index = vecPredRegOffset + reg.index();
+        ret = true;
+        break;
+      case MatRegClass:
+        scoreboard_index = matRegOffset + reg.index();
+        ret = true;
         break;
       case CCRegClass:
-        ret = thread_context->flattenCCIndex(reg);
+        scoreboard_index = ccRegOffset + reg.index();
+        ret = true;
         break;
       case MiscRegClass:
-        /* Don't bother to flatten misc regs as we don't need them here */
-        /* return thread_context->flattenMiscIndex(reg); */
-        ret = reg;
+          /* Don't bother with Misc registers */
+        ret = false;
         break;
+      case InvalidRegClass:
+        ret = false;
+        break;
+      default:
+        panic("Unknown register class: %d", reg.classValue());
     }
 
     return ret;
@@ -119,12 +105,13 @@ Scoreboard::markupInstDests(MinorDynInstPtr inst, Cycles retire_time,
     StaticInstPtr staticInst = inst->staticInst;
     unsigned int num_dests = staticInst->numDestRegs();
 
+    auto *isa = thread_context->getIsaPtr();
+
     /** Mark each destination register */
     for (unsigned int dest_index = 0; dest_index < num_dests;
         dest_index++)
     {
-        RegIndex reg = flattenRegIndex(
-            staticInst->destRegIdx(dest_index), thread_context);
+        RegId reg = staticInst->destRegIdx(dest_index).flatten(*isa);
         Index index;
 
         if (findIndex(reg, index)) {
@@ -146,8 +133,8 @@ Scoreboard::markupInstDests(MinorDynInstPtr inst, Cycles retire_time,
                 " regIndex: %d final numResults: %d returnCycle: %d\n",
                 *inst, index, numResults[index], returnCycle[index]);
         } else {
-            /* Use ZeroReg to mark invalid/untracked dests */
-            inst->flatDestRegIdx[dest_index] = TheISA::ZeroReg;
+            /* Use an invalid ID to mark invalid/untracked dests */
+            inst->flatDestRegIdx[dest_index] = RegId();
         }
     }
 }
@@ -164,9 +151,10 @@ Scoreboard::execSeqNumToWaitFor(MinorDynInstPtr inst,
     StaticInstPtr staticInst = inst->staticInst;
     unsigned int num_srcs = staticInst->numSrcRegs();
 
+    auto *isa = thread_context->getIsaPtr();
+
     for (unsigned int src_index = 0; src_index < num_srcs; src_index++) {
-        RegIndex reg = flattenRegIndex(staticInst->srcRegIdx(src_index),
-            thread_context);
+        RegId reg = staticInst->srcRegIdx(src_index).flatten(*isa);
         unsigned short int index;
 
         if (findIndex(reg, index)) {
@@ -194,7 +182,7 @@ Scoreboard::clearInstDests(MinorDynInstPtr inst, bool clear_unpredictable)
     for (unsigned int dest_index = 0; dest_index < num_dests;
         dest_index++)
     {
-        RegIndex reg = inst->flatDestRegIdx[dest_index];
+        const RegId& reg = inst->flatDestRegIdx[dest_index];
         Index index;
 
         if (findIndex(reg, index)) {
@@ -206,7 +194,7 @@ Scoreboard::clearInstDests(MinorDynInstPtr inst, bool clear_unpredictable)
             if (numResults[index] == 0) {
                 returnCycle[index] = Cycles(0);
                 writingInst[index] = 0;
-                fuIndices[index] = -1;
+                fuIndices[index] = invalidFUIndex;
             }
 
             DPRINTF(MinorScoreboard, "Clearing inst: %s"
@@ -246,20 +234,22 @@ Scoreboard::canInstIssue(MinorDynInstPtr inst,
             [num_relative_latencies-1];
     }
 
+    auto *isa = thread_context->getIsaPtr();
+
     /* For each source register, find the latest result */
     unsigned int src_index = 0;
     while (src_index < num_srcs && /* More registers */
         ret /* Still possible */)
     {
-        RegIndex reg = flattenRegIndex(staticInst->srcRegIdx(src_index),
-            thread_context);
+        RegId reg = staticInst->srcRegIdx(src_index).flatten(*isa);
         unsigned short int index;
 
         if (findIndex(reg, index)) {
-            bool cant_forward = fuIndices[index] != 1 &&
+            int src_reg_fu = fuIndices[index];
+            bool cant_forward = src_reg_fu != invalidFUIndex &&
                 cant_forward_from_fu_indices &&
-                index < cant_forward_from_fu_indices->size() &&
-                (*cant_forward_from_fu_indices)[index];
+                src_reg_fu < cant_forward_from_fu_indices->size() &&
+                (*cant_forward_from_fu_indices)[src_reg_fu];
 
             Cycles relative_latency = (cant_forward ? Cycles(0) :
                 (src_index >= num_relative_latencies ?
@@ -275,7 +265,7 @@ Scoreboard::canInstIssue(MinorDynInstPtr inst,
         src_index++;
     }
 
-    if (DTRACE(MinorTiming)) {
+    if (debug::MinorTiming) {
         if (ret && num_srcs > num_relative_latencies &&
             num_relative_latencies != 0)
         {
@@ -317,7 +307,8 @@ Scoreboard::minorTrace() const
         i++;
     }
 
-    MINORTRACE("busy=%s\n", result_stream.str());
+    minor::minorTrace("busy=%s\n", result_stream.str());
 }
 
-}
+} // namespace minor
+} // namespace gem5

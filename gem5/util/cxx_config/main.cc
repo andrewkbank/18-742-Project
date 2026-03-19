@@ -33,8 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andrew Bardsley
  */
 
 /**
@@ -68,10 +66,13 @@
 #include "sim/cxx_manager.hh"
 #include "sim/init_signals.hh"
 #include "sim/serialize.hh"
+#include "sim/sim_events.hh"
 #include "sim/simulate.hh"
 #include "sim/stat_control.hh"
 #include "sim/system.hh"
 #include "stats.hh"
+
+using namespace gem5;
 
 void
 usage(const std::string &prog_name)
@@ -107,17 +108,16 @@ main(int argc, char **argv)
     if (argc == 1)
         usage(prog_name);
 
-    cxxConfigInit();
-
     initSignals();
 
     setClockFrequency(1000000000000);
+    fixClockFrequency();
     curEventQueue(getEventQueue(0));
 
-    Stats::initSimStats();
-    Stats::registerHandlers(CxxConfig::statsReset, CxxConfig::statsDump);
+    statistics::initSimStats();
+    statistics::registerHandlers(CxxConfig::statsReset, CxxConfig::statsDump);
 
-    Trace::enabled = true;
+    Trace::enable();
     setDebugFlag("Terminal");
     // setDebugFlag("CxxConfig");
 
@@ -228,15 +228,13 @@ main(int argc, char **argv)
     if (checkpoint_save) {
         exit_event = simulate(pre_run_time);
 
-        DrainManager drain_manager;
         unsigned int drain_count = 1;
         do {
-            drain_count = config_manager->drain(&drain_manager);
+            drain_count = config_manager->drain();
 
             std::cerr << "Draining " << drain_count << '\n';
 
             if (drain_count > 0) {
-                drain_manager.setCount(drain_count);
                 exit_event = simulate();
             }
         } while (drain_count > 0);
@@ -249,7 +247,7 @@ main(int argc, char **argv)
         /* FIXME, this should really be serialising just for
          *  config_manager rather than using serializeAll's ugly
          *  SimObject static object list */
-        Serializable::serializeAll(checkpoint_dir);
+        SimObject::serializeAll(checkpoint_dir);
 
         std::cerr << "Completed checkpoint\n";
 
@@ -259,11 +257,12 @@ main(int argc, char **argv)
     if (checkpoint_restore) {
         std::cerr << "Restoring checkpoint\n";
 
-        Checkpoint *checkpoint = new Checkpoint(checkpoint_dir,
-            config_manager->getSimObjectResolver());
+        SimObject::setSimObjectResolver(
+            &config_manager->getSimObjectResolver());
+        CheckpointIn *checkpoint = new CheckpointIn(checkpoint_dir);
 
-        Serializable::unserializeGlobals(checkpoint);
-        config_manager->loadState(checkpoint);
+        DrainManager::instance().preCheckpointRestore();
+        config_manager->loadState(*checkpoint);
         config_manager->startup();
 
         config_manager->drainResume();
@@ -281,21 +280,19 @@ main(int argc, char **argv)
         BaseCPU &old_cpu = config_manager->getObject<BaseCPU>(from_cpu);
         BaseCPU &new_cpu = config_manager->getObject<BaseCPU>(to_cpu);
 
-        DrainManager drain_manager;
         unsigned int drain_count = 1;
         do {
-            drain_count = config_manager->drain(&drain_manager);
+            drain_count = config_manager->drain();
 
             std::cerr << "Draining " << drain_count << '\n';
 
             if (drain_count > 0) {
-                drain_manager.setCount(drain_count);
                 exit_event = simulate();
             }
         } while (drain_count > 0);
 
         old_cpu.switchOut();
-        system.setMemoryMode(Enums::timing);
+        system.setMemoryMode(enums::timing);
         new_cpu.takeOverFrom(&old_cpu);
         config_manager->drainResume();
 

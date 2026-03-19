@@ -1,3 +1,15 @@
+# Copyright (c) 2012-2016,2019-2020 ARM Limited
+# All rights reserved.
+#
+# The license below extends only to copyright in the software and shall
+# not be construed as granting a license to any other intellectual
+# property including but not limited to intellectual property relating
+# to a hardware implementation of the functionality of the software
+# licensed hereunder.  You may use the software subject to the license
+# terms below provided that you ensure that this notice is replicated
+# unmodified and in its entirety in all distributions of the software,
+# modified or unmodified, in source code or in binary form.
+#
 # Copyright (c) 2005-2007 The Regents of The University of Michigan
 # All rights reserved.
 #
@@ -23,50 +35,124 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Nathan Binkert
 
+from m5.objects.ClockedObject import ClockedObject
 from m5.params import *
 from m5.proxy import *
-from MemObject import MemObject
+from m5.util.fdthelper import *
 
-class PioDevice(MemObject):
-    type = 'PioDevice'
+
+class PioDevice(ClockedObject):
+    type = "PioDevice"
     cxx_header = "dev/io_device.hh"
+    cxx_class = "gem5::PioDevice"
     abstract = True
-    pio = SlavePort("Programmed I/O port")
+
+    pio = ResponsePort("Programmed I/O port")
     system = Param.System(Parent.any, "System this device is part of")
 
+    def generateBasicPioDeviceNode(
+        self, state, name, pio_addr, size, interrupts=None
+    ):
+        node = FdtNode(f"{name}@{int(pio_addr):x}")
+        node.append(
+            FdtPropertyWords(
+                "reg", state.addrCells(pio_addr) + state.sizeCells(size)
+            )
+        )
+
+        if interrupts:
+            if any([i.num < 32 for i in interrupts]):
+                raise (
+                    ("Interrupt number smaller than 32 " + " in PioDevice %s")
+                    % name
+                )
+
+            gic = self._parent.unproxy(self).gic
+
+            node.append(
+                FdtPropertyWords(
+                    "interrupts",
+                    sum([i.generateFdtProperty(gic) for i in interrupts], []),
+                )
+            )
+
+        return node
+
+
 class BasicPioDevice(PioDevice):
-    type = 'BasicPioDevice'
+    type = "BasicPioDevice"
     cxx_header = "dev/io_device.hh"
+    cxx_class = "gem5::BasicPioDevice"
     abstract = True
+
     pio_addr = Param.Addr("Device Address")
-    pio_latency = Param.Latency('100ns', "Programmed IO latency")
+    pio_latency = Param.Latency("100ns", "Programmed IO latency")
+
 
 class DmaDevice(PioDevice):
-    type = 'DmaDevice'
-    cxx_header = "dev/io_device.hh"
+    type = "DmaDevice"
+    cxx_header = "dev/dma_device.hh"
+    cxx_class = "gem5::DmaDevice"
     abstract = True
-    dma = MasterPort("DMA port")
+
+    dma = RequestPort("DMA port")
+
+    _iommu = None
+
+    sid = OptionalParam.Unsigned(
+        "Stream identifier used by an IOMMU to distinguish amongst "
+        "several devices attached to it",
+    )
+    ssid = OptionalParam.Unsigned(
+        "Substream identifier used by an IOMMU to distinguish amongst "
+        "several devices attached to it",
+    )
+
+    def addIommuProperty(self, state, node):
+        """
+        This method takes an FdtState and a FdtNode as parameters, and
+        it is appending a "iommus = <>" property in case the DmaDevice
+        is attached to an IOMMU.
+        This method is necessary for autogenerating a binding between
+        a dma device and the iommu.
+        """
+        if self._iommu is not None:
+            node.append(
+                FdtPropertyWords(
+                    "iommus", [state.phandle(self._iommu), self.sid]
+                )
+            )
+
+
+class DmaVirtDevice(DmaDevice):
+    type = "DmaVirtDevice"
+    cxx_header = "dev/dma_virt_device.hh"
+    cxx_class = "gem5::DmaVirtDevice"
+    abstract = True
 
 
 class IsaFake(BasicPioDevice):
-    type = 'IsaFake'
+    type = "IsaFake"
     cxx_header = "dev/isa_fake.hh"
+    cxx_class = "gem5::IsaFake"
+
     pio_size = Param.Addr(0x8, "Size of address range")
     ret_data8 = Param.UInt8(0xFF, "Default data to return")
     ret_data16 = Param.UInt16(0xFFFF, "Default data to return")
     ret_data32 = Param.UInt32(0xFFFFFFFF, "Default data to return")
     ret_data64 = Param.UInt64(0xFFFFFFFFFFFFFFFF, "Default data to return")
     ret_bad_addr = Param.Bool(False, "Return pkt status bad address on access")
-    update_data = Param.Bool(False, "Update the data that is returned on writes")
+    update_data = Param.Bool(
+        False, "Update the data that is returned on writes"
+    )
     warn_access = Param.String("", "String to print when device is accessed")
-    fake_mem = Param.Bool(False,
-      "Is this device acting like a memory and thus may get a cache line sized req")
+    fake_mem = Param.Bool(
+        False,
+        "Is this device acting like a memory and thus may get a cache line sized req",
+    )
+
 
 class BadAddr(IsaFake):
     pio_addr = 0
     ret_bad_addr = Param.Bool(True, "Return pkt status bad address on access")
-
-

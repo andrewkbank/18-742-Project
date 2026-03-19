@@ -24,9 +24,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Ali Saidi
- *          Rick Strong
  */
 
 /** @file
@@ -39,6 +36,9 @@
 #include "dev/mips/malta.hh"
 #include "dev/io_device.hh"
 #include "params/MaltaCChip.hh"
+
+namespace gem5
+{
 
 /**
  * Malta CChip CSR Emulation. This device includes all the interrupt
@@ -79,24 +79,18 @@ class MaltaCChip : public BasicPioDevice
     //uint64_t itint;
 
   public:
-    typedef MaltaCChipParams Params;
-
-    const Params *
-    params() const
-    {
-        return dynamic_cast<const Params *>(_params);
-    }
+    using Params = MaltaCChipParams;
 
     /**
      * Initialize the Malta CChip by setting all of the
      * device register to 0.
      * @param p params struct
      */
-    MaltaCChip(Params *p);
+    MaltaCChip(const Params &p);
 
-    virtual Tick read(PacketPtr pkt);
+    Tick read(PacketPtr pkt) override;
 
-    virtual Tick write(PacketPtr pkt);
+    Tick write(PacketPtr pkt) override;
 
     /**
      * post an RTC interrupt to the CPU
@@ -133,8 +127,10 @@ class MaltaCChip : public BasicPioDevice
      */
     void reqIPI(uint64_t ipreq);
 
-    void serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE;
-    void unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE;
+    void serialize(CheckpointOut &cp) const override;
+    void unserialize(CheckpointIn &cp) override;
 };
+
+} // namespace gem5
 
 #endif // __MALTA_CCHIP_HH__

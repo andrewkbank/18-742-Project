@@ -1,3 +1,15 @@
+# Copyright (c) 2017, 2024-2025 Arm Limited
+# All rights reserved
+#
+# The license below extends only to copyright in the software and shall
+# not be construed as granting a license to any other intellectual
+# property including but not limited to intellectual property relating
+# to a hardware implementation of the functionality of the software
+# licensed hereunder.  You may use the software subject to the license
+# terms below provided that you ensure that this notice is replicated
+# unmodified and in its entirety in all distributions of the software,
+# modified or unmodified, in source code or in binary form.
+#
 # Copyright (c) 2006-2007 The Regents of The University of Michigan
 # All rights reserved.
 #
@@ -23,19 +35,31 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Kevin Lim
 
-from m5.SimObject import SimObject
+from m5.objects.FuncUnit import *
+from m5.objects.FuncUnitConfig import *
 from m5.params import *
-from FuncUnit import *
-from FuncUnitConfig import *
+from m5.SimObject import SimObject
+
 
 class FUPool(SimObject):
-    type = 'FUPool'
+    type = "FUPool"
+    cxx_class = "gem5::o3::FUPool"
     cxx_header = "cpu/o3/fu_pool.hh"
     FUList = VectorParam.FUDesc("list of FU's for this pool")
 
+
 class DefaultFUPool(FUPool):
-    FUList = [ IntALU(), IntMultDiv(), FP_ALU(), FP_MultDiv(), ReadPort(),
-               SIMD_Unit(), WritePort(), RdWrPort(), IprPort() ]
+    FUList = [
+        IntALU(),
+        IntMultDiv(),
+        FP_ALU(),
+        FP_MultDiv(),
+        ReadPort(),
+        SIMD_Unit(),
+        Matrix_Unit(),
+        System_Unit(),
+        PredALU(),
+        WritePort(),
+        RdWrPort(),
+    ]

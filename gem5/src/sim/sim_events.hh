@@ -38,8 +38,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nathan Binkert
  */
 
 #ifndef __SIM_SIM_EVENTS_HH__
@@ -47,6 +45,9 @@
 
 #include "sim/global_event.hh"
 #include "sim/serialize.hh"
+
+namespace gem5
+{
 
 //
 // Event to terminate simulation at a particular cycle/instruction
@@ -58,20 +59,58 @@ class GlobalSimLoopExitEvent : public GlobalEvent
     std::string cause;
     int code;
     Tick repeat;
+    uint64_t hypercall_id = 0;
+    std::map<std::string, std::string> payload;
 
   public:
-    // non-scheduling version for createForUnserialize()
-    GlobalSimLoopExitEvent();
+
+    /**
+     * The "old style" constructor for GlobalSimLoopExitEvent.
+     * Not the `type_id` parameter is set to 0. Zero is reserved for the "old
+     * style" exitSimLoop handling via generators in the Simulator module.
+     * The payload is unused.
+     */
     GlobalSimLoopExitEvent(Tick when, const std::string &_cause, int c,
-                           Tick repeat = 0);
+        Tick repeat = 0, uint64_t hypercall_id = 0,
+        std::map<std::string, std::string> payload =
+            std::map<std::string, std::string>());
+
+    GlobalSimLoopExitEvent(const std::string &_cause, int c,
+         Tick repeat = 0, uint64_t hypercall_id = 0,
+        std::map<std::string, std::string> payload =
+            std::map<std::string, std::string>());
+
+    /**
+     * The "new style" constructor for GlobalSimLoopExitEvent.
+     * Here the "type_id" parameter is used to specify the type of the exit
+     * and the payload is used to pass additional information about the exit.
+     *
+     * These are used to construct Exit Handlers on the Python side.
+     */
+    GlobalSimLoopExitEvent(Tick when, uint64_t hypercall_id,
+        std::map<std::string, std::string> payload =
+            std::map<std::string, std::string>());
+
+    GlobalSimLoopExitEvent(uint64_t hypercall_id,
+        std::map<std::string, std::string> payload =
+            std::map<std::string, std::string>());
 
     const std::string getCause() const { return cause; }
-    const int getCode() const { return code; }
+    int getCode() const { return code; }
 
-    void process();     // process event
+    uint64_t getHypercallId() const { return hypercall_id; }
+    const std::map<std::string, std::string> getPayload() const {
+        return payload;
+    }
 
+    virtual void process();// process event
+    virtual void clean(){};//cleaning event
+    ~GlobalSimLoopExitEvent (){
+      DPRINTF(Event,"GlobalSimLoopExitEvent destructed\n");
+    };
     virtual const char *description() const;
 };
+
 
 class LocalSimLoopExitEvent : public Event
 {
@@ -86,32 +125,14 @@ class LocalSimLoopExitEvent : public Event
     LocalSimLoopExitEvent(const std::string &_cause, int c, Tick repeat = 0);
 
     const std::string getCause() const { return cause; }
-    const int getCode() const { return code; }
+    int getCode() const { return code; }
 
-    void process();     // process event
+    void process() override;     // process event
 
-    virtual const char *description() const;
+    const char *description() const override;
 
-    void serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE;
-    void unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE;
-    static Serializable *createForUnserialize(CheckpointIn &cp,
-                                              const std::string &section);
-};
-
-class CountedDrainEvent : public Event
-{
-  private:
-    // Count of how many objects have not yet drained
-    int count;
-
-  public:
-    CountedDrainEvent();
-
-    void process();
-
-    void setCount(int _count) { count = _count; }
-
-    const int getCount() const { return count; }
+    void serialize(CheckpointOut &cp) const override;
+    void unserialize(CheckpointIn &cp) override;
 };
 
 //
@@ -128,10 +149,11 @@ class CountedExitEvent : public Event
   public:
     CountedExitEvent(const std::string &_cause, int &_downCounter);
 
-    void process();     // process event
+    void process() override;     // process event
 
-    virtual const char *description() const;
+    const char *description() const override;
 };
 
+} // namespace gem5
 
 #endif  // __SIM_SIM_EVENTS_HH__

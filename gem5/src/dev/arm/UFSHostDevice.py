@@ -32,21 +32,25 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Rene de Jong
-#
+
 import sys
+
+from m5.objects.AbstractNVM import *
+from m5.objects.Device import DmaDevice
 from m5.params import *
 from m5.proxy import *
-from Device import DmaDevice
-from AbstractNVM import *
+
 
 class UFSHostDevice(DmaDevice):
-    type = 'UFSHostDevice'
+    type = "UFSHostDevice"
     cxx_header = "dev/arm/ufs_device.hh"
-    pio_addr = Param.Addr("Address for SCSI configuration slave interface")
-    pio_latency = Param.Latency("10ns", "Time between action and write/read \
-       result by AMBA DMA Device")
+    cxx_class = "gem5::UFSHostDevice"
+    pio_addr = Param.Addr("Address for SCSI configuration responder interface")
+    pio_latency = Param.Latency(
+        "10ns",
+        "Time between action and write/read \
+       result by AMBA DMA Device",
+    )
     gic = Param.BaseGic(Parent.any, "Gic to use for interrupting")
     int_num = Param.UInt32("Interrupt number that connects to GIC")
     img_blk_size = Param.UInt32(512, "Size of one image block in bytes")
@@ -61,6 +65,8 @@ class UFSHostDevice(DmaDevice):
     # its own flash dimensions; to allow the system to define a hetrogeneous
     # storage system.
     internalflash = VectorParam.AbstractNVM("Describes the internal flash")
-    ufs_slots = Param.UInt32(32, "Number of commands that can be queued in \
-        the Host controller (min: 1, max: 32)")
-
+    ufs_slots = Param.UInt32(
+        32,
+        "Number of commands that can be queued in \
+        the Host controller (min: 1, max: 32)",
+    )

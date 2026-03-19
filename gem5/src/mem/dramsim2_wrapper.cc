@@ -33,27 +33,17 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andreas Hansson
  */
 
 #include <cassert>
 
-/**
- * When building the debug binary, we need to undo the command-line
- * definition of DEBUG not to clash with DRAMSim2 print macros that
- * are included for no obvious reason.
- */
-#ifdef DEBUG
-#undef DEBUG
-#endif
+#include "mem/dramsim2_wrapper.hh"
 
 #include <fstream>
 
 #include "DRAMSim2/MultiChannelMemorySystem.h"
 #include "base/compiler.hh"
-#include "base/misc.hh"
-#include "mem/dramsim2_wrapper.hh"
+#include "base/logging.hh"
 
 /**
  * DRAMSim2 requires SHOW_SIM_OUTPUT to be defined (declared extern in
@@ -61,6 +51,12 @@
  * undefined references
  */
 int SHOW_SIM_OUTPUT = 0;
+
+namespace gem5
+{
+
+namespace memory
+{
 
 DRAMSim2Wrapper::DRAMSim2Wrapper(const std::string& config_file,
                                  const std::string& system_file,
@@ -170,7 +166,7 @@ DRAMSim2Wrapper::canAccept() const
 void
 DRAMSim2Wrapper::enqueue(bool is_write, uint64_t addr)
 {
-    bool success M5_VAR_USED = dramsim->addTransaction(is_write, addr);
+    [[maybe_unused]] bool success = dramsim->addTransaction(is_write, addr);
     assert(success);
 }
 
@@ -197,3 +193,6 @@ DRAMSim2Wrapper::tick()
 {
     dramsim->update();
 }
+
+} // namespace memory
+} // namespace gem5

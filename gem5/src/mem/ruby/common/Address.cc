@@ -28,106 +28,58 @@
 
 #include "mem/ruby/common/Address.hh"
 
+#include "base/bitfield.hh"
 #include "mem/ruby/system/RubySystem.hh"
+
+namespace gem5
+{
+
+namespace ruby
+{
 
 Addr
 bitSelect(Addr addr, unsigned int small, unsigned int big)
 {
     assert(big >= small);
-
-    if (big >= ADDRESS_WIDTH - 1) {
-        return (addr >> small);
-    } else {
-        Addr mask = ~((Addr)~0 << (big + 1));
-        // FIXME - this is slow to manipulate a 64-bit number using 32-bits
-        Addr partial = (addr & mask);
-        return (partial >> small);
-    }
-}
-
-Addr
-bitRemove(Addr addr, unsigned int small, unsigned int big)
-{
-    assert(big >= small);
-
-    if (small >= ADDRESS_WIDTH - 1) {
-        return addr;
-    } else if (big >= ADDRESS_WIDTH - 1) {
-        Addr mask = (Addr)~0 >> small;
-        return (addr & mask);
-    } else if (small == 0) {
-        Addr mask = (Addr)~0 << big;
-        return (addr & mask);
-    } else {
-        Addr mask = ~((Addr)~0 << small);
-        Addr lower_bits = addr & mask;
-        mask = (Addr)~0 << (big + 1);
-        Addr higher_bits = addr & mask;
-
-        // Shift the valid high bits over the removed section
-        higher_bits = higher_bits >> (big - small + 1);
-        return (higher_bits | lower_bits);
-    }
+    return bits<Addr>(addr, big, small);
 }
 
 Addr
 maskLowOrderBits(Addr addr, unsigned int number)
 {
-  Addr mask;
-
-  if (number >= ADDRESS_WIDTH - 1) {
-      mask = ~0;
-  } else {
-      mask = (Addr)~0 << number;
-  }
-  return (addr & mask);
+    return mbits<Addr>(addr, 63, number);
 }
 
 Addr
-maskHighOrderBits(Addr addr, unsigned int number)
+getOffset(Addr addr, int cacheLineBits)
 {
-    Addr mask;
-
-    if (number >= ADDRESS_WIDTH - 1) {
-        mask = ~0;
-    } else {
-        mask = (Addr)~0 >> number;
-    }
-    return (addr & mask);
+    assert(cacheLineBits < 64);
+    return bitSelect(addr, 0, cacheLineBits - 1);
 }
 
 Addr
-shiftLowOrderBits(Addr addr, unsigned int number)
+makeLineAddress(Addr addr, int cacheLineBits)
 {
-    return (addr >> number);
-}
-
-Addr
-getOffset(Addr addr)
-{
-    return bitSelect(addr, 0, RubySystem::getBlockSizeBits() - 1);
-}
-
-Addr
-makeLineAddress(Addr addr)
-{
-    return maskLowOrderBits(addr, RubySystem::getBlockSizeBits());
+    assert(cacheLineBits < 64);
+    return maskLowOrderBits(addr, cacheLineBits);
 }
 
 // returns the next stride address based on line address
 Addr
-makeNextStrideAddress(Addr addr, int stride)
+makeNextStrideAddress(Addr addr, int stride, int cacheLineBytes)
 {
-    return maskLowOrderBits(addr, RubySystem::getBlockSizeBits())
-        + RubySystem::getBlockSizeBytes() * stride;
+    return makeLineAddress(addr, floorLog2(cacheLineBytes))
+           + cacheLineBytes * stride;
 }
 
 std::string
-printAddress(Addr addr)
+printAddress(Addr addr, int cacheLineBits)
 {
     std::stringstream out;
     out << "[" << std::hex << "0x" << addr << "," << " line 0x"
-       << maskLowOrderBits(addr, RubySystem::getBlockSizeBits())
-       << std::dec << "]";
+       << makeLineAddress(addr, cacheLineBits) << std::dec << "]";
     return out.str();
 }
+
+} // namespace ruby
+} // namespace gem5

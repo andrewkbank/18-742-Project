@@ -25,11 +25,15 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from slicc.ast.TypeFieldAST import TypeFieldAST
-from slicc.symbols import Event, State
+from slicc.symbols import (
+    Event,
+    State,
+)
+
 
 class TypeFieldStateAST(TypeFieldAST):
     def __init__(self, slicc, field_id, perm_ast, pairs_ast):
-        super(TypeFieldStateAST, self).__init__(slicc, pairs_ast)
+        super().__init__(slicc, pairs_ast)
 
         self.field_id = field_id
         self.perm_ast = perm_ast
@@ -38,15 +42,15 @@ class TypeFieldStateAST(TypeFieldAST):
         self.pairs_ast = pairs_ast
 
     def __repr__(self):
-        return "[TypeFieldState: %r]" % self.field_id
+        return f"[TypeFieldState: {self.field_id!r}]"
 
-    def generate(self, type):
+    def generate(self, type, **kwargs):
         if not str(type) == "State":
             self.error("State Declaration must be of type State.")
-        
+
         # Add enumeration
         if not type.addEnum(self.field_id, self.pairs_ast.pairs):
-            self.error("Duplicate enumeration: %s:%s" % (type, self.field_id))
+            self.error(f"Duplicate enumeration: {type}:{self.field_id}")
 
         # Fill machine info
         machine = self.symtab.state_machine
@@ -57,5 +61,3 @@ class TypeFieldStateAST(TypeFieldAST):
         machine.addState(s)
 
         type.statePermPairAdd(s, self.perm_ast.value)
-
-

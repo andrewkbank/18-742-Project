@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2014 ARM Limited
+ * Copyright (c) 2013-2014, 2021 Arm Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -36,8 +36,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Gabe Black
  */
 
 #ifndef __ARCH_ARM_DECODER_HH__
@@ -45,24 +43,36 @@
 
 #include <cassert>
 
-#include "arch/arm/miscregs.hh"
+#include "arch/arm/regs/misc.hh"
 #include "arch/arm/types.hh"
 #include "arch/generic/decode_cache.hh"
+#include "arch/generic/decoder.hh"
 #include "base/types.hh"
 #include "cpu/static_inst.hh"
+#include "debug/Decode.hh"
+#include "enums/DecoderFlavor.hh"
+
+namespace gem5
+{
+
+struct ArmDecoderParams;
+
+class BaseISA;
 
 namespace ArmISA
 {
 
-class Decoder
+class Decoder : public InstDecoder
 {
+  public: // Public decoder parameters
+    /** True if the decoder should emit DVM Ops (treated as Loads) */
+    const bool dvmEnabled;
+
   protected:
     //The extended machine instruction being generated
     ExtMachInst emi;
-    MachInst data;
+    uint32_t data;
     bool bigThumb;
-    bool instDone;
-    bool outOfBytes;
     int offset;
     bool foundIt;
     ITSTATE itBits;
@@ -70,8 +80,23 @@ class Decoder
     int fpscrLen;
     int fpscrStride;
 
+    /**
+     * SVE vector length, encoded in the same format as the ZCR_EL<x>.LEN
+     * bitfields.
+     */
+    int sveLen;
+
+    /**
+     * SME vector length, encoded in the same format as the SMCR_EL<x>.LEN
+     * bitfields.
+     */
+    int smeLen;
+
+    enums::DecoderFlavor decoderFlavor;
+
     /// A cache of decoded instruction objects.
-    static GenericISA::BasicDecodeCache defaultCache;
+    GenericISA::BasicDecodeCache<Decoder, ExtMachInst> defaultCache;
+    friend class GenericISA::BasicDecodeCache<Decoder, ExtMachInst>;
 
     /**
      * Pre-decode an instruction from the current state of the
@@ -84,86 +109,6 @@ class Decoder
      * sanity check the results.
      */
     void consumeBytes(int numBytes);
-
-  public: // Decoder API
-    Decoder();
-
-    /** Reset the decoders internal state. */
-    void reset();
-
-    /**
-     * Can the decoder accept more data?
-     *
-     * A CPU model uses this method to determine if the decoder can
-     * accept more data. Note that an instruction can be ready (see
-     * instReady() even if this method returns true.
-     */
-    bool needMoreBytes() const { return outOfBytes; }
-
-    /**
-     * Is an instruction ready to be decoded?
-     *
-     * CPU models call this method to determine if decode() will
-     * return a new instruction on the next call. It typically only
-     * returns false if the decoder hasn't received enough data to
-     * decode a full instruction.
-     */
-    bool instReady() const { return instDone; }
-
-    /**
-     * Feed data to the decoder.
-     *
-     * A CPU model uses this interface to load instruction data into
-     * the decoder. Once enough data has been loaded (check with
-     * instReady()), a decoded instruction can be retrieved using
-     * decode(ArmISA::PCState).
-     *
-     * This method is intended to support both fixed-length and
-     * variable-length instructions. Instruction data is fetch in
-     * MachInst blocks (which correspond to the size of a typical
-     * insturction). The method might need to be called multiple times
-     * if the instruction spans multiple blocks, in that case
-     * needMoreBytes() will return true and instReady() will return
-     * false.
-     *
-     * The fetchPC parameter is used to indicate where in memory the
-     * instruction was fetched from. This is should be the same
-     * address as the pc. If fetching multiple blocks, it indicates
-     * where subsequent blocks are fetched from (pc + n *
-     * sizeof(MachInst)).
-     *
-     * @param pc Instruction pointer that we are decoding.
-     * @param fetchPC The address this chunk was fetched from.
-     * @param inst Raw instruction data.
-     */
-    void moreBytes(const PCState &pc, Addr fetchPC, MachInst inst);
-
-    /**
-     * Decode an instruction or fetch it from the code cache.
-     *
-     * This method decodes the currently pending pre-decoded
-     * instruction. Data must be fed to the decoder using moreBytes()
-     * until instReady() is true before calling this method.
-     *
-     * @param pc Instruction pointer that we are decoding.
-     * @return A pointer to a static instruction or NULL if the
-     * decoder isn't ready (see instReady()).
-     */
-    StaticInstPtr decode(ArmISA::PCState &pc);
-
-    /**
-     * Decode a pre-decoded machine instruction.
-     *
-     * @warn This method takes a pre-decoded instruction as its
-     * argument. It should typically not be called directly.
-     *
-     * @param mach_inst A pre-decoded instruction
-     * @retval A pointer to the corresponding StaticInst object.
-     */
-    StaticInstPtr decode(ExtMachInst mach_inst, Addr addr)
-    {
-        return defaultCache.decode(this, mach_inst, addr);
-    }
 
     /**
      * Decode a machine instruction without calling the cache.
@@ -180,21 +125,56 @@ class Decoder
     StaticInstPtr decodeInst(ExtMachInst mach_inst);
 
     /**
-     * Take over the state from an old decoder when switching CPUs.
+     * Decode a pre-decoded machine instruction.
      *
-     * @param old Decoder used in old CPU
+     * @warn This method takes a pre-decoded instruction as its
+     * argument. It should typically not be called directly.
+     *
+     * @param mach_inst A pre-decoded instruction
+     * @retval A pointer to the corresponding StaticInst object.
      */
-    void takeOverFrom(Decoder *old) {}
+    StaticInstPtr
+    decode(ExtMachInst mach_inst, Addr addr)
+    {
+        StaticInstPtr si = defaultCache.decode(this, mach_inst, addr);
+        DPRINTF(Decode, "Decode: Decoded %s instruction: %#x\n",
+                si->getName(), mach_inst);
+        si->size((!emi.thumb || emi.bigThumb) ? 4 : 2);
+        return si;
+    }
 
+  public: // Decoder API
+    Decoder(const ArmDecoderParams &params);
+
+    /** Reset the decoders internal state. */
+    void reset() override;
+
+    void moreBytes(const PCStateBase &pc, Addr fetchPC) override;
+
+    StaticInstPtr decode(PCStateBase &pc) override;
 
   public: // ARM-specific decoder state manipulation
-    void setContext(FPSCR fpscr)
+    void
+    setContext(FPSCR fpscr)
     {
         fpscrLen = fpscr.len;
         fpscrStride = fpscr.stride;
     }
+
+    void
+    setSveLen(uint8_t len)
+    {
+        sveLen = len;
+    }
+
+    void
+    setSmeLen(uint8_t len)
+    {
+        smeLen = len;
+    }
 };
 
 } // namespace ArmISA
+} // namespace gem5
 
 #endif // __ARCH_ARM_DECODER_HH__

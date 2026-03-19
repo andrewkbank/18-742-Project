@@ -33,8 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Matt Evans
  */
 
 /** @file
@@ -65,21 +63,18 @@
 #include "dev/io_device.hh"
 #include "mem/packet.hh"
 #include "mem/packet_access.hh"
+#include "params/Gicv2m.hh"
+#include "params/Gicv2mFrame.hh"
 
-Gicv2m *
-Gicv2mParams::create()
+namespace gem5
 {
-    return new Gicv2m(this);
-}
 
-Gicv2mFrame *
-Gicv2mFrameParams::create()
-{
-    return new Gicv2mFrame(this);
-}
+Gicv2mFrame::Gicv2mFrame(const Params &p)
+    : SimObject(p), addr(p.addr), spi_base(p.spi_base), spi_len(p.spi_len)
+{}
 
-Gicv2m::Gicv2m(const Params *p)
-    : PioDevice(p), pioDelay(p->pio_delay), frames(p->frames), gic(p->gic)
+Gicv2m::Gicv2m(const Params &p)
+    : PioDevice(p), pioDelay(p.pio_delay), frames(p.frames), gic(p.gic)
 {
     // Assert SPI ranges start at 32
     for (int i = 0; i < frames.size(); i++) {
@@ -114,18 +109,18 @@ Gicv2m::read(PacketPtr pkt)
 
     switch (offset) {
       case MSI_TYPER:
-        pkt->set<uint32_t>((frames[frame]->spi_base << 16) |
+        pkt->setLE<uint32_t>((frames[frame]->spi_base << 16) |
                            frames[frame]->spi_len);
         break;
 
       case PER_ID4:
-        pkt->set<uint32_t>(0x4 | ((4+log2framenum) << 4));
+        pkt->setLE<uint32_t>(0x4 | ((4+log2framenum) << 4));
         // Nr of 4KB blocks used by component.  This is messy as frames are 64K
         // (16, ie 2^4) and we should assert we're given a Po2 number of frames.
         break;
       default:
         DPRINTF(GICV2M, "GICv2m: Read of unk reg %#x\n", offset);
-        pkt->set<uint32_t>(0);
+        pkt->setLE<uint32_t>(0);
     };
 
     pkt->makeAtomicResponse();
@@ -144,7 +139,7 @@ Gicv2m::write(PacketPtr pkt)
 
     if (offset == MSI_SETSPI_NSR) {
         /* Is payload SPI number within range? */
-        uint32_t m = pkt->get<uint32_t>();
+        uint32_t m = pkt->getLE<uint32_t>();
         if (m >= frames[frame]->spi_base &&
             m < (frames[frame]->spi_base + frames[frame]->spi_len)) {
             DPRINTF(GICV2M, "GICv2m: Frame %d raising MSI %d\n", frame, m);
@@ -168,3 +163,5 @@ Gicv2m::frameFromAddr(Addr a) const
     }
     return -1;
 }
+
+} // namespace gem5

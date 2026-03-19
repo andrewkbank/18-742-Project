@@ -1,4 +1,16 @@
 /*
+ * Copyright (c) 2016-2017 ARM Limited
+ * All rights reserved
+ *
+ * The license below extends only to copyright in the software and shall
+ * not be construed as granting a license to any other intellectual
+ * property including but not limited to intellectual property relating
+ * to a hardware implementation of the functionality of the software
+ * licensed hereunder.  You may use the software subject to the license
+ * terms below provided that you ensure that this notice is replicated
+ * unmodified and in its entirety in all distributions of the software,
+ * modified or unmodified, in source code or in binary form.
+ *
  * Copyright (c) 2013 Advanced Micro Devices, Inc.
  * All rights reserved
  *
@@ -24,15 +36,39 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Steve Reinhardt
  */
 
 #include "cpu/reg_class.hh"
 
-const char *RegClassStrings[] = {
-    "IntRegClass",
-    "FloatRegClass",
-    "CCRegClass",
-    "MiscRegClass"
-};
+#include <sstream>
+
+#include "base/cprintf.hh"
+#include "sim/bufval.hh"
+#include "sim/byteswap.hh"
+
+namespace gem5
+{
+
+std::string
+RegClassOps::regName(const RegId &id) const
+{
+    return csprintf("%s[%d]", id.className(), id.index());
+}
+
+std::string
+RegClassOps::valString(const void *val, const size_t& size) const
+{
+    // If this is just a RegVal, or could be interpreted as one, print it
+    // that way.
+    auto [reg_val_str, reg_val_success] = printUintX(val, size, HostByteOrder);
+    if (reg_val_success)
+        return reg_val_str;
+
+    // Otherwise, print it as a sequence of bytes. Use big endian order so
+    // that the most significant bytes are printed first, like digits in a
+    // regular number.
+
+    return printByteBuf(val, size, ByteOrder::big);
+}
+
+} // namespace gem5

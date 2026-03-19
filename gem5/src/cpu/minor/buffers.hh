@@ -33,8 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andrew Bardsley
  */
 
 /**
@@ -49,12 +47,19 @@
 #include <iostream>
 #include <queue>
 #include <sstream>
+#include <string>
 
-#include "cpu/minor/trace.hh"
+#include "base/logging.hh"
+#include "base/named.hh"
+#include "base/types.hh"
 #include "cpu/activity.hh"
+#include "cpu/minor/trace.hh"
 #include "cpu/timebuf.hh"
 
-namespace Minor
+namespace gem5
+{
+
+namespace minor
 {
 
 /** Interface class for data with reporting/tracing facilities.  This
@@ -117,7 +122,11 @@ class NoBubbleTraits
 {
   public:
     static bool isBubble(const ElemType &) { return false; }
-    static ElemType bubble() { assert(false); }
+    static ElemType
+    bubble()
+    {
+        panic("bubble called but no bubble interface");
+    }
 };
 
 /** Pass on call to the element */
@@ -202,7 +211,7 @@ class MinorBuffer : public Named, public TimeBuffer<ElemType>
                 data << ',';
         }
 
-        MINORTRACE("%s=%s\n", dataName, data.str());
+        minor::minorTrace("%s=%s\n", dataName, data.str());
     }
 };
 
@@ -376,6 +385,8 @@ class Reservable
 
     /** Free a reserved slot */
     virtual void freeReservation() = 0;
+
+    virtual ~Reservable() {};
 };
 
 /** Wrapper for a queue type to act as a pipeline stage input queue.
@@ -412,8 +423,6 @@ class Queue : public Named, public Reservable
         capacity(capacity_),
         dataName(data_name)
     { }
-
-    virtual ~Queue() { }
 
   public:
     /** Push an element into the buffer if it isn't a bubble.  Bubbles are
@@ -541,7 +550,7 @@ class Queue : public Named, public Reservable
                 data << ',';
         }
 
-        MINORTRACE("%s=%s\n", dataName, data.str());
+        minor::minorTrace("%s=%s\n", dataName, data.str());
     }
 };
 
@@ -648,6 +657,7 @@ class InputBuffer : public Reservable
     }
 };
 
-}
+} // namespace minor
+} // namespace gem5
 
 #endif /* __CPU_MINOR_BUFFERS_HH__ */

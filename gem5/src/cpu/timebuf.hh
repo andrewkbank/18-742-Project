@@ -24,9 +24,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nathan Binkert
- *          Kevin Lim
  */
 
 #ifndef __BASE_TIMEBUF_HH__
@@ -35,6 +32,9 @@
 #include <cassert>
 #include <cstring>
 #include <vector>
+
+namespace gem5
+{
 
 template <class T>
 class TimeBuffer
@@ -138,7 +138,7 @@ class TimeBuffer
 
   public:
     TimeBuffer(int p, int f)
-        : past(p), future(f), size(past + future + 1), 
+        : past(p), future(f), size(past + future + 1),
           data(new char[size * sizeof(T)]), index(size), base(0)
     {
         assert(past >= 0 && future >= 0);
@@ -245,7 +245,20 @@ class TimeBuffer
     {
         return size;
     }
+
+    int
+    getPast() const
+    {
+        return past;
+    }
+
+    int
+    getFuture() const
+    {
+        return future;
+    }
 };
 
-#endif // __BASE_TIMEBUF_HH__
+} // namespace gem5
 
+#endif // __BASE_TIMEBUF_HH__

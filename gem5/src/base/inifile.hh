@@ -24,26 +24,26 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nathan Binkert
- *          Steve Reinhardt
  */
 
 #ifndef __INIFILE_HH__
 #define __INIFILE_HH__
 
 #include <fstream>
+#include <functional>
 #include <list>
 #include <string>
+#include <unordered_map>
 #include <vector>
-
-#include "base/hashmap.hh"
 
 /**
  * @file
  * Declaration of IniFile object.
  * @todo Change comments to match documentation style.
  */
+
+namespace gem5
+{
 
 ///
 /// This class represents the contents of a ".ini" file.
@@ -72,7 +72,7 @@ class IniFile
         }
 
         /// Has this entry been used?
-        bool isReferenced() { return referenced; }
+        bool isReferenced() const { return referenced; }
 
         /// Fetch the value.
         const std::string &getValue() const;
@@ -94,7 +94,7 @@ class IniFile
     class Section
     {
         /// EntryTable type.  Map of strings to Entry object pointers.
-        typedef m5::hash_map<std::string, Entry *> EntryTable;
+        typedef std::unordered_map<std::string, Entry> EntryTable;
 
         EntryTable      table;          ///< Table of entries.
         mutable bool    referenced;     ///< Has this section been used?
@@ -107,7 +107,7 @@ class IniFile
         }
 
         /// Has this section been used?
-        bool isReferenced() { return referenced; }
+        bool isReferenced() const { return referenced; }
 
         /// Add an entry to the table.  If an entry with the same name
         /// already exists, the 'append' parameter is checked If true,
@@ -125,21 +125,25 @@ class IniFile
 
         /// Find the entry with the given name.
         /// @retval Pointer to the entry object, or NULL if none.
-        Entry *findEntry(const std::string &entryName) const;
+        Entry *findEntry(const std::string &entryName);
+        const Entry *findEntry(const std::string &entryName) const;
 
         /// Print the unreferenced entries in this section to cerr.
         /// Messages can be suppressed using "unref_section_ok" and
         /// "unref_entries_ok".
         /// @param sectionName Name of this section, for use in output message.
         /// @retval True if any entries were printed.
-        bool printUnreferenced(const std::string &sectionName);
+        bool printUnreferenced(const std::string &sectionName) const;
 
         /// Print the contents of this section to cout (for debugging).
-        void dump(const std::string &sectionName);
+        void dump(const std::string &sectionName) const;
+
+        EntryTable::const_iterator begin() const;
+        EntryTable::const_iterator end() const;
     };
 
     /// SectionTable type.  Map of strings to Section object pointers.
-    typedef m5::hash_map<std::string, Section *> SectionTable;
+    typedef std::unordered_map<std::string, Section> SectionTable;
 
   protected:
     /// Hash of section names to Section object pointers.
@@ -152,14 +156,12 @@ class IniFile
 
     /// Look up section with the given name.
     /// @retval Pointer to section object, or NULL if not found.
-    Section *findSection(const std::string &sectionName) const;
+    Section *findSection(const std::string &sectionName);
+    const Section *findSection(const std::string &sectionName) const;
 
   public:
     /// Constructor.
     IniFile();
-
-    /// Destructor.
-    ~IniFile();
 
     /// Load parameter settings from given istream.  This is a helper
     /// function for load(string) and loadCPP(), which open a file
@@ -185,6 +187,12 @@ class IniFile
     bool find(const std::string &section, const std::string &entry,
               std::string &value) const;
 
+    /// Determine whether the entry exists within named section exists
+    /// in the .ini file.
+    /// @return True if the section exists.
+    bool entryExists(const std::string &section,
+                     const std::string &entry) const;
+
     /// Determine whether the named section exists in the .ini file.
     /// Note that the 'Section' class is (intentionally) not public,
     /// so all clients can do is get a bool that says whether there
@@ -197,10 +205,19 @@ class IniFile
 
     /// Print unreferenced entries in object.  Iteratively calls
     /// printUnreferend() on all the constituent sections.
-    bool printUnreferenced();
+    bool printUnreferenced() const;
 
     /// Dump contents to cout.  For debugging.
     void dump();
+
+    /// Visitor callback that receives key/value pairs.
+    using VisitSectionCallback = std::function<void(
+        const std::string&, const std::string&)>;
+
+    /// Iterate over key/value pairs of the given section.
+    void visitSection(const std::string &sectionName, VisitSectionCallback cb);
 };
+
+} // namespace gem5
 
 #endif // __INIFILE_HH__

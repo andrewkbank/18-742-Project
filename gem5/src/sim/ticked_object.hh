@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2014 ARM Limited
+ * Copyright (c) 2013-2014, 2017 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -33,8 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andrew Bardsley
  */
 
 /**
@@ -48,8 +46,12 @@
 #ifndef __SIM_TICKED_OBJECT_HH__
 #define __SIM_TICKED_OBJECT_HH__
 
-#include "params/TickedObject.hh"
 #include "sim/clocked_object.hh"
+
+namespace gem5
+{
+
+struct TickedObjectParams;
 
 /** Ticked attaches gem5's event queue/scheduler to evaluate
  *  calls and provides a start/stop interface to ticking.
@@ -59,39 +61,14 @@
 class Ticked : public Serializable
 {
   protected:
-    /** An event to call process periodically */
-    class ClockEvent : public Event
-    {
-      public:
-        Ticked &owner;
-
-        ClockEvent(Ticked &owner_, Priority priority) :
-            Event(priority),
-            owner(owner_)
-        { }
-
-        /** Evaluate and reschedule */
-        void
-        process()
-        {
-            ++owner.tickCycles;
-            ++owner.numCycles;
-            owner.countCycles(Cycles(1));
-            owner.evaluate();
-            if (owner.running) {
-                owner.object.schedule(this,
-                    owner.object.clockEdge(Cycles(1)));
-            }
-        }
-    };
-
-    friend class ClockEvent;
-
     /** ClockedObject who is responsible for this Ticked's actions/stats */
     ClockedObject &object;
 
-    /** The single instance of ClockEvent used */
-    ClockEvent event;
+    /** The wrapper for processClockEvent */
+    EventFunctionWrapper event;
+
+    /** Evaluate and reschedule */
+    void processClockEvent();
 
     /** Have I been started? and am not stopped */
     bool running;
@@ -101,21 +78,21 @@ class Ticked : public Serializable
 
   private:
     /** Locally allocated stats */
-    Stats::Scalar *numCyclesLocal;
+    statistics::Scalar *numCyclesLocal;
 
   protected:
     /** Total number of cycles either ticked or spend stopped */
-    Stats::Scalar &numCycles;
+    statistics::Scalar &numCycles;
 
     /** Number of cycles ticked */
-    Stats::Scalar tickCycles;
+    statistics::Scalar tickCycles;
 
     /** Number of cycles stopped */
-    Stats::Formula idleCycles;
+    statistics::Formula idleCycles;
 
   public:
     Ticked(ClockedObject &object_,
-        Stats::Scalar *imported_num_cycles = NULL,
+        statistics::Scalar *imported_num_cycles = NULL,
         Event::Priority priority = Event::CPU_Tick_Pri);
 
     virtual ~Ticked() { }
@@ -164,8 +141,8 @@ class Ticked : public Serializable
     }
 
     /** Checkpoint lastStopped */
-    void serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE;
-    void unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE;
+    void serialize(CheckpointOut &cp) const override;
+    void unserialize(CheckpointIn &cp) override;
 
     /** Action to call on the clock tick */
     virtual void evaluate() = 0;
@@ -189,7 +166,7 @@ class Ticked : public Serializable
 class TickedObject : public ClockedObject, public Ticked
 {
   public:
-    TickedObject(TickedObjectParams *params,
+    TickedObject(const TickedObjectParams &params,
         Event::Priority priority = Event::CPU_Tick_Pri);
 
     /** Disambiguate to make these functions overload correctly */
@@ -198,9 +175,11 @@ class TickedObject : public ClockedObject, public Ticked
     using ClockedObject::unserialize;
 
     /** Pass on regStats, serialize etc. onto Ticked */
-    void regStats();
-    void serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE;
-    void unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE;
+    void regStats() override;
+    void serialize(CheckpointOut &cp) const override;
+    void unserialize(CheckpointIn &cp) override;
 };
+
+} // namespace gem5
 
 #endif /* __SIM_TICKED_OBJECT_HH__ */

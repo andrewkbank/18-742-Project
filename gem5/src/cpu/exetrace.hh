@@ -1,4 +1,16 @@
 /*
+ * Copyright (c) 2023 Arm Limited
+ * All rights reserved
+ *
+ * The license below extends only to copyright in the software and shall
+ * not be construed as granting a license to any other intellectual
+ * property including but not limited to intellectual property relating
+ * to a hardware implementation of the functionality of the software
+ * licensed hereunder.  You may use the software subject to the license
+ * terms below provided that you ensure that this notice is replicated
+ * unmodified and in its entirety in all distributions of the software,
+ * modified or unmodified, in source code or in binary form.
+ *
  * Copyright (c) 2001-2005 The Regents of The University of Michigan
  * All rights reserved.
  *
@@ -24,9 +36,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Steve Reinhardt
- *          Nathan Binkert
  */
 
 #ifndef __CPU_EXETRACE_HH__
@@ -40,49 +49,56 @@
 #include "params/ExeTracer.hh"
 #include "sim/insttracer.hh"
 
+namespace gem5
+{
+
 class ThreadContext;
 
-namespace Trace {
+namespace trace {
 
 class ExeTracerRecord : public InstRecord
 {
   public:
     ExeTracerRecord(Tick _when, ThreadContext *_thread,
-               const StaticInstPtr _staticInst, TheISA::PCState _pc,
+               const StaticInstPtr _staticInst, const PCStateBase &_pc,
+               const ExeTracer &_tracer,
                const StaticInstPtr _macroStaticInst = NULL)
-        : InstRecord(_when, _thread, _staticInst, _pc, _macroStaticInst)
+        : InstRecord(_when, _thread, _staticInst, _pc, _macroStaticInst),
+          tracer(_tracer)
     {
+        vectorLengthInBytes = _thread->getIsaPtr()->getVectorLengthInBytes();
     }
 
     void traceInst(const StaticInstPtr &inst, bool ran);
 
     void dump();
-    virtual void dumpTicks(std::ostream &outs);
+
+  protected:
+    const ExeTracer &tracer;
+    int64_t vectorLengthInBytes;
 };
 
 class ExeTracer : public InstTracer
 {
   public:
     typedef ExeTracerParams Params;
-    ExeTracer(const Params *params) : InstTracer(params)
+    ExeTracer(const Params &params) : InstTracer(params)
     {}
 
     InstRecord *
     getInstRecord(Tick when, ThreadContext *tc,
-            const StaticInstPtr staticInst, TheISA::PCState pc,
-            const StaticInstPtr macroStaticInst = NULL)
+            const StaticInstPtr staticInst, const PCStateBase &pc,
+            const StaticInstPtr macroStaticInst=nullptr) override
     {
-        if (!Debug::ExecEnable)
-            return NULL;
-
-        if (!Trace::enabled)
+        if (!debug::ExecEnable)
             return NULL;
 
         return new ExeTracerRecord(when, tc,
-                staticInst, pc, macroStaticInst);
+                staticInst, pc, *this, macroStaticInst);
     }
 };
 
-} // namespace Trace
+} // namespace trace
+} // namespace gem5
 
 #endif // __CPU_EXETRACE_HH__

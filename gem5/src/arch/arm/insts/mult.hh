@@ -33,14 +33,17 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Gabe Black
  */
+
 #ifndef __ARCH_ARM_INSTS_MULT_HH__
 #define __ARCH_ARM_INSTS_MULT_HH__
 
+#include "arch/arm/insts/pred_inst.hh"
 #include "arch/arm/insts/static_inst.hh"
 #include "base/trace.hh"
+
+namespace gem5
+{
 
 namespace ArmISA
 {
@@ -51,10 +54,10 @@ namespace ArmISA
 class Mult3 : public PredOp
 {
   protected:
-    IntRegIndex reg0, reg1, reg2;
+    RegIndex reg0, reg1, reg2;
 
     Mult3(const char *mnem, ExtMachInst _machInst, OpClass __opClass,
-          IntRegIndex _reg0, IntRegIndex _reg1, IntRegIndex _reg2) :
+          RegIndex _reg0, RegIndex _reg1, RegIndex _reg2) :
         PredOp(mnem, _machInst, __opClass),
         reg0(_reg0), reg1(_reg1), reg2(_reg2)
     {}
@@ -66,14 +69,16 @@ class Mult3 : public PredOp
 class Mult4 : public Mult3
 {
   protected:
-    IntRegIndex reg3;
+    RegIndex reg3;
 
     Mult4(const char *mnem, ExtMachInst _machInst, OpClass __opClass,
-          IntRegIndex _reg0, IntRegIndex _reg1,
-          IntRegIndex _reg2, IntRegIndex _reg3) :
+          RegIndex _reg0, RegIndex _reg1,
+          RegIndex _reg2, RegIndex _reg3) :
         Mult3(mnem, _machInst, __opClass, _reg0, _reg1, _reg2), reg3(_reg3)
     {}
 };
-}
+
+} // namespace ArmISA
+} // namespace gem5
 
 #endif //__ARCH_ARM_INSTS_MULT_HH__

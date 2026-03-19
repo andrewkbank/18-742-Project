@@ -24,13 +24,12 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Nilay Vaish
  */
 
 #include "base/types.hh"
 
-#ifndef SWIG // keep the operators away from SWIG
+namespace gem5
+{
 
 std::ostream&
 operator<<(std::ostream &out, const Cycles & cycles)
@@ -39,5 +38,4 @@ operator<<(std::ostream &out, const Cycles & cycles)
     return out;
 }
 
-#endif // SWIG not touching operators
-
+} // namespace gem5

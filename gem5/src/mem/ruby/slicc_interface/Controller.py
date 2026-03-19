@@ -1,3 +1,15 @@
+# Copyright (c) 2017,2019-2021 ARM Limited
+# All rights reserved.
+#
+# The license below extends only to copyright in the software and shall
+# not be construed as granting a license to any other intellectual
+# property including but not limited to intellectual property relating
+# to a hardware implementation of the functionality of the software
+# licensed hereunder.  You may use the software subject to the license
+# terms below provided that you ensure that this notice is replicated
+# unmodified and in its entirety in all distributions of the software,
+# modified or unmodified, in source code or in binary form.
+#
 # Copyright (c) 2009 Advanced Micro Devices, Inc.
 # All rights reserved.
 #
@@ -23,29 +35,59 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Steve Reinhardt
-#          Brad Beckmann
 
+from m5.objects.ClockedObject import ClockedObject
+from m5.objects.RubySystem import RubySystem
+from m5.objects.System import System
 from m5.params import *
 from m5.proxy import *
-from MemObject import MemObject
 
-class RubyController(MemObject):
-    type = 'RubyController'
-    cxx_class = 'AbstractController'
+
+class RubyController(ClockedObject):
+    type = "RubyController"
+    cxx_class = "gem5::ruby::AbstractController"
     cxx_header = "mem/ruby/slicc_interface/AbstractController.hh"
     abstract = True
+
     version = Param.Int("")
+    addr_ranges = VectorParam.AddrRange(
+        [AllMemory], "Address range this controller responds to"
+    )
     cluster_id = Param.UInt32(0, "Id of this controller's cluster")
 
-    transitions_per_cycle = \
-        Param.Int(32, "no. of  SLICC state machine transitions per cycle")
+    transitions_per_cycle = Param.Int(
+        32, "no. of  SLICC state machine transitions per cycle"
+    )
     buffer_size = Param.UInt32(0, "max buffer size 0 means infinite")
 
     recycle_latency = Param.Cycles(10, "")
     number_of_TBEs = Param.Int(256, "")
     ruby_system = Param.RubySystem("")
 
-    memory = MasterPort("Port for attaching a memory controller")
+    # This is typically a proxy to the icache/dcache hit latency.
+    # If the latency depends on the request type or protocol-specific states,
+    # the protocol may ignore this parameter by overriding the
+    # mandatoryQueueLatency function
+    mandatory_queue_latency = Param.Cycles(
+        1,
+        "Default latency for requests added to the "
+        "mandatory queue on top-level controllers",
+    )
+
+    memory_out_port = RequestPort("Port for attaching a memory controller")
+    memory = DeprecatedParam(
+        memory_out_port,
+        "The request port for Ruby "
+        "memory output to the main memory is now called `memory_out_port`",
+    )
+
     system = Param.System(Parent.any, "system object parameter")
+
+    # These can be used by a protocol to enable reuse of the same machine
+    # types to model different levels of the cache hierarchy
+    upstream_destinations = VectorParam.RubyController(
+        [], "Possible destinations for requests sent towards the CPU"
+    )
+    downstream_destinations = VectorParam.RubyController(
+        [], "Possible destinations for requests sent towards memory"
+    )

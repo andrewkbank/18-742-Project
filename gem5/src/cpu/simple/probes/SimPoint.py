@@ -32,17 +32,17 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Authors: Curtis Dunham
 
+from m5.objects.Probe import ProbeListenerObject
 from m5.params import *
-from Probe import ProbeListenerObject
+
 
 class SimPoint(ProbeListenerObject):
     """Probe for collecting SimPoint Basic Block Vectors (BBVs)."""
 
-    type = 'SimPoint'
+    type = "SimPoint"
     cxx_header = "cpu/simple/probes/simpoint.hh"
+    cxx_class = "gem5::SimPoint"
 
     interval = Param.UInt64(100000000, "Interval Size (insts)")
     profile_file = Param.String("simpoint.bb.gz", "BBV (output) file")

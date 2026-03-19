@@ -33,10 +33,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Vasileios Spiliopoulos
- *          Akash Bagdia
- *          Stephan Diestelhorst
  */
 
 /**
@@ -58,7 +54,11 @@
 #define __DEV_ARM_ENERGY_CTRL_HH__
 
 #include "dev/io_device.hh"
-#include "params/EnergyCtrl.hh"
+
+namespace gem5
+{
+
+struct EnergyCtrlParams;
 
 class DVFSHandler;
 
@@ -101,7 +101,8 @@ class EnergyCtrl : public BasicPioDevice
      *       while (!read(PERF_LEVEL_ACK));
      */
 
-    enum Registers {
+    enum Registers
+    {
         DVFS_HANDLER_STATUS = 0,
         DVFS_NUM_DOMAINS,
         DVFS_DOMAINID_AT_INDEX,
@@ -116,27 +117,27 @@ class EnergyCtrl : public BasicPioDevice
         PIO_NUM_FIELDS
     };
 
-    typedef EnergyCtrlParams Params;
-    EnergyCtrl(const Params *p);
+    using Params = EnergyCtrlParams;
+    EnergyCtrl(const Params &p);
 
     /**
      * Read command sent to the device
      * @param pkt Packet describing this request
      * @return number of ticks it took to complete
      */
-    virtual Tick read(PacketPtr pkt);
+    Tick read(PacketPtr pkt) override;
     /**
      * Write command sent to the device
      * @param pkt Packet describing this request
      * @return number of ticks it took to complete
      */
-    virtual Tick write(PacketPtr pkt);
+    Tick write(PacketPtr pkt) override;
 
-    void serialize(CheckpointOut &cp) const M5_ATTR_OVERRIDE;
-    void unserialize(CheckpointIn &cp) M5_ATTR_OVERRIDE;
+    void serialize(CheckpointOut &cp) const override;
+    void unserialize(CheckpointIn &cp) override;
 
-    void startup();
-    void init();
+    void startup() override;
+    void init() override;
 
   private:
     DVFSHandler *dvfsHandler;
@@ -167,7 +168,7 @@ class EnergyCtrl : public BasicPioDevice
     uint32_t perfLevelToRead;
 
     static uint32_t ticksTokHz(Tick period) {
-        return (uint32_t)(SimClock::Int::ms / period);
+        return (uint32_t)(sim_clock::as_int::ms / period);
     }
 
     static uint32_t toMicroVolt(double voltage) {
@@ -182,6 +183,9 @@ class EnergyCtrl : public BasicPioDevice
         perfLevelAck = 1;
     }
 
-    EventWrapper<EnergyCtrl, &EnergyCtrl::updatePLAck> updateAckEvent;
+    EventFunctionWrapper updateAckEvent;
 };
+
+} // namespace gem5
+
 #endif //__DEV_ARM_ENERGY_CTRL_HH__

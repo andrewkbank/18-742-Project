@@ -24,10 +24,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Gabe Black
- *          Ali Saidi
- *          Nathan Binkert
  */
 
 //The purpose of this file is to provide endainness conversion utility
@@ -36,10 +32,6 @@
 
 #ifndef __SIM_BYTE_SWAP_HH__
 #define __SIM_BYTE_SWAP_HH__
-
-#include "base/bigint.hh"
-#include "base/misc.hh"
-#include "base/types.hh"
 
 // This lets us figure out what the byte order of the host system is
 #if defined(__linux__)
@@ -58,8 +50,20 @@
 #include <libkern/OSByteOrder.h>
 #endif
 
-//These functions actually perform the swapping for parameters
-//of various bit lengths
+#include <type_traits>
+
+#include "base/types.hh"
+#include "enums/ByteOrder.hh"
+
+struct vring_used_elem;
+struct vring_desc;
+
+namespace gem5
+{
+
+// These functions actually perform the swapping for parameters of various bit
+// lengths.
+
 inline uint64_t
 swap_byte64(uint64_t x)
 {
@@ -106,38 +110,54 @@ swap_byte16(uint16_t x)
 #endif
 }
 
-// This function lets the compiler figure out how to call the
-// swap_byte functions above for different data types.  Since the
-// sizeof() values are known at compile time, it should inline to a
-// direct call to the right swap_byteNN() function.
 template <typename T>
-inline T swap_byte(T x) {
-    if (sizeof(T) == 8)
-        return swap_byte64((uint64_t)x);
-    else if (sizeof(T) == 4)
-        return swap_byte32((uint32_t)x);
-    else if (sizeof(T) == 2)
-        return swap_byte16((uint16_t)x);
-    else if (sizeof(T) == 1)
-        return x;
-    else
-        panic("Can't byte-swap values larger than 64 bits");
+inline std::enable_if_t<
+    sizeof(T) == 8 && std::is_convertible_v<T, uint64_t>, T>
+swap_byte(T x)
+{
+    return swap_byte64((uint64_t)x);
 }
 
-template<>
-inline Twin64_t swap_byte<Twin64_t>(Twin64_t x)
+template <typename T>
+inline std::enable_if_t<
+    sizeof(T) == 4 && std::is_convertible_v<T, uint32_t>, T>
+swap_byte(T x)
 {
-    x.a = swap_byte(x.a);
-    x.b = swap_byte(x.b);
+    return swap_byte32((uint32_t)x);
+}
+
+template <typename T>
+inline std::enable_if_t<
+    sizeof(T) == 2 && std::is_convertible_v<T, uint16_t>, T>
+swap_byte(T x)
+{
+    return swap_byte16((uint16_t)x);
+}
+
+template <typename T>
+inline std::enable_if_t<
+    sizeof(T) == 1 && std::is_convertible_v<T, uint8_t>, T>
+swap_byte(T x)
+{
     return x;
 }
 
-template<>
-inline Twin32_t swap_byte<Twin32_t>(Twin32_t x)
+// Make the function visible in case we need to declare a version of it for
+// other types
+template <typename T>
+std::enable_if_t<std::is_same_v<T, vring_used_elem>, T>
+swap_byte(T v);
+template <typename T>
+std::enable_if_t<std::is_same_v<T, vring_desc>, T>
+swap_byte(T v);
+
+template <typename T, size_t N>
+inline std::array<T, N>
+swap_byte(std::array<T, N> a)
 {
-    x.a = swap_byte(x.a);
-    x.b = swap_byte(x.b);
-    return x;
+    for (T &v: a)
+        v = swap_byte(v);
+    return a;
 }
 
 //The conversion functions with fixed endianness on both ends don't need to
@@ -148,13 +168,13 @@ template <typename T> inline T letobe(T value) {return swap_byte(value);}
 //For conversions not involving the guest system, we can define the functions
 //conditionally based on the BYTE_ORDER macro and outside of the namespaces
 #if (defined(_BIG_ENDIAN) || !defined(_LITTLE_ENDIAN)) && BYTE_ORDER == BIG_ENDIAN
-const ByteOrder HostByteOrder = BigEndianByteOrder;
+const ByteOrder HostByteOrder = ByteOrder::big;
 template <typename T> inline T htole(T value) {return swap_byte(value);}
 template <typename T> inline T letoh(T value) {return swap_byte(value);}
 template <typename T> inline T htobe(T value) {return value;}
 template <typename T> inline T betoh(T value) {return value;}
 #elif defined(_LITTLE_ENDIAN) || BYTE_ORDER == LITTLE_ENDIAN
-const ByteOrder HostByteOrder = LittleEndianByteOrder;
+const ByteOrder HostByteOrder = ByteOrder::little;
 template <typename T> inline T htole(T value) {return value;}
 template <typename T> inline T letoh(T value) {return value;}
 template <typename T> inline T htobe(T value) {return swap_byte(value);}
@@ -163,37 +183,20 @@ template <typename T> inline T betoh(T value) {return swap_byte(value);}
         #error Invalid Endianess
 #endif
 
-namespace BigEndianGuest
+template <typename T>
+inline T htog(T value, ByteOrder guest_byte_order)
 {
-    const ByteOrder GuestByteOrder = BigEndianByteOrder;
-    template <typename T>
-    inline T gtole(T value) {return betole(value);}
-    template <typename T>
-    inline T letog(T value) {return letobe(value);}
-    template <typename T>
-    inline T gtobe(T value) {return value;}
-    template <typename T>
-    inline T betog(T value) {return value;}
-    template <typename T>
-    inline T htog(T value) {return htobe(value);}
-    template <typename T>
-    inline T gtoh(T value) {return betoh(value);}
+    return guest_byte_order == ByteOrder::big ?
+        htobe(value) : htole(value);
 }
 
-namespace LittleEndianGuest
+template <typename T>
+inline T gtoh(T value, ByteOrder guest_byte_order)
 {
-    const ByteOrder GuestByteOrder = LittleEndianByteOrder;
-    template <typename T>
-    inline T gtole(T value) {return value;}
-    template <typename T>
-    inline T letog(T value) {return value;}
-    template <typename T>
-    inline T gtobe(T value) {return letobe(value);}
-    template <typename T>
-    inline T betog(T value) {return betole(value);}
-    template <typename T>
-    inline T htog(T value) {return htole(value);}
-    template <typename T>
-    inline T gtoh(T value) {return letoh(value);}
+    return guest_byte_order == ByteOrder::big ?
+        betoh(value) : letoh(value);
 }
+
+} // namespace gem5
+
 #endif // __SIM_BYTE_SWAP_HH__

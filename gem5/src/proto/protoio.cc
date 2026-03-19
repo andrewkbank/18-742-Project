@@ -33,18 +33,19 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * Authors: Andreas Hansson
  */
 
-#include "base/misc.hh"
 #include "proto/protoio.hh"
 
-using namespace std;
+#include <string>
+
+#include "base/logging.hh"
+
 using namespace google::protobuf;
 
-ProtoOutputStream::ProtoOutputStream(const string& filename) :
-    fileStream(filename.c_str(), ios::out | ios::binary | ios::trunc),
+ProtoOutputStream::ProtoOutputStream(const std::string& filename) :
+    fileStream(filename.c_str(),
+            std::ios::out | std::ios::binary | std::ios::trunc),
     wrappedFileStream(NULL), gzipStream(NULL), zeroCopyStream(NULL)
 {
     if (!fileStream.good())
@@ -54,7 +55,7 @@ ProtoOutputStream::ProtoOutputStream(const string& filename) :
     // wrapped in a gzip stream if the filename ends with .gz. The
     // latter stream is in turn wrapped in a coded stream
     wrappedFileStream = new io::OstreamOutputStream(&fileStream);
-    if (filename.find_last_of('.') != string::npos &&
+    if (filename.find_last_of('.') != std::string::npos &&
         filename.substr(filename.find_last_of('.') + 1) == "gz") {
         gzipStream = new io::GzipOutputStream(wrappedFileStream);
         zeroCopyStream = gzipStream;
@@ -88,15 +89,20 @@ ProtoOutputStream::write(const Message& msg)
     io::CodedOutputStream codedStream(zeroCopyStream);
 
     // Write the size of the message to the stream
-    codedStream.WriteVarint32(msg.ByteSize());
+#   if GOOGLE_PROTOBUF_VERSION < 3001000
+        auto msg_size = msg.ByteSize();
+#   else
+        auto msg_size = msg.ByteSizeLong();
+#   endif
+    codedStream.WriteVarint32(msg_size);
 
     // Write the message itself to the stream
     msg.SerializeWithCachedSizes(&codedStream);
 }
 
-ProtoInputStream::ProtoInputStream(const string& filename) :
-    fileStream(filename.c_str(), ios::in | ios::binary), fileName(filename),
-    useGzip(false),
+ProtoInputStream::ProtoInputStream(const std::string& filename) :
+    fileStream(filename.c_str(), std::ios::in | std::ios::binary),
+    fileName(filename), useGzip(false),
     wrappedFileStream(NULL), gzipStream(NULL), zeroCopyStream(NULL)
 {
     if (!fileStream.good())
@@ -109,7 +115,7 @@ ProtoInputStream::ProtoInputStream(const string& filename) :
 
     // seek to the start of the input file and clear any flags
     fileStream.clear();
-    fileStream.seekg(0, ifstream::beg);
+    fileStream.seekg(0, std::ifstream::beg);
 
     createStreams();
 }
@@ -168,7 +174,7 @@ ProtoInputStream::reset()
     destroyStreams();
     // seek to the start of the input file and clear any flags
     fileStream.clear();
-    fileStream.seekg(0, ifstream::beg);
+    fileStream.seekg(0, std::ifstream::beg);
     createStreams();
 }
 
