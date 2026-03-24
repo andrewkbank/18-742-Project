@@ -1,7 +1,7 @@
 #!/bin/bash
 
-M5UTIL=../../../gem5/util/m5
-GEM5INC=../../../gem5/include
+M5UTIL=../gem5/util/m5
+GEM5INC=../gem5/include
 
 # Compile each .c file in the current directory
 for file in *.c; do

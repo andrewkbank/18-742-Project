@@ -1,5 +1,5 @@
-M5UTIL=../../../gem5/util/m5
-GEM5INC=../../../gem5/include
+M5UTIL=../gem5/util/m5
+GEM5INC=../gem5/include
 FLAGS=-g -O3 -msse4 -Wall -Werror -I. -I$(RLITE)/src -I$(M5UTIL) -I$(GEM5INC) \
 	-DNUM_USERS=$(NUM_USERS) -DNUM_WEEKS_NOVEMBER=$(NUM_WEEKS_NOVEMBER)
 CPPFLAGS=$(FLAGS) -std=c++11

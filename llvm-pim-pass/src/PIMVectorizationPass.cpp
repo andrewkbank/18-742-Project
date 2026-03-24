@@ -5,10 +5,18 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/PassManager.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/InlineAsm.h"
-#include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#if __has_include("llvm/Transforms/IPO/PassManagerBuilder.h")
+#include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#define PIM_USE_LEGACY_PASS_BUILDER 1
+#else
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/Passes/PassPlugin.h"
+#define PIM_USE_LEGACY_PASS_BUILDER 0
+#endif
 #include <iostream>
 
 using namespace llvm;
@@ -16,10 +24,18 @@ using namespace llvm;
 namespace
 {
 
+#if !PIM_USE_LEGACY_PASS_BUILDER
+class PIMVectorizationModulePass;
+#endif
+
 class PIMVectorizationPass : public FunctionPass
 {
 public:
     static char ID;
+
+#if !PIM_USE_LEGACY_PASS_BUILDER
+    friend class PIMVectorizationModulePass;
+#endif
 
 private:
     static const int PIM_VECTOR_SIZE = 65536;
@@ -30,6 +46,8 @@ private:
         PIMAnd = 0,
         PIMOr,
         PIMNot,
+        PIMShl1,
+        PIMShr1,
         PIMAdd,
         PIMSub,
         PIMMul,
@@ -57,6 +75,8 @@ private:
             "__llvm_PIM_and",
             "__llvm_PIM_or",
             "__llvm_PIM_not",
+            "__llvm_PIM_shl1",
+            "__llvm_PIM_shr1",
             "__llvm_PIM_add",
             "__llvm_PIM_sub",
             "__llvm_PIM_mul",
@@ -66,13 +86,15 @@ private:
             "0x5C",
             "0x5D",
             "0x5E",
+            "0x66",
+            "0x67",
             "0x62",
             "0x63",
             // TODO Those are probably wrong
             "0x64",
             "0x65"
     };
-    const std::array<int, PIM_INSTR_TYPE_COUNT> PIMInstrArgCount = { 2, 2, 1, 2, 2, 2, 2 };
+    const std::array<int, PIM_INSTR_TYPE_COUNT> PIMInstrArgCount = { 2, 2, 1, 1, 1, 2, 2, 2, 2 };
 
     // If we didn't use a set we would have to check for duplicates
     std::set<Instruction*> instrDelList;
@@ -89,7 +111,7 @@ public:
     PIMVectorizationPass()
         : FunctionPass(ID),
           PIMFunc(),
-          PIMInstrUsed({ false, false, false }),
+          PIMInstrUsed({ false, false, false, false, false, false, false, false, false }),
           currentModule(nullptr),
           currentFunction(nullptr)
     {
@@ -153,6 +175,8 @@ public:
         ret = this->removeUnusedPIMFunction(module, PIMAnd) || ret;
         ret = this->removeUnusedPIMFunction(module, PIMOr)  || ret;
         ret = this->removeUnusedPIMFunction(module, PIMNot) || ret;
+        ret = this->removeUnusedPIMFunction(module, PIMShl1) || ret;
+        ret = this->removeUnusedPIMFunction(module, PIMShr1) || ret;
         ret = this->removeUnusedPIMFunction(module, PIMAdd) || ret;
         ret = this->removeUnusedPIMFunction(module, PIMSub) || ret;
         ret = this->removeUnusedPIMFunction(module, PIMMul) || ret;
@@ -171,6 +195,8 @@ private:
         this->createPIMInstr(PIMAnd);
         this->createPIMInstr(PIMOr);
         this->createPIMInstr(PIMNot);
+        this->createPIMInstr(PIMShl1);
+        this->createPIMInstr(PIMShr1);
         this->createPIMInstr(PIMAdd);
         this->createPIMInstr(PIMSub);
         this->createPIMInstr(PIMMul);
@@ -254,6 +280,30 @@ private:
         builder.CreateRetVoid();
     }
 
+    bool isShiftByOneInstr(Instruction &instr) const
+    {
+        if (auto *constInt = dyn_cast<ConstantInt>(instr.getOperand(1)))
+            return constInt->getZExtValue() == 1;
+
+        auto *constVec = dyn_cast<Constant>(instr.getOperand(1));
+        if (!constVec)
+            return false;
+
+        auto *vecType = dyn_cast<FixedVectorType>(instr.getType());
+        if (!vecType)
+            return false;
+
+        for (unsigned int i = 0; i < vecType->getNumElements(); i++)
+        {
+            auto *elem = constVec->getAggregateElement(i);
+            auto *constInt = dyn_cast_or_null<ConstantInt>(elem);
+            if (!constInt || constInt->getZExtValue() != 1)
+                return false;
+        }
+
+        return true;
+    }
+
     void scanForPIMInstruction(Instruction &instr)
     {
         // Check if it is a call to one of the special transposition functions
@@ -289,6 +339,11 @@ private:
                     if (constVec->getElementAsInteger(i) != ((uint64_t)-1) >> (64 - type->getElementType()->getIntegerBitWidth()))
                         break;
                 addUnaryOpToDependencyGraph(instr, type->getElementType());
+                break;
+            case Instruction::Shl:
+            case Instruction::LShr:
+                if (isShiftByOneInstr(instr))
+                    addUnaryOpToDependencyGraph(instr, type->getElementType());
                 break;
             default:
                 break;
@@ -953,7 +1008,8 @@ private:
                                                                 this->getPIMPtrTy());
 
             // Create and insert the corresponding free instruction
-            CallInst::CreateFree(loadInst, this->currentFunction->getBasicBlockList().back().getTerminator());
+            IRBuilder<> builder(this->currentFunction->back().getTerminator());
+            builder.CreateFree(loadInst);
 
             // For now we only used one allocation
             this->memalignAllocCount[t] = 1;
@@ -990,7 +1046,7 @@ private:
 
         // Get common types
         Type *int32ty = IntegerType::getInt32Ty(this->currentFunction->getContext());
-        Type *int8ptr = IntegerType::getInt8PtrTy(this->currentFunction->getContext());
+        Type *int8ptr = PointerType::getUnqual(Type::getInt8Ty(this->currentFunction->getContext()));
         Type *ptrType = dataLayout.getIntPtrType(this->currentFunction->getContext());
         Instruction *nullInsert = nullptr;
 
@@ -1040,6 +1096,8 @@ private:
                 case Instruction::And: instrType = PIMAnd; break;
                 case Instruction::Or: instrType = PIMOr; break;
                 case Instruction::Xor: instrType = PIMNot; break;
+                case Instruction::Shl: instrType = PIMShl1; break;
+                case Instruction::LShr: instrType = PIMShr1; break;
                 case Instruction::Add: instrType = PIMAdd; break;
                 case Instruction::Sub: instrType = PIMSub; break;
                 case Instruction::Mul: instrType = PIMMul; break;
@@ -1139,6 +1197,28 @@ private:
     }
 };
 
+#if !PIM_USE_LEGACY_PASS_BUILDER
+class PIMVectorizationModulePass
+    : public PassInfoMixin<PIMVectorizationModulePass>
+{
+  public:
+    PreservedAnalyses run(Module &module, ModuleAnalysisManager &)
+    {
+        PIMVectorizationPass pass;
+        bool changed = pass.doInitialization(module);
+
+        for (auto &func : module) {
+            if (!func.isDeclaration())
+                changed = pass.runOnFunction(func) || changed;
+        }
+
+        changed = pass.doFinalization(module) || changed;
+        return changed ? PreservedAnalyses::none() :
+                         PreservedAnalyses::all();
+    }
+};
+#endif
+
 }
 
 char PIMVectorizationPass::ID = 0;
@@ -1146,7 +1226,34 @@ char PIMVectorizationPass::ID = 0;
 static RegisterPass<PIMVectorizationPass> X("pim", "PIM optimizations for gem5",
                                             false, false);
 
+#if PIM_USE_LEGACY_PASS_BUILDER
 static RegisterStandardPasses Y(
         PassManagerBuilder::EP_OptimizerLast,
         [](const PassManagerBuilder &builder,
            legacy::PassManagerBase &PM) { PM.add(new PIMVectorizationPass()); });
+#else
+extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo
+llvmGetPassPluginInfo()
+{
+    return {
+        LLVM_PLUGIN_API_VERSION,
+        "PIMVectorizationPass",
+        LLVM_VERSION_STRING,
+        [](PassBuilder &PB) {
+            PB.registerPipelineParsingCallback(
+                [](StringRef Name, ModulePassManager &MPM,
+                   ArrayRef<PassBuilder::PipelineElement>) {
+                    if (Name == "pim") {
+                        MPM.addPass(PIMVectorizationModulePass());
+                        return true;
+                    }
+                    return false;
+                });
+            PB.registerOptimizerLastEPCallback(
+                [](ModulePassManager &MPM, OptimizationLevel) {
+                    MPM.addPass(PIMVectorizationModulePass());
+                });
+        }
+    };
+}
+#endif

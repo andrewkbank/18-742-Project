@@ -333,7 +333,9 @@ MemCtrl::addToWriteQueue(PacketPtr pkt, unsigned int pkt_count,
 
         if (addrs->op != Request::ROWNOT &&
             addrs->op != Request::ROWAAP &&
-            addrs->op != Request::ROWAP) {
+            addrs->op != Request::ROWAP &&
+            addrs->op != Request::ROWSHL1 &&
+            addrs->op != Request::ROWSHR1) {
             src2_pkt = mem_intr->decodePacket(pkt, addrs->src2,
                     pkt->getSize(), false, mem_intr->pseudoChannel);
             if (mem_pkt->rank != src2_pkt->rank ||

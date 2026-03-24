@@ -305,7 +305,9 @@ class Request : public Extensible<Request>
         ROWNOT,
         ROWXOR,
         ROWAP,
-        ROWAAP
+        ROWAAP,
+        ROWSHL1,
+        ROWSHR1
     };
 
     struct RowOpPayload
@@ -676,7 +678,8 @@ class Request : public Extensible<Request>
         }
 
         if (addrs->op == ROWNOT || addrs->op == ROWAP ||
-            addrs->op == ROWAAP) {
+            addrs->op == ROWAAP || addrs->op == ROWSHL1 ||
+            addrs->op == ROWSHR1) {
             req_src2 = nullptr;
         } else {
             req_src2 = std::make_shared<Request>(*this);

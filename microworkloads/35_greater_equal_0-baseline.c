@@ -24,6 +24,11 @@ int main(int argc, char **argv) {
 
     // allocate operands data
 	void *vals1 = random_array(total_bytes);
+	//dump first 10 values of vals1
+	for(int i = 0; i < 10; i++) {
+		printf("%d ", ((uint8_t *)vals1)[i]);
+	}
+	printf("\n");
 
     // allocate output
     uint8_t *output = allocate_array(num_vals);
@@ -48,7 +53,6 @@ int main(int argc, char **argv) {
 		}
    	}
     m5_dump_stats(0,0);
-
 	// dummy output
 	uint64_t s = 0;
 	for(int i = 0; i < num_vals / 8; ++i) {

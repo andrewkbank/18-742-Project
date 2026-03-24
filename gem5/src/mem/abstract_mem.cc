@@ -404,7 +404,9 @@ AbstractMemory::access(PacketPtr pkt)
         }
         if (addrs->op != Request::ROWNOT &&
             addrs->op != Request::ROWAAP &&
-            addrs->op != Request::ROWAP) {
+            addrs->op != Request::ROWAP &&
+            addrs->op != Request::ROWSHL1 &&
+            addrs->op != Request::ROWSHR1) {
             src2 = reinterpret_cast<uint64_t *>(toHostAddr(addrs->src2));
         }
 
@@ -429,6 +431,28 @@ AbstractMemory::access(PacketPtr pkt)
                 *dest++ = *src1++ ^ *src2++;
             }
             break;
+          case Request::ROWSHL1: {
+            const int word_count = Request::RowOpSize / sizeof(uint64_t);
+            std::vector<uint64_t> src_words(src1, src1 + word_count);
+            uint64_t carry = 0;
+            for (int i = 0; i < word_count; ++i) {
+                const uint64_t word = src_words[i];
+                dest[i] = (word << 1) | carry;
+                carry = word >> 63;
+            }
+            break;
+          }
+          case Request::ROWSHR1: {
+            const int word_count = Request::RowOpSize / sizeof(uint64_t);
+            std::vector<uint64_t> src_words(src1, src1 + word_count);
+            uint64_t carry = 0;
+            for (int i = word_count - 1; i >= 0; --i) {
+                const uint64_t word = src_words[i];
+                dest[i] = (word >> 1) | (carry << 63);
+                carry = word & 0x1;
+            }
+            break;
+          }
           case Request::ROWAP:
           case Request::ROWAAP:
             break;

@@ -387,6 +387,7 @@ DRAMInterface::doBurstAccess(MemPacket* mem_pkt, Tick next_burst_at,
         Tick cmd_at = std::max({bank_ref.actAllowedAt, next_burst_at,
                                 curTick()});
 
+        bool shift_op = false;
         switch (mem_pkt->rowOp) {
           case Request::ROWAND:
           case Request::ROWOR:
@@ -411,16 +412,27 @@ DRAMInterface::doBurstAccess(MemPacket* mem_pkt, Tick next_burst_at,
           case Request::ROWAAP:
             cmd_at = issue_ap(mem_pkt->row);
             break;
+          case Request::ROWSHL1:
+          case Request::ROWSHR1:
+            shift_op = true;
+            cmd_at = issue_ap(mem_pkt->src1Row);
+            cmd_at = issue_ap(mem_pkt->src1Row);
+            cmd_at = issue_ap(mem_pkt->row);
+            cmd_at = issue_ap(mem_pkt->row);
+            break;
           default:
             panic("Unsupported row operation");
         }
 
-        mem_pkt->readyTime = cmd_at + tRL;
-        rank_ref.lastBurstTick = cmd_at;
+        mem_pkt->readyTime = shift_op ? cmd_at : cmd_at + tRL;
+        rank_ref.lastBurstTick = mem_pkt->readyTime;
         --rank_ref.writeEntries;
         stats.writeBursts++;
         stats.dramBytesWritten += burstSize;
         stats.perBankWrBursts[mem_pkt->bankId]++;
+        if (shift_op) {
+            return std::make_pair(cmd_at, cmd_at);
+        }
         return std::make_pair(cmd_at, cmd_at + tBURST);
     }
 
