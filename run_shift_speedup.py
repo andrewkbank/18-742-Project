@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import csv
 import itertools
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -51,20 +53,24 @@ def parse_run_output(output: str) -> dict[str, int | str]:
 def run_gem5(
     gem5_dir: Path,
     exe_path: Path,
+    run_output_dir: Path,
     width: int,
     size_exp: int,
     pattern: int,
     repeats: int,
     cpu_type: str,
+    use_noncaching_cpu: bool,
     mem_type: str,
     mem_size: str,
 ) -> dict[str, int | str]:
+    run_output_dir.mkdir(parents=True, exist_ok=True)
+    effective_cpu_type = "X86TimingSimpleCPU" if use_noncaching_cpu else cpu_type
     cmd = [
         "./build/X86/gem5.opt",
+        "-d",
+        str(run_output_dir),
         "configs/deprecated/example/se.py",
-        f"--cpu-type={cpu_type}",
-        "--caches",
-        "--l2cache",
+        f"--cpu-type={effective_cpu_type}",
         f"--mem-type={mem_type}",
         f"--mem-size={mem_size}",
         "-c",
@@ -72,6 +78,9 @@ def run_gem5(
         "-o",
         f"{width} {size_exp} {pattern} {repeats}",
     ]
+    if not use_noncaching_cpu:
+        cmd.insert(5, "--l2cache")
+        cmd.insert(5, "--caches")
     code, output = run_cmd(cmd, gem5_dir)
     if code != 0:
         raise RuntimeError(f"gem5 run failed for {exe_path.name}\n{output}")
@@ -84,6 +93,96 @@ def run_gem5(
 def ensure_executable(path: Path) -> None:
     if not path.exists():
         raise FileNotFoundError(f"Missing executable: {path}")
+
+
+def build_run_specs(
+    workloads: dict[str, dict[str, Path]],
+    widths: list[int],
+    sizes: list[int],
+    patterns: list[int],
+    repeats_list: list[int],
+    shift_amounts: list[int],
+    chain_width: int,
+    arbitrary_width: int,
+) -> list[dict[str, int | str | Path]]:
+    specs: list[dict[str, int | str | Path]] = []
+
+    for direction, pair in workloads.items():
+        if direction == "chain":
+            run_widths = [chain_width]
+            run_repeats = repeats_list
+        elif direction in {"left_arbitrary", "right_arbitrary"}:
+            run_widths = [arbitrary_width]
+            run_repeats = shift_amounts
+        elif direction in {"left_8", "right_8"}:
+            run_widths = widths
+            run_repeats = [8]
+        else:
+            run_widths = widths
+            run_repeats = [1]
+
+        for width, size_exp, pattern, repeats in itertools.product(
+            run_widths, sizes, patterns, run_repeats
+        ):
+            for variant in ("baseline", "pim"):
+                specs.append(
+                    {
+                        "direction": direction,
+                        "variant": variant,
+                        "exe_path": pair[variant],
+                        "width": width,
+                        "size_exp": size_exp,
+                        "pattern": pattern,
+                        "repeats": repeats,
+                    }
+                )
+
+    return specs
+
+
+def run_spec(
+    spec: dict[str, int | str | Path],
+    gem5_dir: Path,
+    output_dir: Path,
+    cpu_type: str,
+    use_noncaching_cpu: bool,
+    mem_type: str,
+    mem_size: str,
+) -> dict[str, int | str]:
+    run_output_dir = (
+        output_dir
+        / "run_logs"
+        / str(spec["direction"])
+        / str(spec["variant"])
+        / (
+            f"w{int(spec['width'])}_s{int(spec['size_exp'])}"
+            f"_p{int(spec['pattern'])}_r{int(spec['repeats'])}"
+        )
+    )
+    result = run_gem5(
+        gem5_dir,
+        Path(spec["exe_path"]),
+        run_output_dir,
+        int(spec["width"]),
+        int(spec["size_exp"]),
+        int(spec["pattern"]),
+        int(spec["repeats"]),
+        cpu_type,
+        use_noncaching_cpu,
+        mem_type,
+        mem_size,
+    )
+    result.update(
+        {
+            "direction": str(spec["direction"]),
+            "variant": str(spec["variant"]),
+            "width": int(spec["width"]),
+            "size_exp": int(spec["size_exp"]),
+            "pattern": int(spec["pattern"]),
+            "repeats": int(spec["repeats"]),
+        }
+    )
+    return result
 
 
 def plot_direction(
@@ -248,9 +347,20 @@ def main() -> None:
         help="Column width used for arbitrary shift sweep",
     )
     parser.add_argument("--cpu-type", default="X86O3CPU")
+    parser.add_argument(
+        "--use-noncaching-cpu",
+        action="store_true",
+        help="Use X86TimingSimpleCPU without --caches/--l2cache",
+    )
     parser.add_argument("--mem-type", default="DDR4_2400_8x8")
     parser.add_argument("--mem-size", default="8192MB")
     parser.add_argument("--output-dir", default="shift_results")
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=os.cpu_count() or 1,
+        help="Number of worker threads used to run microbenchmarks in parallel",
+    )
     args = parser.parse_args()
 
     project_root = Path(args.project_root).resolve()
@@ -304,70 +414,95 @@ def main() -> None:
         ensure_executable(direction["baseline"])
         ensure_executable(direction["pim"])
 
+    if args.jobs < 1:
+        raise ValueError("--jobs must be at least 1")
+
+    run_specs = build_run_specs(
+        workloads,
+        widths,
+        sizes,
+        patterns,
+        repeats_list,
+        shift_amounts,
+        args.chain_width,
+        args.arbitrary_width,
+    )
+
+    completed_runs: dict[tuple[str, int, int, int, str], dict[str, int | str]] = {}
+    with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+        future_to_spec = {
+            executor.submit(
+                run_spec,
+                spec,
+                gem5_dir,
+                output_dir,
+                args.cpu_type,
+                args.use_noncaching_cpu,
+                args.mem_type,
+                args.mem_size,
+            ): spec
+            for spec in run_specs
+        }
+
+        for future in as_completed(future_to_spec):
+            result = future.result()
+            run_key = (
+                str(result["direction"]),
+                int(result["width"]),
+                int(result["size_exp"]),
+                int(result["pattern"]),
+                f"{int(result['repeats'])}:{str(result['variant'])}",
+            )
+            completed_runs[run_key] = result
+
     results: list[dict[str, int | float | str]] = []
 
-    for direction, pair in workloads.items():
-        if direction == "chain":
-            run_widths = [args.chain_width]
-            run_repeats = repeats_list
-        elif direction in {"left_arbitrary", "right_arbitrary"}:
-            run_widths = [args.arbitrary_width]
-            run_repeats = shift_amounts
-        elif direction in {"left_8", "right_8"}:
-            run_widths = widths
-            run_repeats = [8]
-        else:
-            run_widths = widths
-            run_repeats = [1]
+    for spec in run_specs:
+        if str(spec["variant"]) != "baseline":
+            continue
 
-        for width, size_exp, pattern, repeats in itertools.product(
-            run_widths, sizes, patterns, run_repeats
-        ):
-            baseline = run_gem5(
-                gem5_dir,
-                pair["baseline"],
-                width,
-                size_exp,
-                pattern,
-                repeats,
-                args.cpu_type,
-                args.mem_type,
-                args.mem_size,
-            )
-            pim = run_gem5(
-                gem5_dir,
-                pair["pim"],
-                width,
-                size_exp,
-                pattern,
-                repeats,
-                args.cpu_type,
-                args.mem_type,
-                args.mem_size,
+        key_prefix = (
+            str(spec["direction"]),
+            int(spec["width"]),
+            int(spec["size_exp"]),
+            int(spec["pattern"]),
+        )
+        repeats = int(spec["repeats"])
+        baseline = completed_runs[key_prefix + (f"{repeats}:baseline",)]
+        pim = completed_runs[key_prefix + (f"{repeats}:pim",)]
+
+        if int(baseline["mismatches"]) != 0 or int(pim["mismatches"]) != 0:
+            raise RuntimeError(
+                "Mismatch detected for "
+                f"{spec['direction']}, width={spec['width']}, size={spec['size_exp']}, "
+                f"pattern={spec['pattern']}, repeats={repeats}"
             )
 
-            if int(baseline["mismatches"]) != 0 or int(pim["mismatches"]) != 0:
-                raise RuntimeError(
-                    "Mismatch detected for "
-                    f"{direction}, width={width}, size={size_exp}, "
-                    f"pattern={pattern}, repeats={repeats}"
-                )
+        speedup = int(baseline["ticks"]) / int(pim["ticks"])
+        results.append(
+            {
+                "direction": str(spec["direction"]),
+                "width": int(spec["width"]),
+                "size_exp": int(spec["size_exp"]),
+                "pattern": int(spec["pattern"]),
+                "repeats": repeats,
+                "baseline_ticks": int(baseline["ticks"]),
+                "pim_ticks": int(pim["ticks"]),
+                "speedup": speedup,
+                "baseline_checksum": int(baseline["checksum"]),
+                "pim_checksum": int(pim["checksum"]),
+            }
+        )
 
-            speedup = int(baseline["ticks"]) / int(pim["ticks"])
-            results.append(
-                {
-                    "direction": direction,
-                    "width": width,
-                    "size_exp": size_exp,
-                    "pattern": pattern,
-                    "repeats": repeats,
-                    "baseline_ticks": int(baseline["ticks"]),
-                    "pim_ticks": int(pim["ticks"]),
-                    "speedup": speedup,
-                    "baseline_checksum": int(baseline["checksum"]),
-                    "pim_checksum": int(pim["checksum"]),
-                }
-            )
+    results.sort(
+        key=lambda r: (
+            str(r["direction"]),
+            int(r["width"]),
+            int(r["size_exp"]),
+            int(r["pattern"]),
+            int(r["repeats"]),
+        )
+    )
 
     csv_path = output_dir / "shift_speedup.csv"
     with csv_path.open("w", newline="") as f:

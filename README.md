@@ -78,6 +78,59 @@ cd gem5/
 ```
 Note that you *must* specify the *absolute path* (ABSOLUTE_PATH) to the folder containing the compiled workloads.
 
+### Step 4: Running the Shift Speedup Sweep
+The `run_shift_speedup.py` helper automates the shift microbenchmarks, runs the
+baseline and PIM executables in gem5, collects execution ticks and checksums,
+and generates CSV output plus speedup plots.
+
+From the project root:
+```
+python3 run_shift_speedup.py
+```
+
+This script expects:
+- `gem5/build/X86/gem5.opt` to be built
+- the shift microbenchmarks in `microworkloads/` to be compiled
+
+By default, it:
+- uses `X86O3CPU` with `--caches --l2cache`
+- sweeps shift-by-1, shift-by-8, chained shift-by-1, and arbitrary shifts
+- writes results under `shift_results/`
+
+Useful options:
+- `--jobs N`: run up to `N` gem5 microbenchmarks in parallel
+- `--use-noncaching-cpu`: use `X86TimingSimpleCPU` without `--caches` or
+  `--l2cache`
+- `--widths 8,16,32,64`: choose logical column widths
+- `--sizes 0,1,2,3`: choose size exponents where `num_vals = 1024 << k`
+- `--patterns 0,1,2,3,4`: choose input patterns
+- `--repeats 1,2,4,8,16`: choose repeat counts for the chain benchmark
+- `--shift-amounts 1,8,13,24`: choose arbitrary logical shift amounts
+- `--output-dir DIR`: choose where CSV and plots are written
+
+Examples:
+```
+# Full default sweep using one worker per host CPU
+python3 run_shift_speedup.py --jobs "$(nproc)"
+
+# Run a smaller sweep without caches
+python3 run_shift_speedup.py \
+    --use-noncaching-cpu \
+    --jobs 4 \
+    --widths 32 \
+    --sizes 0,1,2,3 \
+    --patterns 0 \
+    --shift-amounts 1,8,13,24 \
+    --output-dir shift_results_nocache
+```
+
+The script produces:
+- `shift_speedup.csv`: per-run summary of baseline ticks, PIM ticks, checksums,
+  and speedup
+- plot files such as `left_shift_speedup.png`, `right_8_shift_speedup.png`,
+  `chain_shift_speedup.png`, and `left_arbitrary_speedup.png`
+- per-run gem5 output logs under `OUTPUT_DIR/run_logs/`
+
 ## Getting Help
 If you have any suggestions for improvement, please contact geraldo dot deoliveira at safari dot ethz dot ch.
 If you find any bugs or have further questions or requests, please post an issue at the [issue page](https://github.com/CMU-SAFARI/mimdram/issues).
