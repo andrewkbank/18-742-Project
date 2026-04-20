@@ -61,9 +61,9 @@ flush_cache_range(void *buf, size_t bytes)
 {
     uint8_t *ptr = (uint8_t *)buf;
     for (size_t offset = 0; offset < bytes; offset += 64) {
-        asm volatile("clflush (%0)" : : "r"(ptr + offset) : "memory");
+        __asm__ __volatile__("clflush (%0)" : : "r"(ptr + offset) : "memory");
     }
-    asm volatile("mfence" : : : "memory");
+    __asm__ __volatile__("mfence" : : : "memory");
 }
 
 static inline void
@@ -94,6 +94,84 @@ shift_row_right_1_bytes(uint8_t *dst, const uint8_t *src, size_t bytes)
         dst[i] = (byte >> 1) | (carry << 7);
         carry = byte & 0x1;
     }
+}
+
+static inline void
+shift_row_left_8_bytes(uint8_t *dst, const uint8_t *src, size_t bytes)
+{
+    if (bytes == 0) {
+        return;
+    }
+
+    dst[0] = 0;
+    for (size_t i = 1; i < bytes; ++i) {
+        dst[i] = src[i - 1];
+    }
+}
+
+static inline void
+shift_row_right_8_bytes(uint8_t *dst, const uint8_t *src, size_t bytes)
+{
+    if (bytes == 0) {
+        return;
+    }
+
+    for (size_t i = 0; i + 1 < bytes; ++i) {
+        dst[i] = src[i + 1];
+    }
+    dst[bytes - 1] = 0;
+}
+
+static inline void
+shift_row_left_bytes(uint8_t *dst, const uint8_t *src, size_t bytes,
+                     int shift_amount)
+{
+    uint8_t *cur = malloc(bytes);
+    uint8_t *next = malloc(bytes);
+
+    memcpy(cur, src, bytes);
+    for (int i = 0; i < shift_amount / 8; ++i) {
+        shift_row_left_8_bytes(next, cur, bytes);
+        uint8_t *tmp = cur;
+        cur = next;
+        next = tmp;
+    }
+    for (int i = 0; i < shift_amount % 8; ++i) {
+        shift_row_left_1_bytes(next, cur, bytes);
+        uint8_t *tmp = cur;
+        cur = next;
+        next = tmp;
+    }
+
+    memcpy(dst, cur, bytes);
+    free(cur);
+    free(next);
+}
+
+static inline void
+shift_row_right_bytes(uint8_t *dst, const uint8_t *src, size_t bytes,
+                      int shift_amount)
+{
+    uint8_t *cur = malloc(bytes);
+    uint8_t *next = malloc(bytes);
+
+    memcpy(cur, src, bytes);
+    for (int i = 0; i < shift_amount / 8; ++i) {
+        shift_row_right_8_bytes(next, cur, bytes);
+        uint8_t *tmp = cur;
+        cur = next;
+        next = tmp;
+    }
+    for (int i = 0; i < shift_amount % 8; ++i) {
+        shift_row_right_1_bytes(next, cur, bytes);
+        uint8_t *tmp = cur;
+        cur = next;
+        next = tmp;
+    }
+
+    memcpy(dst, cur, bytes);
+    free(cur);
+    free(next);
 }
 
 static inline uint64_t

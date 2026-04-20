@@ -48,6 +48,8 @@ private:
         PIMNot,
         PIMShl1,
         PIMShr1,
+        PIMShl8,
+        PIMShr8,
         PIMAdd,
         PIMSub,
         PIMMul,
@@ -62,6 +64,7 @@ private:
         Instruction *pos;
         DependencyGraphNode *op1;
         DependencyGraphNode *op2;
+        uint64_t shiftAmount;
     };
     std::list<DependencyGraphNode> dependencyGraph;
 
@@ -77,6 +80,8 @@ private:
             "__llvm_PIM_not",
             "__llvm_PIM_shl1",
             "__llvm_PIM_shr1",
+            "__llvm_PIM_shl8",
+            "__llvm_PIM_shr8",
             "__llvm_PIM_add",
             "__llvm_PIM_sub",
             "__llvm_PIM_mul",
@@ -88,13 +93,15 @@ private:
             "0x5E",
             "0x66",
             "0x67",
+            "0x68",
+            "0x69",
             "0x62",
             "0x63",
             // TODO Those are probably wrong
             "0x64",
             "0x65"
     };
-    const std::array<int, PIM_INSTR_TYPE_COUNT> PIMInstrArgCount = { 2, 2, 1, 1, 1, 2, 2, 2, 2 };
+    const std::array<int, PIM_INSTR_TYPE_COUNT> PIMInstrArgCount = { 2, 2, 1, 1, 1, 1, 1, 2, 2, 2, 2 };
 
     // If we didn't use a set we would have to check for duplicates
     std::set<Instruction*> instrDelList;
@@ -111,7 +118,7 @@ public:
     PIMVectorizationPass()
         : FunctionPass(ID),
           PIMFunc(),
-          PIMInstrUsed({ false, false, false, false, false, false, false, false, false }),
+          PIMInstrUsed({ false, false, false, false, false, false, false, false, false, false, false }),
           currentModule(nullptr),
           currentFunction(nullptr)
     {
@@ -177,6 +184,8 @@ public:
         ret = this->removeUnusedPIMFunction(module, PIMNot) || ret;
         ret = this->removeUnusedPIMFunction(module, PIMShl1) || ret;
         ret = this->removeUnusedPIMFunction(module, PIMShr1) || ret;
+        ret = this->removeUnusedPIMFunction(module, PIMShl8) || ret;
+        ret = this->removeUnusedPIMFunction(module, PIMShr8) || ret;
         ret = this->removeUnusedPIMFunction(module, PIMAdd) || ret;
         ret = this->removeUnusedPIMFunction(module, PIMSub) || ret;
         ret = this->removeUnusedPIMFunction(module, PIMMul) || ret;
@@ -197,6 +206,8 @@ private:
         this->createPIMInstr(PIMNot);
         this->createPIMInstr(PIMShl1);
         this->createPIMInstr(PIMShr1);
+        this->createPIMInstr(PIMShl8);
+        this->createPIMInstr(PIMShr8);
         this->createPIMInstr(PIMAdd);
         this->createPIMInstr(PIMSub);
         this->createPIMInstr(PIMMul);
@@ -280,10 +291,13 @@ private:
         builder.CreateRetVoid();
     }
 
-    bool isShiftByOneInstr(Instruction &instr) const
+    bool getConstantShiftAmount(Instruction &instr, uint64_t &shiftAmount) const
     {
         if (auto *constInt = dyn_cast<ConstantInt>(instr.getOperand(1)))
-            return constInt->getZExtValue() == 1;
+        {
+            shiftAmount = constInt->getZExtValue();
+            return shiftAmount > 0;
+        }
 
         auto *constVec = dyn_cast<Constant>(instr.getOperand(1));
         if (!constVec)
@@ -293,11 +307,20 @@ private:
         if (!vecType)
             return false;
 
+        auto *firstElem = dyn_cast_or_null<ConstantInt>(
+                constVec->getAggregateElement(static_cast<unsigned>(0)));
+        if (!firstElem)
+            return false;
+
+        shiftAmount = firstElem->getZExtValue();
+        if (shiftAmount == 0)
+            return false;
+
         for (unsigned int i = 0; i < vecType->getNumElements(); i++)
         {
             auto *elem = constVec->getAggregateElement(i);
             auto *constInt = dyn_cast_or_null<ConstantInt>(elem);
-            if (!constInt || constInt->getZExtValue() != 1)
+            if (!constInt || constInt->getZExtValue() != shiftAmount)
                 return false;
         }
 
@@ -342,9 +365,12 @@ private:
                 break;
             case Instruction::Shl:
             case Instruction::LShr:
-                if (isShiftByOneInstr(instr))
-                    addUnaryOpToDependencyGraph(instr, type->getElementType());
+            {
+                uint64_t shiftAmount = 0;
+                if (getConstantShiftAmount(instr, shiftAmount))
+                    addUnaryOpToDependencyGraph(instr, type->getElementType(), shiftAmount);
                 break;
+            }
             default:
                 break;
         }
@@ -359,7 +385,8 @@ private:
                 .dest = nullptr,
                 .pos = nullptr,
                 .op1 = nullptr,
-                .op2 = nullptr
+                .op2 = nullptr,
+                .shiftAmount = 0
         };
 
         // Get the operands of the instruction
@@ -412,7 +439,8 @@ private:
         this->dependencyGraph.push_back(node);
     }
 
-    void addUnaryOpToDependencyGraph(Instruction &instr, Type *elementType)
+    void addUnaryOpToDependencyGraph(Instruction &instr, Type *elementType,
+                                     uint64_t shiftAmount = 0)
     {
         // Initialize the dependency graph node
         struct DependencyGraphNode node {
@@ -421,7 +449,8 @@ private:
                 .dest = nullptr,
                 .pos = nullptr,
                 .op1 = nullptr,
-                .op2 = nullptr
+                .op2 = nullptr,
+                .shiftAmount = shiftAmount
         };
 
         // Get the operand of the instruction
@@ -592,7 +621,8 @@ private:
                     .dest = nullptr,
                     .pos = nullptr,
                     .op1 = nullptr,
-                    .op2 = nullptr
+                    .op2 = nullptr,
+                    .shiftAmount = 0
             };
 
             // If it's an instruction, we might be able to backtrace further if it
@@ -1096,8 +1126,8 @@ private:
                 case Instruction::And: instrType = PIMAnd; break;
                 case Instruction::Or: instrType = PIMOr; break;
                 case Instruction::Xor: instrType = PIMNot; break;
-                case Instruction::Shl: instrType = PIMShl1; break;
-                case Instruction::LShr: instrType = PIMShr1; break;
+                case Instruction::Shl: instrType = node.shiftAmount >= 8 ? PIMShl8 : PIMShl1; break;
+                case Instruction::LShr: instrType = node.shiftAmount >= 8 ? PIMShr8 : PIMShr1; break;
                 case Instruction::Add: instrType = PIMAdd; break;
                 case Instruction::Sub: instrType = PIMSub; break;
                 case Instruction::Mul: instrType = PIMMul; break;
@@ -1106,20 +1136,63 @@ private:
                 default: std::cerr << "Invalid PIM instruction" << std::endl; return; // Should never happen
             }
 
-            // Mark the PIM instruction as used
-            this->PIMInstrUsed[instrType] = true;
+            if ((node.instr->getOpcode() == Instruction::Shl ||
+                 node.instr->getOpcode() == Instruction::LShr) &&
+                node.shiftAmount > 1)
+            {
+                auto *vecType = cast<FixedVectorType>(node.instr->getType());
+                Value *scratch = nullptr;
+                const uint64_t shift8Count = node.shiftAmount / 8;
+                const uint64_t shift1Count = node.shiftAmount % 8;
+                const uint64_t totalSteps = shift8Count + shift1Count;
+                Value *src = node.op1->dest;
 
-            // Build the new call to the PIM function
-            std::vector<Value*> args;
-            args.push_back(node.dest);
-            args.push_back(node.op1->dest);
-            if (node.op2 != nullptr)
-                args.push_back(node.op2->dest);
+                if (totalSteps > 1) {
+                    scratch = createPIMMalloc(vecType->getElementType());
+                }
 
-            CallInst *call = CallInst::Create(this->PIMFunc[instrType], args);
+                uint64_t stepIndex = 0;
+                auto emitShift = [&](PIMInstrType stepType) {
+                    this->PIMInstrUsed[stepType] = true;
+                    const bool isLast = (stepIndex + 1 == totalSteps);
+                    Value *dst = node.dest;
+                    if (!isLast) {
+                        dst = (((totalSteps - stepIndex) % 2) == 0) ? scratch
+                                                                     : node.dest;
+                    }
+
+                    std::vector<Value*> args = { dst, src };
+                    CallInst *call = CallInst::Create(this->PIMFunc[stepType], args);
+                    this->instrInsertList.emplace_back(node.pos, call);
+                    src = dst;
+                    stepIndex++;
+                };
+
+                for (uint64_t i = 0; i < shift8Count; ++i)
+                    emitShift(instrType);
+
+                const PIMInstrType remainderType =
+                    node.instr->getOpcode() == Instruction::Shl ? PIMShl1 : PIMShr1;
+                for (uint64_t i = 0; i < shift1Count; ++i)
+                    emitShift(remainderType);
+            }
+            else
+            {
+                // Mark the PIM instruction as used
+                this->PIMInstrUsed[instrType] = true;
+
+                // Build the new call to the PIM function
+                std::vector<Value*> args;
+                args.push_back(node.dest);
+                args.push_back(node.op1->dest);
+                if (node.op2 != nullptr)
+                    args.push_back(node.op2->dest);
+
+                CallInst *call = CallInst::Create(this->PIMFunc[instrType], args);
+                this->instrInsertList.emplace_back(node.pos, call);
+            }
 
             // Replace the instruction
-            this->instrInsertList.emplace_back(node.pos, call);
             this->instrDelList.emplace(node.instr);
 
             // We don't need the result loaded anymore at all, if all uses are either other

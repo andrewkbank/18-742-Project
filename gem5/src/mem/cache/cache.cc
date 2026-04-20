@@ -201,7 +201,9 @@ Cache::access(PacketPtr pkt, CacheBlk *&blk, Cycles &lat,
                     addrs->op != Request::ROWAP &&
                     addrs->op != Request::ROWAAP &&
                     addrs->op != Request::ROWSHL1 &&
-                    addrs->op != Request::ROWSHR1) {
+                    addrs->op != Request::ROWSHR1 &&
+                    addrs->op != Request::ROWSHL8 &&
+                    addrs->op != Request::ROWSHR8) {
                     evict_addr(addrs->src2 + i);
                 }
             }

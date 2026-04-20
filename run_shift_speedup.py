@@ -115,13 +115,54 @@ def plot_direction(
         if xs:
             ax.plot(xs, ys, marker="o", label=f"{width}-bit")
 
-    ax.set_title(f"{direction.capitalize()} Shift PIM Speedup")
+    ax.set_title(f"{direction.replace('_', ' ').title()} Shift PIM Speedup")
     ax.set_xlabel("num_vals")
     ax.set_ylabel("Speedup (baseline / PIM)")
     ax.legend()
     ax.grid(True)
     fig.tight_layout()
     fig.savefig(output_dir / f"{direction}_shift_speedup.png", dpi=200)
+    plt.close(fig)
+
+
+def plot_amount(
+    results: list[dict[str, int | float | str]],
+    direction: str,
+    width: int,
+    sizes: list[int],
+    amounts: list[int],
+    pattern: int,
+    output_dir: Path,
+) -> None:
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    for size_exp in sizes:
+        xs = []
+        ys = []
+        for amount in amounts:
+            subset = [
+                r
+                for r in results
+                if r["direction"] == direction
+                and r["width"] == width
+                and r["pattern"] == pattern
+                and r["size_exp"] == size_exp
+                and r["repeats"] == amount
+            ]
+            if subset:
+                xs.append(amount)
+                ys.append(float(subset[0]["speedup"]))
+
+        if xs:
+            ax.plot(xs, ys, marker="o", label=f"size_exp={size_exp}")
+
+    ax.set_title(f"{direction.replace('_', ' ').title()} PIM Speedup ({width}-bit)")
+    ax.set_xlabel("shift amount")
+    ax.set_ylabel("Speedup (baseline / PIM)")
+    ax.legend()
+    ax.grid(True)
+    fig.tight_layout()
+    fig.savefig(output_dir / f"{direction}_speedup.png", dpi=200)
     plt.close(fig)
 
 
@@ -167,7 +208,7 @@ def plot_chain(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run shift-by-1 baseline/PIM pairs and plot speedup."
+        description="Run shift baseline/PIM pairs and plot speedup."
     )
     parser.add_argument(
         "--project-root",
@@ -195,6 +236,17 @@ def main() -> None:
         default=32,
         help="Column width used for chain benchmark sweep",
     )
+    parser.add_argument(
+        "--shift-amounts",
+        default="1,8,13,24",
+        help="Comma-separated arbitrary shift amounts",
+    )
+    parser.add_argument(
+        "--arbitrary-width",
+        type=int,
+        default=32,
+        help="Column width used for arbitrary shift sweep",
+    )
     parser.add_argument("--cpu-type", default="X86O3CPU")
     parser.add_argument("--mem-type", default="DDR4_2400_8x8")
     parser.add_argument("--mem-size", default="8192MB")
@@ -215,6 +267,7 @@ def main() -> None:
     sizes = [int(x) for x in args.sizes.split(",") if x]
     patterns = [int(x) for x in args.patterns.split(",") if x]
     repeats_list = [int(x) for x in args.repeats.split(",") if x]
+    shift_amounts = [int(x) for x in args.shift_amounts.split(",") if x]
 
     workloads = {
         "left": {
@@ -229,6 +282,22 @@ def main() -> None:
             "baseline": microworkloads / "95_shift_chain_1-baseline.exe",
             "pim": microworkloads / "95_shift_chain_1-plus.exe",
         },
+        "left_8": {
+            "baseline": microworkloads / "96_shift_left_8-baseline.exe",
+            "pim": microworkloads / "96_shift_left_8-plus.exe",
+        },
+        "right_8": {
+            "baseline": microworkloads / "97_shift_right_8-baseline.exe",
+            "pim": microworkloads / "97_shift_right_8-plus.exe",
+        },
+        "left_arbitrary": {
+            "baseline": microworkloads / "98_shift_left_arbitrary-baseline.exe",
+            "pim": microworkloads / "98_shift_left_arbitrary-plus.exe",
+        },
+        "right_arbitrary": {
+            "baseline": microworkloads / "99_shift_right_arbitrary-baseline.exe",
+            "pim": microworkloads / "99_shift_right_arbitrary-plus.exe",
+        },
     }
 
     for direction in workloads.values():
@@ -238,8 +307,18 @@ def main() -> None:
     results: list[dict[str, int | float | str]] = []
 
     for direction, pair in workloads.items():
-        run_widths = widths if direction != "chain" else [args.chain_width]
-        run_repeats = [1] if direction != "chain" else repeats_list
+        if direction == "chain":
+            run_widths = [args.chain_width]
+            run_repeats = repeats_list
+        elif direction in {"left_arbitrary", "right_arbitrary"}:
+            run_widths = [args.arbitrary_width]
+            run_repeats = shift_amounts
+        elif direction in {"left_8", "right_8"}:
+            run_widths = widths
+            run_repeats = [8]
+        else:
+            run_widths = widths
+            run_repeats = [1]
 
         for width, size_exp, pattern, repeats in itertools.product(
             run_widths, sizes, patterns, run_repeats
@@ -310,9 +389,19 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(results)
 
-    for direction in ("left", "right"):
+    for direction in ("left", "right", "left_8", "right_8"):
         plot_direction(results, direction, widths, sizes, patterns[0], output_dir)
     plot_chain(results, args.chain_width, sizes, repeats_list, patterns[0], output_dir)
+    for direction in ("left_arbitrary", "right_arbitrary"):
+        plot_amount(
+            results,
+            direction,
+            args.arbitrary_width,
+            sizes,
+            shift_amounts,
+            patterns[0],
+            output_dir,
+        )
 
     print(f"Wrote results to {csv_path}")
     print(f"Plots saved in {output_dir}")

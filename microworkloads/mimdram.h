@@ -8,6 +8,8 @@ extern void rowop_ap(void *dst);
 extern void rowop_aap(void *dst, void *src);
 extern void rowop_shl1(void *dst, void *src);
 extern void rowop_shr1(void *dst, void *src);
+extern void rowop_shl8(void *dst, void *src);
+extern void rowop_shr8(void *dst, void *src);
 
 #define ROW_SIZE 8192
 #define BANK_COUNT 16

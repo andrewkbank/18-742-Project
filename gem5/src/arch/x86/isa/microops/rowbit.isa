@@ -65,7 +65,8 @@ def template RowOpDecode {{
 def format RowOp() {{
     reg_setup = []
     if Name not in {'ROWAP'}:
-        if Name not in {'ROWNOT', 'ROWAP', 'ROWAAP', 'ROWSHL1', 'ROWSHR1'}:
+        if Name not in {'ROWNOT', 'ROWAP', 'ROWAAP',
+                        'ROWSHL1', 'ROWSHR1', 'ROWSHL8', 'ROWSHR8'}:
             reg_setup.append('setSrcRegIdx(_numSrcRegs++, intRegClass[gem5::X86ISA::int_reg::Rdx]);')
         if Name != 'ROWAP':
             reg_setup.append('setSrcRegIdx(_numSrcRegs++, intRegClass[gem5::X86ISA::int_reg::Rsi]);')
@@ -74,7 +75,8 @@ def format RowOp() {{
     params = {
         'dst': 'Rdi',
         'src1': '0' if Name == 'ROWAP' else 'Rsi',
-        'src2': '0' if Name in {'ROWNOT', 'ROWAP', 'ROWAAP', 'ROWSHL1', 'ROWSHR1'} else 'Rdx',
+        'src2': '0' if Name in {'ROWNOT', 'ROWAP', 'ROWAAP',
+                                'ROWSHL1', 'ROWSHR1', 'ROWSHL8', 'ROWSHR8'} else 'Rdx',
         'op': Name,
         'constructor': ' '.join(reg_setup) + ' setFlag(IsStore);',
         'op_class': 'MemWriteOp',

@@ -414,6 +414,8 @@ DRAMInterface::doBurstAccess(MemPacket* mem_pkt, Tick next_burst_at,
             break;
           case Request::ROWSHL1:
           case Request::ROWSHR1:
+          case Request::ROWSHL8:
+          case Request::ROWSHR8:
             shift_op = true;
             cmd_at = issue_ap(mem_pkt->src1Row);
             cmd_at = issue_ap(mem_pkt->src1Row);
