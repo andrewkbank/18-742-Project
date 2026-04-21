@@ -94,6 +94,7 @@ This script expects:
 
 By default, it:
 - uses `X86O3CPU` with `--caches --l2cache`
+- uses timing model `0` (the default `DDR4_2400_8x8` timing parameters)
 - sweeps shift-by-1, shift-by-8, chained shift-by-1, and arbitrary shifts
 - writes results under `shift_results/`
 
@@ -106,12 +107,24 @@ Useful options:
 - `--patterns 0,1,2,3,4`: choose input patterns
 - `--repeats 1,2,4,8,16`: choose repeat counts for the chain benchmark
 - `--shift-amounts 1,8,13,24`: choose arbitrary logical shift amounts
+- `--timing-model 0|1|2`: choose the DRAM timing preset
+  - `0`: default `DDR4_2400_8x8` timings
+  - `1`: best-case hot-row timing model
+    (`tRCD=5.5ns`, `tRAS=14.1ns`, `tRP=8.3ns`, `tWR=8.1ns`)
+  - `2`: conservative hot-row timing model
+    (`tRCD=9ns`, `tRAS=23ns`, `tRP=9ns`, `tWR=10ns`)
 - `--output-dir DIR`: choose where CSV and plots are written
+
+The `--timing-model` presets are currently implemented for
+`--mem-type=DDR4_2400_8x8`.
 
 Examples:
 ```
 # Full default sweep using one worker per host CPU
 python3 run_shift_speedup.py --jobs "$(nproc)"
+
+# Run the sweep with the best-case hot-row timing model
+python3 run_shift_speedup.py --jobs "$(nproc)" --timing-model 1
 
 # Run a smaller sweep without caches
 python3 run_shift_speedup.py \
@@ -121,6 +134,7 @@ python3 run_shift_speedup.py \
     --sizes 0,1,2,3 \
     --patterns 0 \
     --shift-amounts 1,8,13,24 \
+    --timing-model 2 \
     --output-dir shift_results_nocache
 ```
 

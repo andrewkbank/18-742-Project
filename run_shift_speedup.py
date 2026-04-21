@@ -62,6 +62,7 @@ def run_gem5(
     use_noncaching_cpu: bool,
     mem_type: str,
     mem_size: str,
+    timing_model: int,
 ) -> dict[str, int | str]:
     run_output_dir.mkdir(parents=True, exist_ok=True)
     effective_cpu_type = "X86TimingSimpleCPU" if use_noncaching_cpu else cpu_type
@@ -73,6 +74,7 @@ def run_gem5(
         f"--cpu-type={effective_cpu_type}",
         f"--mem-type={mem_type}",
         f"--mem-size={mem_size}",
+        f"--timing-model={timing_model}",
         "-c",
         str(exe_path),
         "-o",
@@ -148,10 +150,12 @@ def run_spec(
     use_noncaching_cpu: bool,
     mem_type: str,
     mem_size: str,
+    timing_model: int,
 ) -> dict[str, int | str]:
     run_output_dir = (
         output_dir
         / "run_logs"
+        / f"timing_model_{timing_model}"
         / str(spec["direction"])
         / str(spec["variant"])
         / (
@@ -171,6 +175,7 @@ def run_spec(
         use_noncaching_cpu,
         mem_type,
         mem_size,
+        timing_model,
     )
     result.update(
         {
@@ -180,6 +185,7 @@ def run_spec(
             "size_exp": int(spec["size_exp"]),
             "pattern": int(spec["pattern"]),
             "repeats": int(spec["repeats"]),
+            "timing_model": timing_model,
         }
     )
     return result
@@ -354,6 +360,13 @@ def main() -> None:
     )
     parser.add_argument("--mem-type", default="DDR4_2400_8x8")
     parser.add_argument("--mem-size", default="8192MB")
+    parser.add_argument(
+        "--timing-model",
+        type=int,
+        default=0,
+        choices=[0, 1, 2],
+        help="Select DRAM timing model: 0=default, 1=best-case, 2=conservative",
+    )
     parser.add_argument("--output-dir", default="shift_results")
     parser.add_argument(
         "--jobs",
@@ -440,6 +453,7 @@ def main() -> None:
                 args.use_noncaching_cpu,
                 args.mem_type,
                 args.mem_size,
+                args.timing_model,
             ): spec
             for spec in run_specs
         }
@@ -486,6 +500,7 @@ def main() -> None:
                 "size_exp": int(spec["size_exp"]),
                 "pattern": int(spec["pattern"]),
                 "repeats": repeats,
+                "timing_model": args.timing_model,
                 "baseline_ticks": int(baseline["ticks"]),
                 "pim_ticks": int(pim["ticks"]),
                 "speedup": speedup,
@@ -514,6 +529,7 @@ def main() -> None:
                 "size_exp",
                 "pattern",
                 "repeats",
+                "timing_model",
                 "baseline_ticks",
                 "pim_ticks",
                 "speedup",

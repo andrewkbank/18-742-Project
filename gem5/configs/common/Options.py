@@ -159,6 +159,17 @@ def addNoISAOptions(parser):
         help="Specify the physical memory size (single memory)",
     )
     parser.add_argument(
+        "--timing-model",
+        type=int,
+        default=0,
+        choices=[0, 1, 2],
+        help=(
+            "Select DRAM timing preset: 0=default timings, "
+            "1=best-case CLR-DRAM-inspired hot-row timings, "
+            "2=conservative hot-row timings"
+        ),
+    )
+    parser.add_argument(
         "--enable-dram-powerdown",
         action="store_true",
         help="Enable low-power states in DRAMInterface",

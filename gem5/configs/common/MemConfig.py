@@ -41,6 +41,42 @@ from common import (
 import m5.objects
 
 
+TIMING_MODEL_PRESETS = {
+    0: None,
+    1: {
+        "tRCD": "5.5ns",
+        "tRCD_WR": "5.5ns",
+        "tRAS": "14.1ns",
+        "tRP": "8.3ns",
+        "tWR": "8.1ns",
+    },
+    2: {
+        "tRCD": "9ns",
+        "tRCD_WR": "9ns",
+        "tRAS": "23ns",
+        "tRP": "9ns",
+        "tWR": "10ns",
+    },
+}
+
+
+def apply_timing_model(interface, timing_model, mem_type):
+    if timing_model == 0:
+        return
+
+    if mem_type != "DDR4_2400_8x8":
+        from m5.util import fatal
+
+        fatal(
+            "Timing model %d is only supported with --mem-type=DDR4_2400_8x8 "
+            "(got %s)" % (timing_model, mem_type)
+        )
+
+    preset = TIMING_MODEL_PRESETS[timing_model]
+    for param, value in preset.items():
+        setattr(interface, param, value)
+
+
 def create_mem_intf(intf, r, i, intlv_bits, intlv_size, xor_low_bit):
     """
     Helper function for creating a single memory controller from the given
@@ -144,6 +180,7 @@ def config_mem(options, system):
     opt_dram_powerdown = getattr(options, "enable_dram_powerdown", None)
     opt_mem_channels_intlv = getattr(options, "mem_channels_intlv", 128)
     opt_xor_low_bit = getattr(options, "xor_low_bit", 0)
+    opt_timing_model = getattr(options, "timing_model", 0)
 
     if opt_mem_type == "HMC_2500_1x32":
         HMChost = HMC.config_hmc_host_ctrl(options, system)
@@ -231,6 +268,9 @@ def config_mem(options, system):
                 # Enable low-power DRAM states if option is set
                 if issubclass(intf, m5.objects.DRAMInterface):
                     dram_intf.enable_dram_powerdown = opt_dram_powerdown
+                    apply_timing_model(
+                        dram_intf, opt_timing_model, opt_mem_type
+                    )
 
                 if opt_elastic_trace_en:
                     dram_intf.latency = "1ns"
