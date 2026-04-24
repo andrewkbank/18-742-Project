@@ -31,6 +31,12 @@ int main(int argc, char **argv) {
     unsigned **output = allocate_vector_array(per_col_bytes, col_length);
     unsigned **temp_sum = allocate_vector_array(per_col_bytes, col_length);
 
+    flush_vector_array(vals, col_length, per_col_bytes);
+    flush_vector_array(vals_left, col_length, per_col_bytes);
+    flush_vector_array(vals_right, col_length, per_col_bytes);
+    flush_vector_array(output, col_length, per_col_bytes);
+    flush_vector_array(temp_sum, col_length, per_col_bytes);
+
 	// run some iterations of the algorithm
     for (int iter = 0; iter < 2; iter ++) {
         m5_reset_stats(0,0);

@@ -64,6 +64,23 @@ main(int argc, char **argv)
         }
     }
 
+    flush_vector_array(vals1, col_length, per_col_bytes);
+    flush_vector_array(vals2, col_length, per_col_bytes);
+    flush_vector_array(output, col_length, per_col_bytes);
+    flush_cache_range(mask1, per_col_bytes);
+    flush_cache_range(mask2, per_col_bytes);
+    flush_cache_range(mask4, per_col_bytes);
+    flush_cache_range(mask8, per_col_bytes);
+    flush_cache_range(mask16, per_col_bytes);
+    flush_cache_range(L_vec, per_col_bytes);
+    flush_cache_range(E_vec, per_col_bytes);
+    flush_cache_range(tmp, per_col_bytes);
+    flush_cache_range(shifted_L, per_col_bytes);
+    flush_cache_range(shifted_E, per_col_bytes);
+    flush_cache_range(not_a, per_col_bytes);
+    flush_cache_range(not_b, per_col_bytes);
+    flush_cache_range(xor_ab, per_col_bytes);
+
     for (int iter = 0; iter < 2; ++iter) {
         m5_reset_stats(0, 0);
 
