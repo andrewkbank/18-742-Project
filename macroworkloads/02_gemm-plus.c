@@ -50,6 +50,14 @@ main(int argc, char **argv)
         }
     }
 
+    flush_vector_array(vals_a, col_length, per_col_bytes);
+    flush_vector_array(vals_b, col_length, per_col_bytes);
+    flush_vector_array(output, col_length, per_col_bytes);
+    flush_cache_range(shifted_a, per_col_bytes);
+    flush_cache_range(mask, per_col_bytes);
+    flush_cache_range(cond_a, per_col_bytes);
+    flush_cache_range(word_mask, per_col_bytes);
+
     for (int iter = 0; iter < 2; ++iter) {
         m5_reset_stats(0, 0);
 

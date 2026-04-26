@@ -42,22 +42,42 @@ def compile_macroworkloads(macroworkloads_dir: Path, jobs: int) -> None:
         raise RuntimeError(f"Failed to compile macroworkloads\n{output}")
 
 
-def discover_workload_pairs(macroworkloads_dir: Path) -> dict[str, dict[str, Path]]:
-    pairs: dict[str, dict[str, Path]] = {}
-    for baseline_src in sorted(macroworkloads_dir.glob("*-baseline.c")):
-        pair_name = baseline_src.stem.removesuffix("-baseline")
-        pim_src = macroworkloads_dir / f"{pair_name}-plus.c"
-        if not pim_src.exists():
-            continue
+def infer_workload_group_and_variant(stem: str) -> tuple[str, str]:
+    if stem.endswith("-baseline"):
+        return stem.removesuffix("-baseline"), "baseline"
+    if stem.endswith("-plus"):
+        return stem.removesuffix("-plus"), "pim"
+    return stem, "standalone"
 
-        baseline_exe = macroworkloads_dir / f"{pair_name}-baseline.exe"
-        pim_exe = macroworkloads_dir / f"{pair_name}-plus.exe"
-        pairs[pair_name] = {"baseline": baseline_exe, "pim": pim_exe}
 
-    if not pairs:
-        raise RuntimeError("No baseline/plus macroworkload pairs were found.")
+def discover_workloads(macroworkloads_dir: Path) -> list[dict[str, str | Path]]:
+    workloads: list[dict[str, str | Path]] = []
+    for src in sorted(macroworkloads_dir.glob("*.c")):
+        group_name, variant = infer_workload_group_and_variant(src.stem)
+        workloads.append(
+            {
+                "workload_name": src.stem,
+                "group_name": group_name,
+                "variant": variant,
+                "exe_path": macroworkloads_dir / f"{src.stem}.exe",
+            }
+        )
 
-    return pairs
+    if not workloads:
+        raise RuntimeError("No macroworkload sources were found.")
+
+    return workloads
+
+
+def group_workloads(
+    workloads: list[dict[str, str | Path]],
+) -> dict[str, dict[str, Path]]:
+    groups: dict[str, dict[str, Path]] = {}
+    for workload in workloads:
+        groups.setdefault(str(workload["group_name"]), {})[
+            str(workload["variant"])
+        ] = Path(workload["exe_path"])
+    return groups
 
 
 def ensure_executable(path: Path) -> None:
@@ -66,30 +86,25 @@ def ensure_executable(path: Path) -> None:
 
 
 def build_run_specs(
-    pairs: dict[str, dict[str, Path]],
+    workloads: list[dict[str, str | Path]],
     widths: list[int],
     sizes: list[int],
     timing_models: list[int],
 ) -> list[dict[str, int | str | Path]]:
     specs: list[dict[str, int | str | Path]] = []
-    for pair_name, pair in pairs.items():
+    for workload in workloads:
+        variant = str(workload["variant"])
+        run_timing_models = (
+            [BASELINE_TIMING_MODEL] if variant == "baseline" else timing_models
+        )
         for width, size_exp in itertools.product(widths, sizes):
-            specs.append(
-                {
-                    "pair_name": pair_name,
-                    "variant": "baseline",
-                    "exe_path": pair["baseline"],
-                    "width": width,
-                    "size_exp": size_exp,
-                    "timing_model": BASELINE_TIMING_MODEL,
-                }
-            )
-            for timing_model in timing_models:
+            for timing_model in run_timing_models:
                 specs.append(
                     {
-                        "pair_name": pair_name,
-                        "variant": "pim",
-                        "exe_path": pair["pim"],
+                        "workload_name": str(workload["workload_name"]),
+                        "group_name": str(workload["group_name"]),
+                        "variant": variant,
+                        "exe_path": Path(workload["exe_path"]),
                         "width": width,
                         "size_exp": size_exp,
                         "timing_model": timing_model,
@@ -154,7 +169,7 @@ def run_spec(
 ) -> dict[str, int | str]:
     run_output_dir = (
         output_dir
-        / str(spec["pair_name"])
+        / str(spec["group_name"])
         / "run_logs"
         / f"timing_model_{int(spec['timing_model'])}"
         / str(spec["variant"])
@@ -174,7 +189,8 @@ def run_spec(
     )
     result.update(
         {
-            "pair_name": str(spec["pair_name"]),
+            "workload_name": str(spec["workload_name"]),
+            "group_name": str(spec["group_name"]),
             "variant": str(spec["variant"]),
             "width": int(spec["width"]),
             "size_exp": int(spec["size_exp"]),
@@ -182,6 +198,28 @@ def run_spec(
         }
     )
     return result
+
+
+def write_run_summary(
+    group_dir: Path, rows: list[dict[str, int | str]]
+) -> None:
+    csv_path = group_dir / "runs.csv"
+    with csv_path.open("w", newline="") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "workload_name",
+                "group_name",
+                "variant",
+                "width",
+                "size_exp",
+                "timing_model",
+                "ticks",
+                "stdout_path",
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def write_pair_summary(
@@ -254,7 +292,7 @@ def plot_pair_speedup(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Compile and run macroworkload baseline/PIM pairs across timing models."
+            "Compile and run all macroworkloads across timing models."
         )
     )
     parser.add_argument(
@@ -280,6 +318,11 @@ def main() -> None:
     parser.add_argument("--mem-size", default="8192MB")
     parser.add_argument("--jobs", type=int, default=24)
     parser.add_argument("--output-dir", default="benchmark_results")
+    parser.add_argument(
+        "--workloads",
+        default=None,
+        help="Optional comma-separated workload group names to run, e.g. 02_gemm,03_ecc",
+    )
     args = parser.parse_args()
 
     project_root = Path(args.project_root).resolve()
@@ -300,12 +343,21 @@ def main() -> None:
         raise ValueError("--jobs must be at least 1")
 
     compile_macroworkloads(macroworkloads_dir, args.jobs)
-    pairs = discover_workload_pairs(macroworkloads_dir)
-    for pair in pairs.values():
-        ensure_executable(pair["baseline"])
-        ensure_executable(pair["pim"])
+    workloads = discover_workloads(macroworkloads_dir)
+    if args.workloads:
+        selected_groups = {name for name in args.workloads.split(",") if name}
+        workloads = [
+            workload
+            for workload in workloads
+            if str(workload["group_name"]) in selected_groups
+        ]
+        if not workloads:
+            raise RuntimeError(f"No workloads matched --workloads={args.workloads}")
+    workload_groups = group_workloads(workloads)
+    for workload in workloads:
+        ensure_executable(Path(workload["exe_path"]))
 
-    run_specs = build_run_specs(pairs, widths, sizes, timing_models)
+    run_specs = build_run_specs(workloads, widths, sizes, timing_models)
     completed_runs: dict[tuple[str, int, int, int, str], dict[str, int | str]] = {}
 
     with ThreadPoolExecutor(max_workers=args.jobs) as executor:
@@ -326,7 +378,7 @@ def main() -> None:
         for future in as_completed(future_to_spec):
             result = future.result()
             run_key = (
-                str(result["pair_name"]),
+                str(result["group_name"]),
                 int(result["width"]),
                 int(result["size_exp"]),
                 int(result["timing_model"]),
@@ -334,11 +386,30 @@ def main() -> None:
             )
             completed_runs[run_key] = result
 
+    run_rows_by_group: dict[str, list[dict[str, int | str]]] = {
+        group_name: [] for group_name in workload_groups
+    }
+    for result in completed_runs.values():
+        run_rows_by_group[str(result["group_name"])].append(
+            {
+                "workload_name": str(result["workload_name"]),
+                "group_name": str(result["group_name"]),
+                "variant": str(result["variant"]),
+                "width": int(result["width"]),
+                "size_exp": int(result["size_exp"]),
+                "timing_model": int(result["timing_model"]),
+                "ticks": int(result["ticks"]),
+                "stdout_path": str(result["stdout_path"]),
+            }
+        )
+
     rows_by_pair: dict[str, list[dict[str, int | float | str]]] = {
-        pair_name: [] for pair_name in pairs
+        group_name: []
+        for group_name, variants in workload_groups.items()
+        if "baseline" in variants and "pim" in variants
     }
     for pair_name, width, size_exp, timing_model in itertools.product(
-        pairs.keys(), widths, sizes, timing_models
+        rows_by_pair.keys(), widths, sizes, timing_models
     ):
         baseline = completed_runs[
             (pair_name, width, size_exp, BASELINE_TIMING_MODEL, "baseline")
@@ -358,6 +429,19 @@ def main() -> None:
                 "pim_stdout": str(pim["stdout_path"]),
             }
         )
+
+    for group_name, rows in run_rows_by_group.items():
+        rows.sort(
+            key=lambda row: (
+                str(row["variant"]),
+                int(row["timing_model"]),
+                int(row["width"]),
+                int(row["size_exp"]),
+            )
+        )
+        group_dir = output_dir / group_name
+        group_dir.mkdir(parents=True, exist_ok=True)
+        write_run_summary(group_dir, rows)
 
     for pair_name, rows in rows_by_pair.items():
         rows.sort(

@@ -72,11 +72,6 @@ main(int argc, char **argv)
                 // In a true DRAM row, parity of the entire row involves up to 32768 bits.
                 // We'll demonstrate parity within 32-bit words (5 steps) or larger.
                 
-                int max_shift = 32; // Assuming 32-bit element parity as baseline
-                if (col_length_bytes > 0) { // from baseline
-                     // We'll just do 5 steps for 32 bits
-                }
-
                 for (int step = 1; step < 32; step *= 2) {
                     // Shift accum by `step` bits
                     AND_VECTORS(shifted, accum, accum);
