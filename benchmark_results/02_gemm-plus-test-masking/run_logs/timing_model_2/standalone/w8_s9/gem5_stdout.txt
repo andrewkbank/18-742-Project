@@ -1,0 +1,23 @@
+warn: The se.py script is deprecated. It will be removed in future releases of  gem5.
+warn: Base 10 memory/cache size 8192MB will be cast to base 2 size 8192MiB.
+Global frequency set at 1000000000000 ticks per second
+src/mem/dram_interface.cc:759: warn: DRAM device capacity (16384 Mbytes) does not match the address range assigned (8192 Mbytes)
+src/base/statistics.hh:279: warn: One of the stats is a legacy stat. Legacy stat is a stat that does not belong to any statistics::Group. Legacy stat is deprecated.
+src/base/stats/storage.hh:278: warn: Bucket size (4) does not divide range [1:32] into equal-sized buckets. Rounding up.
+src/base/stats/storage.hh:278: warn: Bucket size (4) does not divide range [1:8] into equal-sized buckets. Rounding up.
+system.remote_gdb: Listening for connections on port 7020
+gem5 Simulator System.  https://www.gem5.org
+gem5 is copyrighted software; use the --copyright option for details.
+
+gem5 version 25.1.0.0
+gem5 compiled Apr 24 2026 02:48:45
+gem5 started Apr 29 2026 23:27:40
+gem5 executing on kusanagi-nene-debian, pid 60862
+command line: ./build/X86/gem5.opt -d /home/mizuki/Desktop/workspace/18742/gem5/MIMDRAM/18-742-Project/benchmark_results/02_gemm-plus-test-masking/run_logs/timing_model_2/standalone/w8_s9 configs/deprecated/example/se.py --cpu-type=X86O3CPU --caches --mem-type=DDR4_2400_8x8 --mem-size=8192MB --timing-model=2 -c /home/mizuki/Desktop/workspace/18742/gem5/MIMDRAM/18-742-Project/macroworkloads/02_gemm-plus-test-masking.exe -o '8 9'
+
+**** REAL SIMULATION ****
+src/sim/syscall_emul.cc:86: warn: ignoring syscall set_robust_list(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall rseq(...)
+src/sim/mem_state.cc:443: info: Increasing stack size by one page.
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+Exiting @ tick 8225920000 because exiting with last active thread context
